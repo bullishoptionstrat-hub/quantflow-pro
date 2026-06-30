@@ -1,12 +1,64 @@
 /**
- * QuantFlow Pro — Ingestion Pipeline
- * Sources: Tradier (WebSocket/REST), Polygon, Alpaca, Finnhub, Yahoo Finance (fallback)
- * Emits flow events to Socket.IO in real-time.
+ * QuantFlow Pro — Ingestion Pipeline v2
+ * Sources: Tradier, Polygon, Finnhub + 13 new free connectors:
+ *   FlashAlpha · MarketData.app · Schwab · Tastytrade · TwelveData · FMP
+ *   CoinGecko · FRED · Reddit · NewsAPI · CBOE · Yahoo · Stooq
  */
 import axios from 'axios';
 import WebSocket from 'ws';
 import { computeHeatScore } from './heatScore';
 import { classifySweep } from './sweepDetector';
+
+// ─── 13 New Connectors ───────────────────────────────────────────────────────
+import { startFlashAlpha, getFlashGEX } from './connectors/flashAlpha';
+import { startMarketData, onMarketDataFlow } from './connectors/marketData';
+import { startSchwab, onSchwabFlow } from './connectors/schwab';
+import { startTastytrade, onTastytradeFlow } from './connectors/tastytrade';
+import {
+  startTwelveData, onTwelveDataSpot,
+  getSpotQuotes, getSpotPrice,
+} from './connectors/twelveData';
+import {
+  startFMP, getEarnings, getInsiderTrades, getFMPNews,
+} from './connectors/fmp';
+import {
+  startCoinGecko, onCoinGeckoUpdate,
+  getCryptoQuotes, getCryptoGlobal,
+} from './connectors/coinGecko';
+import {
+  startFRED, onFREDUpdate,
+  getMacroData, getMacroValue,
+} from './connectors/fred';
+import {
+  startReddit, onRedditSentiment,
+  getRedditSentiment, getSymbolSentiment,
+} from './connectors/reddit';
+import {
+  startNewsAPI, onNewsHeadline, getNewsHeadlines,
+} from './connectors/newsApi';
+import {
+  startCBOE, onCBOEData, getCBOEData,
+} from './connectors/cboe';
+import {
+  startYahoo, onYahooFlow, onYahooQuote, getYahooQuotes,
+} from './connectors/yahoo';
+import {
+  startStooq, onStooqQuote, getStooqQuotes,
+} from './connectors/stooq';
+
+// ─── Re-export all sub-connector getters for route handlers ─────────────────
+export {
+  getFlashGEX,
+  getSpotQuotes, getSpotPrice,
+  getEarnings, getInsiderTrades, getFMPNews,
+  getCryptoQuotes, getCryptoGlobal,
+  getMacroData, getMacroValue,
+  getRedditSentiment, getSymbolSentiment,
+  getNewsHeadlines,
+  getCBOEData,
+  getYahooQuotes,
+  getStooqQuotes,
+};
 
 // ─── Types (re-exported for routes) ────────────────────────────────────────
 
@@ -121,10 +173,78 @@ export function startIngestion(io: any): void {
   // Seed with realistic data immediately
   seedInitialData();
 
-  // Start all connectors
+  // ── Legacy connectors ──
   startTradierIngestion();
   startPolygonIngestion();
   startFinnhubIngestion();
+
+  // ── 13 New connectors ──
+  // Wire incoming flow events from market-data connectors into central store
+  onMarketDataFlow((e) => addFlowEvent({ ...e, source: 'marketdata' }));
+  onSchwabFlow((e) => addFlowEvent({ ...e, source: 'schwab' }));
+  onTastytradeFlow((e) => addFlowEvent({ ...e, source: 'tastytrade' }));
+  onYahooFlow((e) => addFlowEvent({ ...e, source: 'yahoo' }));
+
+  // Wire quote updates to broadcast via Socket.IO
+  onTwelveDataSpot((q) => {
+    if (ioInstance) ioInstance.emit('spot_update', q);
+  });
+  onYahooQuote((q) => {
+    if (ioInstance) ioInstance.emit('spot_update', q);
+  });
+  onStooqQuote((q) => {
+    if (ioInstance) ioInstance.emit('stooq_update', q);
+  });
+
+  // Wire macro/sentiment events to broadcast
+  onCoinGeckoUpdate((q) => {
+    if (ioInstance) ioInstance.emit('crypto_update', q);
+  });
+  onFREDUpdate((s) => {
+    if (ioInstance) ioInstance.emit('macro_update', s);
+  });
+  onRedditSentiment((s) => {
+    if (ioInstance) ioInstance.emit('sentiment_update', s);
+  });
+  onNewsHeadline((h) => {
+    if (ioInstance) ioInstance.emit('news_update', h);
+  });
+  onCBOEData((d) => {
+    if (ioInstance) ioInstance.emit('cboe_update', d);
+  });
+
+  // Start all 13 connectors (each handles missing env vars gracefully)
+  Promise.allSettled([
+    startFlashAlpha().then(() => { sources['flashalpha'] = 'connected'; })
+      .catch(() => { sources['flashalpha'] = 'disabled'; }),
+    startMarketData().then(() => { sources['marketdata'] = 'connected'; })
+      .catch(() => { sources['marketdata'] = 'disabled'; }),
+    startSchwab().then(() => { sources['schwab'] = 'connected'; })
+      .catch(() => { sources['schwab'] = 'disabled'; }),
+    startTastytrade().then(() => { sources['tastytrade'] = 'connected'; })
+      .catch(() => { sources['tastytrade'] = 'disabled'; }),
+    startTwelveData().then(() => { sources['twelvedata'] = 'connected'; })
+      .catch(() => { sources['twelvedata'] = 'disabled'; }),
+    startFMP().then(() => { sources['fmp'] = 'connected'; })
+      .catch(() => { sources['fmp'] = 'disabled'; }),
+    startCoinGecko().then(() => { sources['coingecko'] = 'connected'; })
+      .catch(() => { sources['coingecko'] = 'disabled'; }),
+    startFRED().then(() => { sources['fred'] = 'connected'; })
+      .catch(() => { sources['fred'] = 'disabled'; }),
+    startReddit().then(() => { sources['reddit'] = 'connected'; })
+      .catch(() => { sources['reddit'] = 'disabled'; }),
+    startNewsAPI().then(() => { sources['newsapi'] = 'connected'; })
+      .catch(() => { sources['newsapi'] = 'disabled'; }),
+    startCBOE().then(() => { sources['cboe'] = 'connected'; })
+      .catch(() => { sources['cboe'] = 'disabled'; }),
+    startYahoo().then(() => { sources['yahoo'] = 'connected'; })
+      .catch(() => { sources['yahoo'] = 'disabled'; }),
+    startStooq().then(() => { sources['stooq'] = 'connected'; })
+      .catch(() => { sources['stooq'] = 'disabled'; }),
+  ]).then((results) => {
+    const connected = results.filter((r) => r.status === 'fulfilled').length;
+    console.log(`[ingestion] ${connected}/13 new connectors started`);
+  });
 
   // Refresh GEX every 60 seconds
   setInterval(() => {
@@ -136,7 +256,7 @@ export function startIngestion(io: any): void {
   // Dark pool simulation refresh every 5 minutes
   setInterval(addDarkPoolPrints, 300_000);
 
-  console.log('[ingestion] Started — seeded', flowEvents.length, 'events');
+  console.log('[ingestion] v2 started — seeded', flowEvents.length, 'events, 13 new connectors initializing');
 }
 
 // ─── Tradier WebSocket ───────────────────────────────────────────────────────
@@ -208,7 +328,6 @@ function startTradierIngestion(): void {
 function processMarketTick(data: any, source: string): void {
   if (!data.symbol || !data.price || !data.size) return;
 
-  const symbol = data.symbol?.split(/[0-9]/)[0] ?? data.symbol;
   const isOption = data.symbol?.match(/[0-9]{6}[CP][0-9]+/);
   if (!isOption) return;
 
@@ -226,10 +345,7 @@ function processMarketTick(data: any, source: string): void {
   const ask = parseFloat(data.ask ?? price * 1.01);
 
   const heatScore = computeHeatScore({
-    bid,
-    ask,
-    price,
-    size,
+    bid, ask, price, size,
     avgVolume: size * 10,
     openInterest: size * 50,
   });
@@ -239,25 +355,16 @@ function processMarketTick(data: any, source: string): void {
     ? (price > (bid + ask) / 2 ? 'bullish' : 'neutral')
     : (price > (bid + ask) / 2 ? 'bearish' : 'neutral');
 
-  const event: FlowEvent = {
+  addFlowEvent({
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     timestamp: new Date().toISOString(),
     symbol: sym,
-    expiration,
-    strike,
+    expiration, strike,
     callPut: cpFlag as 'C' | 'P',
-    type,
-    size,
-    premium,
-    heatScore,
-    sentiment,
-    source,
-    bid,
-    ask,
+    type, size, premium, heatScore, sentiment, source,
+    bid, ask,
     exchange: data.exch,
-  };
-
-  addFlowEvent(event);
+  });
 }
 
 // ─── Polygon REST polling ────────────────────────────────────────────────────
@@ -274,7 +381,6 @@ function startPolygonIngestion(): void {
 
   async function poll() {
     try {
-      // Polygon unusual options activity endpoint
       const { data } = await axios.get(
         `https://api.polygon.io/v3/trades/options?limit=25&apiKey=${POLYGON_KEY}`,
         { timeout: 5000 }
@@ -285,7 +391,7 @@ function startPolygonIngestion(): void {
           if (!t.sip_timestamp || !t.price || !t.size) continue;
 
           const heatScore = computeHeatScore({
-            bid: t.conditions?.includes(37) ? t.price * 0.99 : t.price,
+            bid: t.price * 0.99,
             ask: t.price * 1.01,
             price: t.price,
             size: t.size,
@@ -293,7 +399,7 @@ function startPolygonIngestion(): void {
             openInterest: t.size * 40,
           });
 
-          const event: FlowEvent = {
+          addFlowEvent({
             id: `poly-${t.sequence_number ?? Date.now()}`,
             timestamp: new Date(t.sip_timestamp / 1_000_000).toISOString(),
             symbol: t.underlying_asset?.ticker ?? 'UNK',
@@ -309,9 +415,7 @@ function startPolygonIngestion(): void {
             bid: t.price * 0.99,
             ask: t.price * 1.01,
             exchange: String(t.exchange),
-          };
-
-          addFlowEvent(event);
+          });
         }
       }
     } catch (err: any) {
@@ -319,7 +423,6 @@ function startPolygonIngestion(): void {
     }
   }
 
-  // Poll every 10 seconds
   setInterval(poll, 10_000);
   poll();
 }
@@ -348,7 +451,6 @@ function startFinnhubIngestion(): void {
       const msg = JSON.parse(raw.toString());
       if (msg.type === 'trade' && Array.isArray(msg.data)) {
         for (const t of msg.data) {
-          // Use Finnhub trades as price reference only — generate synthetic option flow
           if (Math.random() > 0.85) {
             generateFlowFromSpot(t.s, t.p, 'finnhub');
           }
@@ -409,42 +511,26 @@ function generateFlowFromSpot(symbol: string, spotPrice: number, source: string)
   const premium = fillPrice * size * 100;
 
   const heatScore = computeHeatScore({
-    bid,
-    ask,
-    price: fillPrice,
-    size,
+    bid, ask, price: fillPrice, size,
     avgVolume: size * 5,
     openInterest: size * 30,
   });
 
-  const type = classifySweep({
-    size,
-    exchanges: size > 200 ? ['C', 'P', 'X'] : ['C'],
-  });
+  const type = classifySweep({ size, exchanges: size > 200 ? ['C', 'P', 'X'] : ['C'] });
 
   const sentiment = isCall
     ? (fillPrice > (bid + ask) / 2 ? 'bullish' : 'neutral')
     : (fillPrice > (bid + ask) / 2 ? 'bearish' : 'neutral');
 
-  const event: FlowEvent = {
+  addFlowEvent({
     id: `sim-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     timestamp: new Date().toISOString(),
-    symbol,
-    expiration: expStr,
-    strike,
+    symbol, expiration: expStr, strike,
     callPut: isCall ? 'C' : 'P',
-    type,
-    size,
-    premium,
-    heatScore,
-    sentiment,
-    source,
-    bid,
-    ask,
+    type, size, premium, heatScore, sentiment, source,
+    bid, ask,
     unusualScore: heatScore > 70 ? Math.round(heatScore + Math.random() * 10) : undefined,
-  };
-
-  addFlowEvent(event);
+  });
 }
 
 function addFlowEvent(event: FlowEvent): void {
@@ -452,7 +538,6 @@ function addFlowEvent(event: FlowEvent): void {
   if (flowEvents.length > MAX_FLOW_EVENTS) {
     flowEvents = flowEvents.slice(0, MAX_FLOW_EVENTS);
   }
-  // Broadcast via Socket.IO (handled in server.ts batch queue)
   if (ioInstance) {
     ioInstance.emit('flow_update', event);
     ioInstance.to(event.symbol).emit('flow_update', event);
@@ -472,7 +557,7 @@ function addDarkPoolPrints(): void {
 
     darkPoolPrints.unshift({
       id: `dp-${Date.now()}-${i}`,
-      timestamp: new Date(Date.now() - 86_400_000).toISOString(), // 24hr delay
+      timestamp: new Date(Date.now() - 86_400_000).toISOString(),
       symbol,
       price: parseFloat(price.toFixed(2)),
       size,
@@ -500,8 +585,7 @@ function seedInitialData(): void {
     const ts = new Date(Date.now() - Math.floor(Math.random() * 3_600_000));
 
     const isCall = Math.random() > 0.4;
-    const dteIndex = Math.floor(Math.random() * 4);
-    const dteDays = [7, 14, 30, 60][dteIndex];
+    const dteDays = [7, 14, 30, 60][Math.floor(Math.random() * 4)];
     const exp = new Date(ts);
     exp.setDate(exp.getDate() + dteDays);
     const expStr = exp.toISOString().split('T')[0];
@@ -516,47 +600,31 @@ function seedInitialData(): void {
     const premium = fillPrice * size * 100;
 
     const heatScore = computeHeatScore({
-      bid,
-      ask,
-      price: fillPrice,
-      size,
+      bid, ask, price: fillPrice, size,
       avgVolume: size * 5,
       openInterest: size * 30,
     });
 
-    const type = classifySweep({
-      size,
-      exchanges: size > 200 ? ['C', 'P', 'X'] : ['C'],
-    });
+    const type = classifySweep({ size, exchanges: size > 200 ? ['C', 'P', 'X'] : ['C'] });
 
     flowEvents.push({
       id: `seed-${i}-${Math.random().toString(36).slice(2, 6)}`,
       timestamp: ts.toISOString(),
-      symbol,
-      expiration: expStr,
-      strike,
+      symbol, expiration: expStr, strike,
       callPut: isCall ? 'C' : 'P',
-      type,
-      size,
-      premium,
-      heatScore,
+      type, size, premium, heatScore,
       sentiment: isCall
         ? fillPrice > (bid + ask) / 2 ? 'bullish' : 'neutral'
         : fillPrice > (bid + ask) / 2 ? 'bearish' : 'neutral',
-      source: 'seed',
-      bid,
-      ask,
+      source: 'seed', bid, ask,
       unusualScore: heatScore > 70 ? Math.round(heatScore + Math.random() * 10) : undefined,
     });
   }
 
-  // Sort newest first
   flowEvents.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
-  // Seed dark pool
   addDarkPoolPrints();
 
-  // Seed GEX cache
   ['SPX', 'SPY', 'QQQ', 'NVDA'].forEach((s) => {
     gexCache[s] = { levels: generateSyntheticGEX(s), fetchedAt: Date.now() };
   });
@@ -578,14 +646,12 @@ function generateSyntheticGEX(symbol: string): GEXLevel[] {
     const putOI = Math.floor((atm ? 45000 : 18000) * Math.exp(-distFromSpot * 0.3) + Math.random() * 5000);
     const callGamma = 0.03 * Math.exp(-distFromSpot * 0.4);
     const putGamma = 0.025 * Math.exp(-distFromSpot * 0.4);
-
     const netGEX = (callOI * callGamma - putOI * putGamma) * spot * spot * 0.01;
 
     levels.push({
       strike,
       gex: parseFloat(netGEX.toFixed(2)),
-      callOI,
-      putOI,
+      callOI, putOI,
       callGamma: parseFloat(callGamma.toFixed(6)),
       putGamma: parseFloat(putGamma.toFixed(6)),
     });

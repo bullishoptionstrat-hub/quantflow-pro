@@ -10,6 +10,8 @@ import darkpoolRouter from './routes/darkpool';
 import gexRouter from './routes/gex';
 import chainRouter from './routes/chain';
 import healthRouter from './routes/health';
+import macroRouter from './routes/macro';
+import sentimentRouter from './routes/sentiment';
 import { rateLimiter } from './middleware/rateLimiter';
 
 config();
@@ -37,34 +39,22 @@ app.use('/api/flow', flowRouter);
 app.use('/api/darkpool', darkpoolRouter);
 app.use('/api/gex', gexRouter);
 app.use('/api/chain', chainRouter);
+app.use('/api/macro', macroRouter);
+app.use('/api/sentiment', sentimentRouter);
 app.use('/api/health', healthRouter);
-
-// Legacy health shortcut
 app.get('/health', (_req, res) => res.json({ ok: true, ts: new Date().toISOString(), uptime: process.uptime() }));
 
 // ─── 404 fallback ─────────────────────────────────────────────────────────────
-app.use((_req, res) => {
-  res.status(404).json({ error: 'Not found' });
-});
+app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 
 // ─── Socket.IO ────────────────────────────────────────────────────────────────
 io.on('connection', (socket) => {
   console.log(`[Socket] connected: ${socket.id}`);
-
   socket.on('subscribe_ticker', (ticker: string) => {
-    if (typeof ticker === 'string' && ticker.length <= 10) {
-      socket.join(ticker.toUpperCase());
-      console.log(`[Socket] ${socket.id} subscribed to ${ticker}`);
-    }
+    if (typeof ticker === 'string' && ticker.length <= 10) socket.join(ticker.toUpperCase());
   });
-
-  socket.on('unsubscribe_ticker', (ticker: string) => {
-    socket.leave(ticker.toUpperCase());
-  });
-
-  socket.on('disconnect', () => {
-    console.log(`[Socket] disconnected: ${socket.id}`);
-  });
+  socket.on('unsubscribe_ticker', (ticker: string) => socket.leave(ticker.toUpperCase()));
+  socket.on('disconnect', () => console.log(`[Socket] disconnected: ${socket.id}`));
 });
 
 // ─── Batch broadcast queue ────────────────────────────────────────────────────
@@ -77,9 +67,7 @@ export function queueBroadcast(event: any) {
     batchTimer = setTimeout(() => {
       if (eventQueue.length > 0) {
         io.emit('flow_batch', [...eventQueue]);
-        eventQueue.forEach((e) => {
-          if (e.symbol) io.to(e.symbol).emit('flow_update', e);
-        });
+        eventQueue.forEach((e) => { if (e.symbol) io.to(e.symbol).emit('flow_update', e); });
       }
       eventQueue.length = 0;
       batchTimer = null;
@@ -89,7 +77,6 @@ export function queueBroadcast(event: any) {
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 const PORT = Number(process.env.PORT) || 3001;
-
 httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`[Backend] QuantFlow Pro running on port ${PORT}`);
   console.log(`[Backend] Frontend URL: ${FRONTEND_URL}`);

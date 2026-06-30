@@ -5,16 +5,24 @@ import { isMarketOpen } from '@/lib/utils'
 import { useStore } from '@/store/useStore'
 
 const NAV = [
-  { href: '/flow',           icon: '⚡', label: 'Live Flow',      badge: 'LIVE' },
-  { href: '/dark-pool',      icon: '🌑', label: 'Dark Pool',      badge: null },
-  { href: '/power-alerts',   icon: '🔥', label: 'Power Alerts',   badge: null },
-  { href: '/heat-map',       icon: '🗺', label: 'Heat Map',       badge: null },
-  { href: '/gex',            icon: 'Γ',  label: 'GEX Levels',     badge: null },
-  { href: '/calculator',     icon: '🧮', label: 'P/L Calculator', badge: null },
-  { href: '/optimizer',      icon: '⚙', label: 'Optimizer',      badge: null },
-  { href: '/watchlist',      icon: '★',  label: 'Watchlist',      badge: null },
-  { href: '/settings',       icon: '⚙', label: 'Settings',       badge: null },
+  { href: '/flow',          icon: '⚡', label: 'Live Flow',      badge: 'LIVE', group: 'flow' },
+  { href: '/dark-pool',     icon: '🌑', label: 'Dark Pool',      badge: null,   group: 'flow' },
+  { href: '/power-alerts',  icon: '🔥', label: 'Power Alerts',   badge: null,   group: 'flow' },
+  { href: '/heat-map',      icon: '🗺', label: 'Heat Map',       badge: null,   group: 'flow' },
+  { href: '/gex',           icon: 'Γ',  label: 'GEX Levels',     badge: null,   group: 'analytics' },
+  { href: '/macro',         icon: '📊', label: 'Macro',          badge: 'NEW',  group: 'analytics' },
+  { href: '/news',          icon: '📰', label: 'News & Sentiment', badge: 'NEW', group: 'analytics' },
+  { href: '/calculator',    icon: '🧮', label: 'P/L Calculator', badge: null,   group: 'tools' },
+  { href: '/optimizer',     icon: '⚙', label: 'Optimizer',      badge: null,   group: 'tools' },
+  { href: '/watchlist',     icon: '★',  label: 'Watchlist',      badge: null,   group: 'tools' },
+  { href: '/settings',      icon: '⚙', label: 'Settings',       badge: null,   group: 'tools' },
 ]
+
+const GROUP_LABELS: Record<string, string> = {
+  flow: 'FLOW',
+  analytics: 'ANALYTICS',
+  tools: 'TOOLS',
+}
 
 export function Sidebar() {
   const pathname = usePathname()
@@ -22,8 +30,11 @@ export function Sidebar() {
   const open = isMarketOpen()
   const newAlerts = powerAlerts.filter(a => {
     const d = new Date(a.created_at)
-    return Date.now() - d.getTime() < 300_000 // last 5 min
+    return Date.now() - d.getTime() < 300_000
   }).length
+
+  // Group nav items
+  const groups = ['flow', 'analytics', 'tools']
 
   return (
     <aside className="sidebar">
@@ -58,34 +69,68 @@ export function Sidebar() {
         </div>
       </div>
 
-      {/* Nav */}
-      <nav style={{ flex: 1, padding: '4px 0' }}>
-        {NAV.map(item => {
-          const isActive = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href))
-          const showBadge = item.href === '/power-alerts' && newAlerts > 0
+      {/* Nav — grouped */}
+      <nav style={{ flex: 1, padding: '4px 0', overflowY: 'auto' }}>
+        {groups.map(group => {
+          const items = NAV.filter(n => n.group === group)
           return (
-            <Link key={item.href} href={item.href} className={`nav-item ${isActive ? 'active' : ''}`}>
-              <span style={{ fontSize: 14, width: 20, textAlign: 'center', flexShrink: 0 }}>{item.icon}</span>
-              <span style={{ flex: 1 }}>{item.label}</span>
-              {showBadge && (
-                <span style={{ background: '#ef4444', color: '#fff', fontSize: 10, fontWeight: 700, borderRadius: 10, padding: '1px 6px', fontFamily: "'JetBrains Mono', monospace" }}>
-                  {newAlerts}
-                </span>
-              )}
-              {item.badge && !showBadge && (
-                <span style={{ background: open ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)', color: open ? '#86efac' : '#fca5a5', fontSize: 9, fontWeight: 700, borderRadius: 3, padding: '1px 5px', fontFamily: "'JetBrains Mono', monospace" }}>
-                  {open ? 'LIVE' : 'OFF'}
-                </span>
-              )}
-            </Link>
+            <div key={group}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', padding: '10px 16px 4px', letterSpacing: '0.1em', fontFamily: "'JetBrains Mono', monospace" }}>
+                {GROUP_LABELS[group]}
+              </div>
+              {items.map(item => {
+                const isActive = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href))
+                const showAlertBadge = item.href === '/power-alerts' && newAlerts > 0
+
+                return (
+                  <Link key={item.href} href={item.href} className={`nav-item ${isActive ? 'active' : ''}`}>
+                    <span style={{ fontSize: 14, width: 20, textAlign: 'center', flexShrink: 0 }}>{item.icon}</span>
+                    <span style={{ flex: 1 }}>{item.label}</span>
+
+                    {/* Power alerts count badge */}
+                    {showAlertBadge && (
+                      <span style={{ background: '#ef4444', color: '#fff', fontSize: 10, fontWeight: 700, borderRadius: 10, padding: '1px 6px', fontFamily: "'JetBrains Mono', monospace" }}>
+                        {newAlerts}
+                      </span>
+                    )}
+
+                    {/* "NEW" badge for macro/news */}
+                    {item.badge === 'NEW' && !showAlertBadge && (
+                      <span style={{ background: 'rgba(251,191,36,0.15)', color: '#fbbf24', fontSize: 9, fontWeight: 700, borderRadius: 3, padding: '1px 5px', fontFamily: "'JetBrains Mono', monospace" }}>
+                        NEW
+                      </span>
+                    )}
+
+                    {/* LIVE badge */}
+                    {item.badge === 'LIVE' && !showAlertBadge && (
+                      <span style={{
+                        background: open ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)',
+                        color: open ? '#86efac' : '#fca5a5',
+                        fontSize: 9, fontWeight: 700, borderRadius: 3, padding: '1px 5px', fontFamily: "'JetBrains Mono', monospace"
+                      }}>
+                        {open ? 'LIVE' : 'OFF'}
+                      </span>
+                    )}
+                  </Link>
+                )
+              })}
+            </div>
           )
         })}
       </nav>
 
       {/* Bottom */}
-      <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', fontSize: 10, color: 'var(--text-muted)' }}>
-        <div>QUANTUM EDGE CAPITAL LLC</div>
-        <div style={{ marginTop: 2 }}>Not investment advice</div>
+      <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)' }}>
+        {/* 13 sources indicator */}
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 }}>
+          {['CBOE','FRED','CRYPTO','REDDIT','NEWS','STOOQ'].map(s => (
+            <span key={s} style={{ fontSize: 8, fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, background: 'rgba(34,197,94,0.1)', color: '#86efac', borderRadius: 2, padding: '1px 4px' }}>
+              {s}
+            </span>
+          ))}
+        </div>
+        <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>QUANTUM EDGE CAPITAL LLC</div>
+        <div style={{ marginTop: 2, fontSize: 9, color: 'var(--text-muted)' }}>Not investment advice</div>
       </div>
     </aside>
   )
