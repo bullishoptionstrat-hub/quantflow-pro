@@ -62,3 +62,7 @@ export function classifyByPremium(premium: number, exchangeCount: number): 'SWEE
   if (premium >= 500000) return 'BLOCK';
   return 'SPLIT';
 }
+
+export function classifySweep(input: { size: number; exchanges: string[] }): 'SWEEP' | 'BLOCK' | 'SPLIT' {
+  return classifyByPremium(input.size * 100, input.exchanges.length);
+}
