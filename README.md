@@ -108,15 +108,16 @@ Open http://localhost:3000
 
 1. Push to GitHub
 2. Import repo at https://vercel.com/new
-3. Set env vars from `.env.example`
-4. Update `frontend/vercel.json` rewrites with your Render backend URL
-5. Deploy
+3. Set the project **Root Directory** to `frontend`
+4. Set env vars from `.env.example`
+5. Update `frontend/vercel.json` rewrites with your Render backend URL
+6. Deploy
 
 ### Backend + ML → Render.com
 
 1. Push to GitHub
-2. New Web Service → connect repo
-3. Use `render.yaml` (it auto-detects)
+2. Create a **Blueprint** deployment from the repository root
+3. Select the root `render.yaml`
 4. Add all env vars from `.env.example` in Render dashboard
 5. Deploy
 
