@@ -23,5 +23,8 @@
       "source": "/api/health",
       "destination": "https://quantflow-pro-backend.onrender.com/api/health"
     }
-  ]
+  ],
+  "env": {
+    "NEXT_PUBLIC_WS_URL": "wss://quantflow-pro-backend.onrender.com"
+  }
 }
