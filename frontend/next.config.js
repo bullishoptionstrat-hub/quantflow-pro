@@ -1,9 +1,7 @@
 /** @type {import('next').NextConfig} */
-const isStaticExport = process.env.STATIC_EXPORT === 'true'
-
 const nextConfig = {
   reactStrictMode: true,
-  ...(isStaticExport ? { output: 'export', trailingSlash: true, distDir: 'out' } : {}),
+  trailingSlash: true,
   experimental: { typedRoutes: false },
   images: { unoptimized: true },
   env: {
