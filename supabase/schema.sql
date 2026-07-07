@@ -3,6 +3,7 @@
 
 -- ─── Extensions ──────────────────────────────────────────────────────────────
 create extension if not exists "uuid-ossp";
+create extension if not exists "pgcrypto";
 
 -- ─── Tables ──────────────────────────────────────────────────────────────────
 
@@ -19,7 +20,7 @@ create table if not exists public.user_profiles (
 
 -- API key storage (encrypted at rest via Supabase vault in production)
 create table if not exists public.api_keys (
-  id            uuid primary key default uuid_generate_v4(),
+  id            uuid primary key default gen_random_uuid(),
   user_id       uuid not null references auth.users(id) on delete cascade,
   provider      text not null,   -- 'tradier' | 'polygon' | 'alpaca' | 'finnhub' | etc.
   key_name      text not null,   -- display label
@@ -32,7 +33,7 @@ create table if not exists public.api_keys (
 
 -- Personal watchlist
 create table if not exists public.watchlist (
-  id            uuid primary key default uuid_generate_v4(),
+  id            uuid primary key default gen_random_uuid(),
   user_id       uuid not null references auth.users(id) on delete cascade,
   symbol        text not null,
   label         text,
@@ -45,7 +46,7 @@ create table if not exists public.watchlist (
 
 -- Saved flow filters/screens
 create table if not exists public.saved_filters (
-  id            uuid primary key default uuid_generate_v4(),
+  id            uuid primary key default gen_random_uuid(),
   user_id       uuid not null references auth.users(id) on delete cascade,
   name          text not null,
   filter_json   jsonb not null default '{}',
@@ -55,7 +56,7 @@ create table if not exists public.saved_filters (
 
 -- Power alerts log (persisted for history)
 create table if not exists public.power_alerts (
-  id            uuid primary key default uuid_generate_v4(),
+  id            uuid primary key default gen_random_uuid(),
   user_id       uuid references auth.users(id) on delete set null,
   symbol        text not null,
   type          text not null,   -- 'SWEEP' | 'BLOCK' | 'UNUSUAL'
@@ -69,7 +70,7 @@ create table if not exists public.power_alerts (
 
 -- Cached price history (populated by backend worker)
 create table if not exists public.price_history (
-  id            uuid primary key default uuid_generate_v4(),
+  id            uuid primary key default gen_random_uuid(),
   symbol        text not null,
   interval      text not null default '1d',  -- '1m' | '5m' | '1h' | '1d'
   open          numeric(12, 4),
