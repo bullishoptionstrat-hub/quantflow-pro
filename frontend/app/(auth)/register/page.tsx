@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { supabase } from '@/lib/supabase';
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -26,18 +27,11 @@ export default function RegisterPage() {
     }
     setLoading(true);
     try {
-      const res = await fetch('/api/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
-      if (!res.ok) {
-        const d = await res.json();
-        throw new Error(d.error || 'Registration failed');
-      }
+      const { error } = await supabase.auth.signUp({ email, password });
+      if (error) throw error;
       setSuccess(true);
     } catch (err: any) {
-      setError(err.message);
+      setError(err.message || 'Registration failed');
     } finally {
       setLoading(false);
     }
@@ -46,7 +40,6 @@ export default function RegisterPage() {
   return (
     <div className="min-h-screen bg-[#09090b] flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
-        {/* Logo */}
         <div className="flex items-center gap-2 justify-center mb-8">
           <svg viewBox="0 0 32 32" width="32" height="32" fill="none" aria-label="QuantFlow Pro">
             <circle cx="16" cy="16" r="14" stroke="#8b5cf6" strokeWidth="2" />
