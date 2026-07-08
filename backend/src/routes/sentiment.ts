@@ -5,11 +5,19 @@ import { getFMPNews, getEarnings, getInsiderTrades } from '../ingestion/connecto
 
 const router = Router();
 
-function getSymbols(item: ReturnType<typeof getNewsHeadlines>[number] | ReturnType<typeof getFMPNews>[number]): string[] {
-  return 'symbols' in item ? item.symbols : [item.symbol];
+function getItemSymbols(
+  item: ReturnType<typeof getNewsHeadlines>[number] | ReturnType<typeof getFMPNews>[number],
+): string[] {
+  if ('symbols' in item) {
+    return item.symbols;
+  }
+
+  return item.symbol ? [item.symbol] : [];
 }
 
-function getPublishedAt(item: ReturnType<typeof getNewsHeadlines>[number] | ReturnType<typeof getFMPNews>[number]): string {
+function getPublishedTimestamp(
+  item: ReturnType<typeof getNewsHeadlines>[number] | ReturnType<typeof getFMPNews>[number],
+): string {
   return 'publishedAt' in item ? item.publishedAt : item.publishedDate;
 }
 
@@ -29,7 +37,7 @@ router.get('/', (_req: Request, res: Response) => {
   });
 
   [...news, ...fmpNews].forEach(n => {
-    getSymbols(n).forEach(sym => {
+    getItemSymbols(n).forEach((sym) => {
       if (!symbolScores[sym]) symbolScores[sym] = { reddit: 0, news: 0, combined: 0, mentions: 0 };
       const score = n.sentiment === 'bullish' ? 10 : n.sentiment === 'bearish' ? -10 : 0;
       symbolScores[sym].news += score;
@@ -53,7 +61,7 @@ router.get('/', (_req: Request, res: Response) => {
 router.get('/:symbol', (req: Request, res: Response) => {
   const symbol = req.params.symbol.toUpperCase();
   const reddit = getSymbolSentiment(symbol);
-  const symbolNews = getNewsHeadlines().filter(n => getSymbols(n).includes(symbol)).slice(0, 20);
+  const symbolNews = getNewsHeadlines().filter(n => getItemSymbols(n).includes(symbol)).slice(0, 20);
   const fmpSymbolNews = getFMPNews().filter(n => n.symbol === symbol).slice(0, 10);
 
   res.json({
@@ -69,7 +77,7 @@ router.get('/news/headlines', (_req: Request, res: Response) => {
   const all = [
     ...getNewsHeadlines().slice(0, 100),
     ...getFMPNews().slice(0, 50),
-  ].sort((a, b) => new Date(getPublishedAt(b)).getTime() - new Date(getPublishedAt(a)).getTime());
+  ].sort((a, b) => new Date(getPublishedTimestamp(b)).getTime() - new Date(getPublishedTimestamp(a)).getTime());
 
   res.json({ headlines: all.slice(0, 100), total: all.length });
 });
