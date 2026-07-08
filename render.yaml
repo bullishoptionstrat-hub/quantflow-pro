@@ -12,7 +12,7 @@ services:
       - key: NODE_ENV
         value: production
       - key: FRONTEND_URL
-        sync: false
+        sync: false  # set in Render dashboard
       - key: TRADIER_TOKEN
         sync: false
       - key: POLYGON_API_KEY
