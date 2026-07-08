@@ -1,20 +1,18 @@
 services:
   - type: web
     name: quantflow-pro-backend
-    env: node
+    runtime: node
+    rootDir: backend
     region: ohio
     plan: free
-    rootDir: backend
     buildCommand: npm install && npm run build
     startCommand: node dist/server.js
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: "3001"
       - key: FRONTEND_URL
-        sync: false
+        sync: false  # set in Render dashboard
       - key: TRADIER_TOKEN
         sync: false
       - key: POLYGON_API_KEY
@@ -36,13 +34,10 @@ services:
 
   - type: web
     name: quantflow-pro-ml
-    env: python
+    runtime: python
+    rootDir: ml-service
     region: ohio
     plan: free
-    rootDir: ml-service
     buildCommand: pip install -r requirements.txt && python train.py
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
-    envVars:
-      - key: PORT
-        value: "8000"
