@@ -1,0 +1,19 @@
+{
+  // Typecheck-everything graph. `tsconfig.json` stays the BUILD graph (src only,
+  // rootDir src, emits to dist). This one adds every file that the build config
+  // silently excluded — tests and scripts — so they cannot drift unnoticed.
+  //
+  // Kept as a separate file rather than widening `tsconfig.json`, because
+  // widening `include` while `rootDir: ./src` is set breaks `tsc` emit.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "rootDir": ".",
+    "types": ["node"]
+  },
+  "include": ["src/**/*", "test/**/*", "scripts/**/*"],
+  "exclude": ["node_modules", "dist", ".test-build"]
+}

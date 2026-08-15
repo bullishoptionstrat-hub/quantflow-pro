@@ -4,7 +4,10 @@
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
     "build": "tsc",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "typecheck": "tsc -p tsconfig.all.json",
+    "pretest": "rm -rf .test-build && tsc -p tsconfig.test.json",
+    "test": "node --test \".test-build/test/**/*.test.js\""
   },
   "dependencies": {
     "axios": "^1.7.2",

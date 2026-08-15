@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import axios from 'axios';
+import { syntheticGeneratorsAllowed } from '../config/dataMode';
 
 const router = Router();
 
@@ -12,7 +13,9 @@ router.get('/', async (req: Request, res: Response) => {
   const expiration = (req.query.expiration as string) || '';
 
   if (!TRADIER_TOKEN) {
-    // Return mock chain if no token
+    if (!syntheticGeneratorsAllowed()) {
+      return res.status(503).json({ symbol, expiration, error: 'chain_unavailable', detail: 'No upstream chain provider configured and synthetic chains are disabled in live mode.' });
+    }
     return res.json(buildMockChain(symbol, expiration));
   }
 
@@ -35,6 +38,10 @@ router.get('/', async (req: Request, res: Response) => {
     res.json({ symbol, expiration, strikes, calls, puts, source: 'tradier' });
   } catch (err: any) {
     console.error('[chain] tradier error:', err.message);
+    if (!syntheticGeneratorsAllowed()) {
+      res.status(502).json({ symbol, expiration, error: 'chain_upstream_failed', detail: 'Upstream chain request failed; synthetic fallback is disabled in live mode.' });
+      return;
+    }
     res.json(buildMockChain(symbol, expiration));
   }
 });
@@ -44,7 +51,10 @@ router.get('/expirations', async (req: Request, res: Response) => {
   const symbol = ((req.query.symbol as string) || 'SPY').toUpperCase();
 
   if (!TRADIER_TOKEN) {
-    return res.json({ symbol, expirations: generateExpirations() });
+    if (!syntheticGeneratorsAllowed()) {
+      return res.status(503).json({ symbol, error: 'expirations_unavailable', detail: 'No upstream provider configured and generated expirations are disabled in live mode.' });
+    }
+    return res.json({ symbol, expirations: generateExpirations(), synthetic: true });
   }
 
   try {
@@ -58,7 +68,11 @@ router.get('/expirations', async (req: Request, res: Response) => {
     res.json({ symbol, expirations: Array.isArray(dates) ? dates : [dates] });
   } catch (err: any) {
     console.error('[chain] expirations error:', err.message);
-    res.json({ symbol, expirations: generateExpirations() });
+    if (!syntheticGeneratorsAllowed()) {
+      res.status(502).json({ symbol, error: 'expirations_upstream_failed', detail: 'Upstream request failed; generated expirations are disabled in live mode.' });
+      return;
+    }
+    res.json({ symbol, expirations: generateExpirations(), synthetic: true });
   }
 });
 
@@ -122,7 +136,7 @@ function buildMockChain(symbol: string, expiration: string) {
     },
   }));
 
-  return { symbol, expiration, strikes, calls, puts, source: 'mock' };
+  return { symbol, expiration, strikes, calls, puts, source: 'mock', synthetic: true as const };
 }
 
 export default router;

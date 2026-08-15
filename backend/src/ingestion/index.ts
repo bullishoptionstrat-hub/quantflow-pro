@@ -8,6 +8,12 @@ import axios from 'axios';
 import WebSocket from 'ws';
 import { computeHeatScore } from './heatScore';
 import { classifySweep } from './sweepDetector';
+import {
+  markSynthetic,
+  rejectEmission,
+  resolveDataMode,
+  syntheticGeneratorsAllowed,
+} from '../config/dataMode';
 
 // ─── 13 New Connectors ───────────────────────────────────────────────────────
 import { startFlashAlpha, getFlashGEX } from './connectors/flashAlpha';
@@ -82,6 +88,12 @@ export interface FlowEvent {
   exchange?: string;
   conditions?: string[];
   unusualScore?: number;
+  /**
+   * Present and true only for locally generated records. Absent means the
+   * record came from an upstream feed. Never set to false — absence is the
+   * negative case, so a forgotten field cannot read as "this is real".
+   */
+  synthetic?: true;
 }
 
 export interface DarkPoolPrint {
@@ -93,6 +105,8 @@ export interface DarkPoolPrint {
   notional: number;
   exchange: string;
   source: string;
+  /** See FlowEvent.synthetic. */
+  synthetic?: true;
 }
 
 export interface GEXLevel {
@@ -102,6 +116,8 @@ export interface GEXLevel {
   putOI: number;
   callGamma: number;
   putGamma: number;
+  /** See FlowEvent.synthetic. */
+  synthetic?: true;
 }
 
 // ─── In-memory stores ───────────────────────────────────────────────────────
@@ -132,6 +148,10 @@ export function getGEXLevels(symbol: string): GEXLevel[] {
   if (cached && Date.now() - cached.fetchedAt < 60_000) {
     return cached.levels;
   }
+  // In live mode there is no synthetic fallback: an empty surface is honest,
+  // a generated one is not.
+  if (!syntheticGeneratorsAllowed()) return [];
+
   const levels = generateSyntheticGEX(symbol);
   gexCache[symbol] = { levels, fetchedAt: Date.now() };
   return levels;
@@ -161,7 +181,7 @@ export function getFlowStats() {
 }
 
 export function getIngestionStatus() {
-  return { active: ingestionActive, sources };
+  return { active: ingestionActive, dataMode: resolveDataMode(), sources };
 }
 
 // ─── Initializer ────────────────────────────────────────────────────────────
@@ -170,8 +190,15 @@ export function startIngestion(io: any): void {
   ioInstance = io;
   ingestionActive = true;
 
-  // Seed with realistic data immediately
-  seedInitialData();
+  const dataMode = resolveDataMode();
+  console.log(`[ingestion] DATA_MODE=${dataMode}`);
+
+  // Seeding is generation, not ingestion. It runs in demo mode only.
+  if (syntheticGeneratorsAllowed()) {
+    seedInitialData();
+  } else {
+    console.log('[ingestion] live mode — synthetic seed, GEX and dark-pool generators disabled');
+  }
 
   // ── Legacy connectors ──
   startTradierIngestion();
@@ -246,15 +273,17 @@ export function startIngestion(io: any): void {
     console.log(`[ingestion] ${connected}/13 new connectors started`);
   });
 
-  // Refresh GEX every 60 seconds
-  setInterval(() => {
-    ['SPX', 'SPY', 'QQQ', 'NVDA'].forEach((s) => {
-      gexCache[s] = { levels: generateSyntheticGEX(s), fetchedAt: Date.now() };
-    });
-  }, 60_000);
+  if (syntheticGeneratorsAllowed()) {
+    // Refresh synthetic GEX every 60 seconds (demo mode only)
+    setInterval(() => {
+      ['SPX', 'SPY', 'QQQ', 'NVDA'].forEach((s) => {
+        gexCache[s] = { levels: generateSyntheticGEX(s), fetchedAt: Date.now() };
+      });
+    }, 60_000);
 
-  // Dark pool simulation refresh every 5 minutes
-  setInterval(addDarkPoolPrints, 300_000);
+    // Simulated print refresh every 5 minutes (demo mode only)
+    setInterval(addDarkPoolPrints, 300_000);
+  }
 
   console.log('[ingestion] v2 started — seeded', flowEvents.length, 'events, 13 new connectors initializing');
 }
@@ -272,7 +301,7 @@ let tradierWs: WebSocket | null = null;
 
 function startTradierIngestion(): void {
   if (!TRADIER_TOKEN) {
-    console.log('[tradier] No token — skipping WebSocket, using simulation');
+    console.log('[tradier] No token — skipping WebSocket');
     sources['tradier'] = 'disabled';
     startSimulationFeed();
     return;
@@ -470,8 +499,16 @@ function startFinnhubIngestion(): void {
 
 let simInterval: ReturnType<typeof setInterval> | null = null;
 
-function startSimulationFeed(): void {
+export function startSimulationFeed(): void {
   if (simInterval) return;
+
+  // Hard gate: the simulation generator does not start in live mode. A live
+  // deployment with no upstream feed shows an empty tape, not invented flow.
+  if (!syntheticGeneratorsAllowed()) {
+    sources['simulation'] = 'disabled';
+    console.log('[ingestion] live mode — simulation feed refused');
+    return;
+  }
 
   const SYMBOLS = ['SPY', 'QQQ', 'NVDA', 'AAPL', 'TSLA', 'MSFT', 'MSTR', 'AMD'];
   const spotPrices: Record<string, number> = {
@@ -522,7 +559,9 @@ function generateFlowFromSpot(symbol: string, spotPrice: number, source: string)
     ? (fillPrice > (bid + ask) / 2 ? 'bullish' : 'neutral')
     : (fillPrice > (bid + ask) / 2 ? 'bearish' : 'neutral');
 
-  addFlowEvent({
+  // Every record from this function is invented from a spot price — there is
+  // no observed option trade behind it, whatever `source` says. Always tagged.
+  addFlowEvent(markSynthetic({
     id: `sim-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     timestamp: new Date().toISOString(),
     symbol, expiration: expStr, strike,
@@ -530,10 +569,21 @@ function generateFlowFromSpot(symbol: string, spotPrice: number, source: string)
     type, size, premium, heatScore, sentiment, source,
     bid, ask,
     unusualScore: heatScore > 70 ? Math.round(heatScore + Math.random() * 10) : undefined,
-  });
+  }));
 }
 
-function addFlowEvent(event: FlowEvent): void {
+/**
+ * The single emit boundary for flow events. Every generator and connector
+ * funnels through here, so the provenance rules are enforced in exactly one
+ * place and cannot be bypassed by adding a new producer.
+ */
+export function addFlowEvent(event: FlowEvent): void {
+  const rejection = rejectEmission(event);
+  if (rejection) {
+    console.warn(`[ingestion] dropped event id=${event.id} source=${event.source}: ${rejection}`);
+    return;
+  }
+
   flowEvents.unshift(event);
   if (flowEvents.length > MAX_FLOW_EVENTS) {
     flowEvents = flowEvents.slice(0, MAX_FLOW_EVENTS);
@@ -545,6 +595,8 @@ function addFlowEvent(event: FlowEvent): void {
 }
 
 function addDarkPoolPrints(): void {
+  if (!syntheticGeneratorsAllowed()) return;
+
   const SYMBOLS = ['SPY', 'QQQ', 'NVDA', 'AAPL', 'TSLA', 'MSFT', 'AMD'];
   const spots: Record<string, number> = {
     SPY: 580, QQQ: 480, NVDA: 140, AAPL: 220, TSLA: 250, MSFT: 410, AMD: 165,
@@ -555,7 +607,7 @@ function addDarkPoolPrints(): void {
     const price = spots[symbol] * (1 + (Math.random() - 0.5) * 0.01);
     const size = Math.floor(Math.random() * 100_000 + 10_000);
 
-    darkPoolPrints.unshift({
+    darkPoolPrints.unshift(markSynthetic({
       id: `dp-${Date.now()}-${i}`,
       timestamp: new Date(Date.now() - 86_400_000).toISOString(),
       symbol,
@@ -564,7 +616,7 @@ function addDarkPoolPrints(): void {
       notional: parseFloat((price * size).toFixed(0)),
       exchange: ['FINRA', 'IEX', 'EDGX'][Math.floor(Math.random() * 3)],
       source: 'simulation',
-    });
+    }));
   }
 
   if (darkPoolPrints.length > MAX_DP_PRINTS) {
@@ -607,7 +659,7 @@ function seedInitialData(): void {
 
     const type = classifySweep({ size, exchanges: size > 200 ? ['C', 'P', 'X'] : ['C'] });
 
-    flowEvents.push({
+    flowEvents.push(markSynthetic({
       id: `seed-${i}-${Math.random().toString(36).slice(2, 6)}`,
       timestamp: ts.toISOString(),
       symbol, expiration: expStr, strike,
@@ -618,7 +670,7 @@ function seedInitialData(): void {
         : fillPrice > (bid + ask) / 2 ? 'bearish' : 'neutral',
       source: 'seed', bid, ask,
       unusualScore: heatScore > 70 ? Math.round(heatScore + Math.random() * 10) : undefined,
-    });
+    }));
   }
 
   flowEvents.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
@@ -648,13 +700,13 @@ function generateSyntheticGEX(symbol: string): GEXLevel[] {
     const putGamma = 0.025 * Math.exp(-distFromSpot * 0.4);
     const netGEX = (callOI * callGamma - putOI * putGamma) * spot * spot * 0.01;
 
-    levels.push({
+    levels.push(markSynthetic({
       strike,
       gex: parseFloat(netGEX.toFixed(2)),
       callOI, putOI,
       callGamma: parseFloat(callGamma.toFixed(6)),
       putGamma: parseFloat(putGamma.toFixed(6)),
-    });
+    }));
   }
 
   return levels.sort((a, b) => a.strike - b.strike);

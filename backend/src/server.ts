@@ -13,8 +13,14 @@ import healthRouter from './routes/health';
 import macroRouter from './routes/macro';
 import sentimentRouter from './routes/sentiment';
 import { rateLimiter } from './middleware/rateLimiter';
+import { assertEnvOrExit } from './config/env';
+import { resolveDataMode } from './config/dataMode';
 
 config();
+
+// Must run after dotenv and before anything reads a secret. Refuses to boot in
+// production when a required secret is missing or blank. Logs names, never values.
+assertEnvOrExit();
 
 export const app = express();
 export const httpServer = createServer(app);
@@ -80,6 +86,7 @@ const PORT = Number(process.env.PORT) || 3001;
 httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`[Backend] QuantFlow Pro running on port ${PORT}`);
   console.log(`[Backend] Frontend URL: ${FRONTEND_URL}`);
+  console.log(`[Backend] DATA_MODE: ${resolveDataMode()}`);
   startIngestion(io);
 });
 

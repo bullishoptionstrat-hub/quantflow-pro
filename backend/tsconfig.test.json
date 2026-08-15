@@ -1,0 +1,16 @@
+{
+  // Compiles src + test to .test-build so `node --test` can run them with no
+  // extra runtime dependency (tsc is already a devDependency).
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "./.test-build",
+    "rootDir": ".",
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": true,
+    "types": ["node"]
+  },
+  "include": ["src/**/*", "test/**/*"],
+  "exclude": ["node_modules", "dist", ".test-build"]
+}
