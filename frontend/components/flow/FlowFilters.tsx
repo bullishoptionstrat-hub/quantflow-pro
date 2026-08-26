@@ -2,7 +2,7 @@
 import { useStore } from '@/store/useStore'
 
 const OPTION_TYPES = [['ALL', 'All Types'], ['C', 'CALLS'], ['P', 'PUTS']]
-const ORDER_TYPES = [['ALL', 'All Orders'], ['SWEEP', 'SWEEP'], ['BLOCK', 'BLOCK'], ['SPLIT', 'SPLIT']]
+const ORDER_TYPES = [['ALL', 'All Orders'], ['SWEEP', 'SWEEP'], ['BLOCK', 'BLOCK'], ['SPLIT', 'SPLIT'], ['MULTI_LEG', 'MULTI-LEG'], ['LARGE', 'LARGE']]
 const SENTIMENTS = [['ALL', 'All Sentiment'], ['BULLISH', 'BULLISH'], ['BEARISH', 'BEARISH'], ['NEUTRAL', 'NEUTRAL']]
 const HEAT_LEVELS = [[0, 'All Heat'], [40, '40+ Warm'], [65, '65+ Hot'], [75, '75+ 🔥 Fire']]
 const PREMIUM_LEVELS = [[25000, '$25K+'], [100000, '$100K+'], [500000, '$500K+'], [1000000, '$1M+'], [5000000, '$5M+'], [10000000, '$10M+']]

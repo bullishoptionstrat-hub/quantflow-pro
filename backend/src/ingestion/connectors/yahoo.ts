@@ -3,7 +3,7 @@
  * No API key required — public endpoints
  */
 import axios from 'axios';
-import { FlowEvent } from '../index';
+import { LegacyFlowEvent as FlowEvent } from '../index';
 import { computeHeatScore } from '../heatScore';
 import { classifySweep } from '../sweepDetector';
 

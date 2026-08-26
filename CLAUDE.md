@@ -13,10 +13,11 @@ Next.js 14 frontend (Vercel)  <-- REST + Socket.IO -->  Node/Express backend (Re
 ```
 
 - **`frontend/`** — Next.js 14 App Router, TypeScript, Zustand (`store/useStore.ts`) for client state, Socket.IO client (`lib/socket.ts`) for the live flow feed, Supabase SSR client for auth. Routes live under `app/` as one directory per feature (`flow`, `dark-pool`, `gex`, `heat-map`, `calculator`, `optimizer`, `power-alerts`, `watchlist`, `macro`, `news`, `settings`, `(auth)`). `middleware.ts` gates every non-auth, non-`/api` route behind a Supabase session, redirecting to `/login` when absent.
-- **`backend/`** — Express + Socket.IO server (`src/server.ts`). `startIngestion(io)` (`src/ingestion/index.ts`) drives a pull/push pipeline from many market-data connectors (`src/ingestion/connectors/*` — Tradier, Polygon, Alpaca, Finnhub, plus 13 free-tier connectors: FlashAlpha, MarketData.app, Schwab, Tastytrade, TwelveData, FMP, CoinGecko, FRED, Reddit, NewsAPI, CBOE, Yahoo, Stooq), scores each event with `heatScore.ts` and classifies it (sweep/block/split) with `sweepDetector.ts`, then batches and broadcasts over Socket.IO (`queueBroadcast` in `server.ts`, 100ms batch window, both a global `flow_batch` and a per-symbol room emit). REST routes under `src/routes/*` mirror the API reference below. When no live vendor keys are configured, ingestion falls back to an always-on simulation mode so the app still functions.
+- **`backend/`** — Express + Socket.IO server (`src/server.ts`). `startIngestion(io)` (`src/ingestion/index.ts`) drives a pull/push pipeline from many market-data connectors (`src/ingestion/connectors/*` — Tradier, Polygon, Alpaca, Finnhub, plus 13 free-tier connectors: FlashAlpha, MarketData.app, Schwab, Tastytrade, TwelveData, FMP, CoinGecko, FRED, Reddit, NewsAPI, CBOE, Yahoo, Stooq). Every source normalizes to a `RawPrint` and funnels through `ingestPrint()` in `src/ingestion/flowEngineAdapter.ts`, which publishes the contract's NBBO, feeds the trade to the flow engine (`src/flow-engine/`), and maps finalized signals onto the wire shape. Signals are batched by `emitSignals` (100ms window) and broadcast as a **single global `flow_batch`**. REST routes under `src/routes/*` mirror the API reference below. When no live vendor keys are configured, ingestion falls back to an always-on simulation mode so the app still functions.
+- **`backend/src/flow-engine/`** — the classification + scoring engine, vendored from `quantflow-modules/flow-engine` (the module is ESM; the backend is CJS, so it is copied rather than imported, with relative-import extensions stripped). It is byte-identical to the module apart from an added `resetDaily()`. **Change the engine here, and mirror it to the module** — or the module's test suite stops being a valid baseline for what ships.
 - **`ml-service/`** — FastAPI service (`main.py`) exposing `/score` and `/score/batch` for unusual-flow scoring. Uses a trained `GradientBoostingClassifier` (`train.py` → `models/flow_scorer.pkl`) when present, otherwise falls back to a heuristic scorer — training the model is optional, not required to run the service.
 - **`supabase/`** — `schema.sql` (source of truth, run manually in the Supabase SQL editor) plus `migrations/` for incremental changes. Tables are RLS-protected; `user_profiles` extends `auth.users`, and `api_keys.key_value` is a plaintext column intended to be encrypted via Supabase Vault in production (not yet wired up — treat as sensitive).
-- **`quantflow-modules/`** — standalone, **not yet integrated** into `backend/`. `flow-engine/` is a from-scratch options-flow classification engine (sweep/block/split/multi-leg, NBBO side inference, deterministic unusualness scoring, outcome tracking) meant to eventually replace/upgrade `backend/src/ingestion/{heatScore,sweepDetector}.ts`; it has its own test suite and a Polygon replay adapter for validating against real historical tape. `firecrawl/` is a web-enrichment module (FINRA doc sync, news context, research workflows). Check whether work belongs here vs. in `backend/src/ingestion` before duplicating logic.
+- **`quantflow-modules/`** — `flow-engine/` is the canonical home of the classification engine (sweep/block/split/multi-leg, NBBO side inference, deterministic unusualness scoring, outcome tracking) and holds the engine test suite plus the Polygon replay adapter for validating against real historical tape. It is **now integrated** into the backend via the vendored copy described above. `firecrawl/` is a web-enrichment module (FINRA doc sync, news context, research workflows) and remains **not integrated**. Check whether work belongs here vs. in `backend/src/ingestion` before duplicating logic.
 - Root-level `qf-firecrawl (1).zip`, `qf-flow-engine.zip`, `quantflow.zip` are uploaded archives, not part of the working tree — the unpacked, current sources are `quantflow-modules/` and this repo itself.
 
 ## Commands
@@ -32,14 +33,16 @@ npm run lint      # next lint — no test script defined
 cd backend && npm install
 npm run dev       # ts-node-dev, auto-restart, http://localhost:3001
 npm run build      # tsc -> dist/
-npm start          # node dist/server.js — no test/lint script defined
+npm start          # node dist/server.js
+npm test          # tsx --test test/*.test.ts — adapter/wire-mapping tests
+npm run typecheck  # tsc --noEmit
 
 # ML service
 cd ml-service && pip install -r requirements.txt
 python train.py                              # optional: trains models/flow_scorer.pkl
 uvicorn main:app --reload --port 8000
 
-# flow-engine module (standalone, not wired into backend yet)
+# flow-engine module (canonical source; backend ships a vendored copy)
 cd quantflow-modules/flow-engine && npm install
 npm test        # tsx --test test/engine.test.ts test/outcome.test.ts
 npm run typecheck
@@ -51,6 +54,9 @@ Deployment: frontend → Vercel (root directory `frontend`, rewrites in `fronten
 
 ## Notes
 
-- There is no automated test suite for `backend/` or `frontend/` — only `quantflow-modules/flow-engine` has tests (`node:test`, run via `tsx`). Verify backend/frontend changes by running the dev servers and exercising the affected routes/pages manually.
+- Tests cover the flow engine (`quantflow-modules/flow-engine`, 14 tests) and the backend adapter seam (`backend/test`, 10 tests) — both `node:test` via `tsx`. `frontend/` has none. Verify frontend changes and route behaviour by running the dev servers and exercising the affected pages manually.
+- **The flow event wire shape is `frontend/lib/types.ts` `FlowEvent`** — snake_case, shared by `/api/flow` and the `flow_batch` socket event. (Before the engine integration the backend emitted an unrelated camelCase shape that the frontend silently failed to read.) Change it in both places at once; `getFlowStats()` and `routes/flow.ts` filter on these field names and would return empty results, not errors, if they drift.
+- Side inference is `AMBIGUOUS` whenever the NBBO is missing or stale, and that carries a -15 score penalty — it is a deliberate honesty contract, not a bug. The Polygon trades path has no quote feed, so its signals are non-directional until one is wired up. Chain-snapshot connectors (marketData, schwab, tastytrade, yahoo) synthesize prints from aggregate volume and are flagged `synthetic: true` on the wire.
+- `heatScore.ts` / `sweepDetector.ts` are superseded by the flow engine. Four connectors still import them to build their own events, but those values are discarded by the adapter — do not add new callers.
 - The backend's CORS and Socket.IO config both currently allow `origin: '*'` — be deliberate before tightening or relying on this for anything security-sensitive.
 - Simulation/fallback mode means the app is fully functional without any live market-data API keys configured; don't assume missing keys are a bug when testing locally.

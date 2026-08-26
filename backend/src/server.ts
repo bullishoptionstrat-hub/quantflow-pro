@@ -57,23 +57,11 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => console.log(`[Socket] disconnected: ${socket.id}`));
 });
 
-// ─── Batch broadcast queue ────────────────────────────────────────────────────
-const eventQueue: any[] = [];
-let batchTimer: ReturnType<typeof setTimeout> | null = null;
-
-export function queueBroadcast(event: any) {
-  eventQueue.push(event);
-  if (!batchTimer) {
-    batchTimer = setTimeout(() => {
-      if (eventQueue.length > 0) {
-        io.emit('flow_batch', [...eventQueue]);
-        eventQueue.forEach((e) => { if (e.symbol) io.to(e.symbol).emit('flow_update', e); });
-      }
-      eventQueue.length = 0;
-      batchTimer = null;
-    }, 100);
-  }
-}
+// ─── Batch broadcast ──────────────────────────────────────────────────────────
+// Batching lives in `ingestion/index.ts` (`emitSignals`), which owns the io
+// handle and the engine's output. The former `queueBroadcast` here was never
+// called, and emitted both a global `flow_batch` and a per-symbol
+// `flow_update` — delivering every event twice to room subscribers.
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 const PORT = Number(process.env.PORT) || 3001;

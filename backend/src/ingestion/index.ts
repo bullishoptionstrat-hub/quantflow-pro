@@ -1,13 +1,21 @@
 /**
- * QuantFlow Pro — Ingestion Pipeline v2
- * Sources: Tradier, Polygon, Finnhub + 13 new free connectors:
+ * QuantFlow Pro — Ingestion Pipeline v3
+ *
+ * Classification and scoring run through `flowEngineAdapter` (the vendored
+ * flow-engine), not the legacy heatScore/sweepDetector pair. Every source
+ * normalizes to a RawPrint and funnels through `ingestPrint()`; the engine
+ * emits classified signals on burst close, which are batched to Socket.IO.
+ *
+ * Sources: Tradier, Polygon, Finnhub + 13 free connectors:
  *   FlashAlpha · MarketData.app · Schwab · Tastytrade · TwelveData · FMP
  *   CoinGecko · FRED · Reddit · NewsAPI · CBOE · Yahoo · Stooq
  */
 import axios from 'axios';
 import WebSocket from 'ws';
-import { computeHeatScore } from './heatScore';
-import { classifySweep } from './sweepDetector';
+import {
+  ingestPrint, drainIdle, resetDaily,
+  type RawPrint, type WireFlowEvent,
+} from './flowEngineAdapter';
 
 // ─── 13 New Connectors ───────────────────────────────────────────────────────
 import { startFlashAlpha, getFlashGEX } from './connectors/flashAlpha';
@@ -62,7 +70,18 @@ export {
 
 // ─── Types (re-exported for routes) ────────────────────────────────────────
 
-export interface FlowEvent {
+/**
+ * Wire contract for flow events — matches `frontend/lib/types.ts` FlowEvent.
+ * (The pre-v3 backend emitted a camelCase shape the frontend never read
+ * correctly; the two are now the same contract.)
+ */
+export type FlowEvent = WireFlowEvent;
+
+/**
+ * The camelCase shape still emitted by the chain-snapshot connectors
+ * (marketData, schwab, tastytrade, yahoo). Converted to RawPrint on arrival.
+ */
+export interface LegacyFlowEvent {
   id: string;
   timestamp: string;
   symbol: string;
@@ -120,7 +139,12 @@ let sources: Record<string, 'connected' | 'error' | 'disabled'> = {};
 // ─── Public getters ─────────────────────────────────────────────────────────
 
 export function getRecentFlow(): FlowEvent[] {
-  return [...flowEvents];
+  // Newest first. Bursts finalize per underlying, so a cluster that closes
+  // late can carry an older timestamp than one already emitted — insertion
+  // order alone does not guarantee a descending feed.
+  return [...flowEvents].sort(
+    (a, b) => Date.parse(b.created_at) - Date.parse(a.created_at),
+  );
 }
 
 export function getDarkPoolPrints(): DarkPoolPrint[] {
@@ -139,12 +163,11 @@ export function getGEXLevels(symbol: string): GEXLevel[] {
 
 export function getFlowStats() {
   const events = flowEvents;
-  const calls = events.filter((e) => e.callPut === 'C');
-  const puts = events.filter((e) => e.callPut === 'P');
-  const callPremium = calls.reduce((s, e) => s + e.premium, 0);
-  const putPremium = puts.reduce((s, e) => s + e.premium, 0);
+  const calls = events.filter((e) => e.option_type === 'C');
+  const puts = events.filter((e) => e.option_type === 'P');
+  const callPremium = calls.reduce((s, e) => s + e.total_premium, 0);
+  const putPremium = puts.reduce((s, e) => s + e.total_premium, 0);
   const totalPremium = callPremium + putPremium;
-  const sweeps = events.filter((e) => e.type === 'SWEEP').length;
 
   return {
     totalTrades: events.length,
@@ -152,10 +175,16 @@ export function getFlowStats() {
     callPremium,
     putPremium,
     callPutRatio: puts.length > 0 ? parseFloat((calls.length / puts.length).toFixed(2)) : 0,
-    sweepCount: sweeps,
-    bullishCount: events.filter((e) => e.sentiment === 'bullish').length,
-    bearishCount: events.filter((e) => e.sentiment === 'bearish').length,
-    unusualCount: events.filter((e) => (e.unusualScore ?? 0) >= 75).length,
+    sweepCount: events.filter((e) => e.order_type === 'SWEEP').length,
+    blockCount: events.filter((e) => e.order_type === 'BLOCK').length,
+    splitCount: events.filter((e) => e.order_type === 'SPLIT').length,
+    multiLegCount: events.filter((e) => e.order_type === 'MULTI_LEG').length,
+    bullishCount: events.filter((e) => e.sentiment === 'BULLISH').length,
+    bearishCount: events.filter((e) => e.sentiment === 'BEARISH').length,
+    /** Side could not be inferred — NBBO missing or stale. Not a direction. */
+    ambiguousCount: events.filter((e) => e.side === 'AMBIGUOUS').length,
+    unusualCount: events.filter((e) => e.is_unusual).length,
+    syntheticCount: events.filter((e) => e.synthetic).length,
     sources,
   };
 }
@@ -179,11 +208,17 @@ export function startIngestion(io: any): void {
   startFinnhubIngestion();
 
   // ── 13 New connectors ──
-  // Wire incoming flow events from market-data connectors into central store
-  onMarketDataFlow((e) => addFlowEvent({ ...e, source: 'marketdata' }));
-  onSchwabFlow((e) => addFlowEvent({ ...e, source: 'schwab' }));
-  onTastytradeFlow((e) => addFlowEvent({ ...e, source: 'tastytrade' }));
-  onYahooFlow((e) => addFlowEvent({ ...e, source: 'yahoo' }));
+  // The chain-snapshot connectors still build their own camelCase events with
+  // the legacy scorer; convert them to RawPrints so classification and scoring
+  // happen in one place. (Their internal heat/type values are discarded.)
+  const feedLegacy = (source: string) => (e: any) => {
+    const print = legacyEventToPrint(e, source);
+    if (print) emitSignals(ingestPrint(print));
+  };
+  onMarketDataFlow(feedLegacy('marketdata'));
+  onSchwabFlow(feedLegacy('schwab'));
+  onTastytradeFlow(feedLegacy('tastytrade'));
+  onYahooFlow(feedLegacy('yahoo'));
 
   // Wire quote updates to broadcast via Socket.IO
   onTwelveDataSpot((q) => {
@@ -246,6 +281,22 @@ export function startIngestion(io: any): void {
     console.log(`[ingestion] ${connected}/13 new connectors started`);
   });
 
+  // Drain bursts the engine is holding once the feed goes quiet — it finalizes
+  // on the next trade's watermark, so an idle feed would sit on its last signal.
+  setInterval(() => emitSignals(drainIdle()), 1_000);
+
+  // `repeatHits` is scored per *day*; reset it at the UTC session boundary so a
+  // long-lived Render process doesn't drift every contract toward max repeats.
+  let lastResetDay = new Date().getUTCDate();
+  setInterval(() => {
+    const day = new Date().getUTCDate();
+    if (day !== lastResetDay) {
+      lastResetDay = day;
+      resetDaily();
+      console.log('[ingestion] daily engine state reset');
+    }
+  }, 60_000);
+
   // Refresh GEX every 60 seconds
   setInterval(() => {
     ['SPX', 'SPY', 'QQQ', 'NVDA'].forEach((s) => {
@@ -256,7 +307,8 @@ export function startIngestion(io: any): void {
   // Dark pool simulation refresh every 5 minutes
   setInterval(addDarkPoolPrints, 300_000);
 
-  console.log('[ingestion] v2 started — seeded', flowEvents.length, 'events, 13 new connectors initializing');
+  console.log('[ingestion] v3 started — flow-engine classification, seeded',
+    flowEvents.length, 'signals, 13 connectors initializing');
 }
 
 // ─── Tradier WebSocket ───────────────────────────────────────────────────────
@@ -328,43 +380,33 @@ function startTradierIngestion(): void {
 function processMarketTick(data: any, source: string): void {
   if (!data.symbol || !data.price || !data.size) return;
 
-  const isOption = data.symbol?.match(/[0-9]{6}[CP][0-9]+/);
-  if (!isOption) return;
-
-  const match = data.symbol.match(/([A-Z]+)(\d{6})([CP])(\d+)/);
-  if (!match) return;
+  const match = String(data.symbol).match(/^([A-Z]+)(\d{6})([CP])(\d+)$/);
+  if (!match) return; // equity print, not an option
 
   const [, sym, dateStr, cpFlag, strikeStr] = match;
-  const expiration = `20${dateStr.slice(0, 2)}-${dateStr.slice(2, 4)}-${dateStr.slice(4, 6)}`;
-  const strike = parseInt(strikeStr) / 1000;
-  const size = parseInt(data.size);
+  if (!sym || !dateStr || !cpFlag || !strikeStr) return;
+
+  const expiry = `20${dateStr.slice(0, 2)}-${dateStr.slice(2, 4)}-${dateStr.slice(4, 6)}`;
   const price = parseFloat(data.price);
-  const premium = price * size * 100;
+  const size = parseInt(data.size, 10);
+  if (!(price > 0) || !(size > 0)) return;
 
-  const bid = parseFloat(data.bid ?? price * 0.99);
-  const ask = parseFloat(data.ask ?? price * 1.01);
-
-  const heatScore = computeHeatScore({
-    bid, ask, price, size,
-    avgVolume: size * 10,
-    openInterest: size * 50,
-  });
-
-  const type = classifySweep({ size, exchanges: [data.exch ?? 'C'] });
-  const sentiment = cpFlag === 'C'
-    ? (price > (bid + ask) / 2 ? 'bullish' : 'neutral')
-    : (price > (bid + ask) / 2 ? 'bearish' : 'neutral');
-
-  addFlowEvent({
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    timestamp: new Date().toISOString(),
+  emitSignals(ingestPrint({
+    id: `${source}-${data.seq ?? `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`}`,
+    ts: data.date ? Number(data.date) : Date.now(),
     symbol: sym,
-    expiration, strike,
-    callPut: cpFlag as 'C' | 'P',
-    type, size, premium, heatScore, sentiment, source,
-    bid, ask,
-    exchange: data.exch,
-  });
+    expiry,
+    strike: parseInt(strikeStr, 10) / 1000,
+    right: cpFlag as 'C' | 'P',
+    price,
+    size,
+    exchange: data.exch ?? 'UNKNOWN',
+    // Quoted NBBO when the feed carries it; without it the engine correctly
+    // refuses to infer a side rather than guessing one.
+    bid: data.bid !== undefined ? parseFloat(data.bid) : undefined,
+    ask: data.ask !== undefined ? parseFloat(data.ask) : undefined,
+    source,
+  }));
 }
 
 // ─── Polygon REST polling ────────────────────────────────────────────────────
@@ -389,33 +431,28 @@ function startPolygonIngestion(): void {
       if (data?.results) {
         for (const t of data.results) {
           if (!t.sip_timestamp || !t.price || !t.size) continue;
+          const details = t.details ?? {};
+          if (!details.expiration_date) continue;
 
-          const heatScore = computeHeatScore({
-            bid: t.price * 0.99,
-            ask: t.price * 1.01,
+          emitSignals(ingestPrint({
+            id: `poly-${t.sequence_number ?? `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`}`,
+            ts: Math.round(t.sip_timestamp / 1_000_000),
+            symbol: t.underlying_asset?.ticker ?? 'UNK',
+            expiry: details.expiration_date,
+            strike: details.strike_price ?? 0,
+            right: details.contract_type === 'call' ? 'C' : 'P',
             price: t.price,
             size: t.size,
-            avgVolume: t.size * 8,
-            openInterest: t.size * 40,
-          });
-
-          addFlowEvent({
-            id: `poly-${t.sequence_number ?? Date.now()}`,
-            timestamp: new Date(t.sip_timestamp / 1_000_000).toISOString(),
-            symbol: t.underlying_asset?.ticker ?? 'UNK',
-            expiration: t.details?.expiration_date ?? '',
-            strike: t.details?.strike_price ?? 0,
-            callPut: t.details?.contract_type === 'call' ? 'C' : 'P',
-            type: classifySweep({ size: t.size, exchanges: [t.exchange ?? 'C'] }),
-            size: t.size,
-            premium: t.price * t.size * 100,
-            heatScore,
-            sentiment: t.details?.contract_type === 'call' ? 'bullish' : 'bearish',
+            exchange: String(t.exchange ?? 'UNKNOWN'),
+            conditions: Array.isArray(t.conditions) ? t.conditions : [],
+            // Polygon condition 4 marks an Intermarket Sweep Order.
+            iso: Array.isArray(t.conditions) ? t.conditions.includes(4) : undefined,
             source: 'polygon',
-            bid: t.price * 0.99,
-            ask: t.price * 1.01,
-            exchange: String(t.exchange),
-          });
+            // No NBBO: the trades endpoint carries no quote, so side stays
+            // AMBIGUOUS here by design. Pre-v3 this path fabricated a ±1%
+            // bid/ask and inferred a side from it. Wiring the Polygon quotes
+            // feed is what makes this path directional.
+          }));
         }
       }
     } catch (err: any) {
@@ -470,78 +507,181 @@ function startFinnhubIngestion(): void {
 
 let simInterval: ReturnType<typeof setInterval> | null = null;
 
+const SIM_SPOTS: Record<string, number> = {
+  SPY: 580, QQQ: 480, NVDA: 140, AAPL: 220, TSLA: 250, MSFT: 410, MSTR: 380, AMD: 165,
+};
+
 function startSimulationFeed(): void {
   if (simInterval) return;
-
-  const SYMBOLS = ['SPY', 'QQQ', 'NVDA', 'AAPL', 'TSLA', 'MSFT', 'MSTR', 'AMD'];
-  const spotPrices: Record<string, number> = {
-    SPY: 580, QQQ: 480, NVDA: 140, AAPL: 220, TSLA: 250, MSFT: 410, MSTR: 380, AMD: 165,
-  };
-
   sources['simulation'] = 'connected';
 
   simInterval = setInterval(() => {
-    const symbol = SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)];
-    const spot = spotPrices[symbol] * (1 + (Math.random() - 0.5) * 0.002);
-    spotPrices[symbol] = spot;
-    generateFlowFromSpot(symbol, spot, 'simulation');
+    const symbols = Object.keys(SIM_SPOTS);
+    const symbol = symbols[Math.floor(Math.random() * symbols.length)]!;
+    const spot = SIM_SPOTS[symbol]! * (1 + (Math.random() - 0.5) * 0.002);
+    SIM_SPOTS[symbol] = spot;
+    emitSignals(simulatePrints(symbol, spot, Date.now()).flatMap(ingestPrint));
   }, 3000);
 
   console.log('[ingestion] Simulation feed running');
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+/**
+ * Build one simulated order as the prints that would compose it.
+ *
+ * The engine is a filter, not a passthrough — it only emits above
+ * `minSignalPremium`, and only calls a cluster a SWEEP when it lands on
+ * several venues. So the simulation has to produce order *shapes* (multi-venue
+ * sweeps, spreads, institutional size) rather than isolated small prints, or
+ * the feed would sit empty in demo mode.
+ */
+function simulatePrints(symbol: string, spot: number, ts: number): RawPrint[] {
+  const right: 'C' | 'P' = Math.random() > 0.45 ? 'C' : 'P';
+  const dte = [1, 2, 7, 14, 30, 60][Math.floor(Math.random() * 6)]!;
+  const expiry = isoDatePlusDays(ts, dte);
 
-function generateFlowFromSpot(symbol: string, spotPrice: number, source: string): void {
-  const isCall = Math.random() > 0.45;
-  const dteIndex = Math.floor(Math.random() * 4);
-  const dteDays = [7, 14, 30, 60][dteIndex];
-  const exp = new Date();
-  exp.setDate(exp.getDate() + dteDays);
-  const expStr = exp.toISOString().split('T')[0];
+  const strike = Math.round((spot * (1 + (Math.random() - 0.5) * 0.06)) / 5) * 5;
+  const price = parseFloat((0.5 + Math.random() * 7.5).toFixed(2));
 
-  const strikeDelta = (Math.random() - 0.5) * spotPrice * 0.05;
-  const strike = Math.round((spotPrice + strikeDelta) / 5) * 5;
+  // Log-uniform premium, roughly $30k–$2M, then solve for contract count.
+  const premium = Math.exp(Math.log(30_000) + Math.random() * Math.log(2_000_000 / 30_000));
+  const size = Math.max(1, Math.round(premium / (price * 100)));
 
-  const optionPrice = Math.max(0.05, Math.abs(strikeDelta) * 0.3 + Math.random() * 2);
-  const size = Math.floor(Math.random() * 300 + 10);
-  const bid = optionPrice * 0.98;
-  const ask = optionPrice * 1.02;
-  const fillPrice = bid + Math.random() * (ask - bid);
-  const premium = fillPrice * size * 100;
+  const spread = Math.max(0.02, price * 0.02);
+  const bid = parseFloat((price - spread / 2).toFixed(2));
+  const ask = parseFloat((bid + spread).toFixed(2));
 
-  const heatScore = computeHeatScore({
-    bid, ask, price: fillPrice, size,
-    avgVolume: size * 5,
-    openInterest: size * 30,
-  });
+  // Where the order fills decides the inferred side — 20% land at mid, where
+  // the engine reports AMBIGUOUS rather than inventing a direction.
+  const roll = Math.random();
+  const fill = roll < 0.45 ? ask
+    : roll < 0.65 ? bid
+    : roll < 0.80 ? parseFloat((bid + spread * 0.75).toFixed(2))
+    : parseFloat(((bid + ask) / 2).toFixed(2));
 
-  const type = classifySweep({ size, exchanges: size > 200 ? ['C', 'P', 'X'] : ['C'] });
+  const venues = Math.random() < 0.35
+    ? ['CBOE', 'PHLX', 'AMEX', 'ISE'].slice(0, 2 + Math.floor(Math.random() * 3))
+    : ['CBOE'];
 
-  const sentiment = isCall
-    ? (fillPrice > (bid + ask) / 2 ? 'bullish' : 'neutral')
-    : (fillPrice > (bid + ask) / 2 ? 'bearish' : 'neutral');
+  const oi = Math.floor(size * (0.3 + Math.random() * 4));
+  const base: RawPrint = {
+    id: `sim-${ts}-${Math.random().toString(36).slice(2, 7)}`,
+    ts,
+    symbol,
+    expiry,
+    strike,
+    right,
+    price: fill,
+    size,
+    exchanges: venues,
+    bid,
+    ask,
+    openInterest: oi,
+    dayVolume: Math.floor(oi * Math.random()),
+    underlyingPrice: parseFloat(spot.toFixed(2)),
+    iv: parseFloat((0.2 + Math.random() * 0.8).toFixed(3)),
+    iso: venues.length > 1 && Math.random() < 0.5,
+    source: 'simulation',
+    synthetic: true,
+  };
 
-  addFlowEvent({
-    id: `sim-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    timestamp: new Date().toISOString(),
-    symbol, expiration: expStr, strike,
-    callPut: isCall ? 'C' : 'P',
-    type, size, premium, heatScore, sentiment, source,
-    bid, ask,
-    unusualScore: heatScore > 70 ? Math.round(heatScore + Math.random() * 10) : undefined,
-  });
+  // 12% of orders are a two-leg vertical: same right and expiry, second strike,
+  // both legs printing inside the engine's multi-leg window.
+  if (Math.random() < 0.12) {
+    const farStrike = strike + (right === 'C' ? 10 : -10);
+    const farPrice = parseFloat(Math.max(0.05, fill * 0.45).toFixed(2));
+    return [base, {
+      ...base,
+      id: `${base.id}-leg2`,
+      ts: ts + 5,
+      strike: farStrike,
+      price: farPrice,
+      bid: parseFloat(Math.max(0.01, farPrice - 0.05).toFixed(2)),
+      ask: parseFloat((farPrice + 0.05).toFixed(2)),
+      exchanges: ['CBOE'],
+      iso: false,
+    }];
+  }
+
+  return [base];
 }
 
-function addFlowEvent(event: FlowEvent): void {
-  flowEvents.unshift(event);
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/**
+ * Synthesize option flow from an equity spot tick (Finnhub streams equity
+ * trades, not options tape). Flagged synthetic — it is inference, not tape.
+ */
+function generateFlowFromSpot(symbol: string, spotPrice: number, source: string): void {
+  if (!(spotPrice > 0)) return;
+  const prints = simulatePrints(symbol, spotPrice, Date.now())
+    .map((pr) => ({ ...pr, source }));
+  emitSignals(prints.flatMap(ingestPrint));
+}
+
+function isoDatePlusDays(fromTs: number, days: number): string {
+  const d = new Date(fromTs);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().split('T')[0]!;
+}
+
+// ─── Broadcast ──────────────────────────────────────────────────────────────
+
+const BATCH_WINDOW_MS = 100;
+const broadcastQueue: FlowEvent[] = [];
+let batchTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Store + broadcast finalized signals.
+ *
+ * One delivery path per client: a single global `flow_batch`. (Pre-v3 the
+ * pipeline emitted `flow_update` globally *and* to the symbol room, so anyone
+ * subscribed to a ticker received every one of its events twice.) Symbol rooms
+ * remain joinable for future targeted streams; the feed itself is filtered
+ * client-side.
+ */
+function emitSignals(events: FlowEvent[]): void {
+  if (events.length === 0) return;
+
+  for (const event of events) flowEvents.unshift(event);
   if (flowEvents.length > MAX_FLOW_EVENTS) {
     flowEvents = flowEvents.slice(0, MAX_FLOW_EVENTS);
   }
-  if (ioInstance) {
-    ioInstance.emit('flow_update', event);
-    ioInstance.to(event.symbol).emit('flow_update', event);
-  }
+
+  if (!ioInstance) return;
+  broadcastQueue.push(...events);
+  if (batchTimer) return;
+  batchTimer = setTimeout(() => {
+    if (broadcastQueue.length > 0) ioInstance.emit('flow_batch', [...broadcastQueue]);
+    broadcastQueue.length = 0;
+    batchTimer = null;
+  }, BATCH_WINDOW_MS);
+}
+
+/** Convert the chain-snapshot connectors' camelCase events into RawPrints. */
+function legacyEventToPrint(e: LegacyFlowEvent, source: string): RawPrint | null {
+  if (!e.symbol || !e.expiration || !(e.size > 0)) return null;
+  const price = e.size > 0 ? e.premium / (e.size * 100) : 0;
+  if (!(price > 0)) return null;
+  return {
+    id: e.id,
+    ts: Date.parse(e.timestamp) || Date.now(),
+    symbol: e.symbol,
+    expiry: e.expiration,
+    strike: e.strike,
+    right: e.callPut,
+    price,
+    size: e.size,
+    exchange: e.exchange ?? 'CHAIN',
+    bid: e.bid,
+    ask: e.ask,
+    iv: e.iv,
+    delta: e.delta,
+    source,
+    // These connectors poll option *chains* and synthesize a print from the
+    // day's aggregate volume — not real tape. Flagged so the UI can say so.
+    synthetic: true,
+  };
 }
 
 function addDarkPoolPrints(): void {
@@ -572,61 +712,35 @@ function addDarkPoolPrints(): void {
   }
 }
 
+/**
+ * Backfill so the feed is populated on first paint.
+ *
+ * Seeds run through the same engine as live flow — no second scoring path —
+ * which means they must be fed in ascending timestamp order, as the engine
+ * requires. `drainIdle` is bypassed here in favour of an explicit flush.
+ */
 function seedInitialData(): void {
-  const SYMBOLS = ['SPY', 'QQQ', 'NVDA', 'AAPL', 'TSLA', 'MSFT', 'MSTR', 'AMD', 'META', 'AMZN'];
-  const spots: Record<string, number> = {
-    SPY: 580, QQQ: 480, NVDA: 140, AAPL: 220, TSLA: 250,
-    MSFT: 410, MSTR: 380, AMD: 165, META: 560, AMZN: 195,
-  };
+  const symbols = Object.keys(SIM_SPOTS);
+  const now = Date.now();
 
-  for (let i = 0; i < 50; i++) {
-    const symbol = SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)];
-    const spot = spots[symbol];
-    const ts = new Date(Date.now() - Math.floor(Math.random() * 3_600_000));
-
-    const isCall = Math.random() > 0.4;
-    const dteDays = [7, 14, 30, 60][Math.floor(Math.random() * 4)];
-    const exp = new Date(ts);
-    exp.setDate(exp.getDate() + dteDays);
-    const expStr = exp.toISOString().split('T')[0];
-
-    const strikeDelta = (Math.random() - 0.5) * spot * 0.05;
-    const strike = Math.round((spot + strikeDelta) / 5) * 5;
-    const optionPrice = Math.max(0.05, Math.abs(strikeDelta) * 0.3 + Math.random() * 2);
-    const size = Math.floor(Math.random() * 500 + 20);
-    const bid = optionPrice * 0.98;
-    const ask = optionPrice * 1.02;
-    const fillPrice = bid + Math.random() * (ask - bid);
-    const premium = fillPrice * size * 100;
-
-    const heatScore = computeHeatScore({
-      bid, ask, price: fillPrice, size,
-      avgVolume: size * 5,
-      openInterest: size * 30,
-    });
-
-    const type = classifySweep({ size, exchanges: size > 200 ? ['C', 'P', 'X'] : ['C'] });
-
-    flowEvents.push({
-      id: `seed-${i}-${Math.random().toString(36).slice(2, 6)}`,
-      timestamp: ts.toISOString(),
-      symbol, expiration: expStr, strike,
-      callPut: isCall ? 'C' : 'P',
-      type, size, premium, heatScore,
-      sentiment: isCall
-        ? fillPrice > (bid + ask) / 2 ? 'bullish' : 'neutral'
-        : fillPrice > (bid + ask) / 2 ? 'bearish' : 'neutral',
-      source: 'seed', bid, ask,
-      unusualScore: heatScore > 70 ? Math.round(heatScore + Math.random() * 10) : undefined,
-    });
+  const prints: RawPrint[] = [];
+  for (let i = 0; i < 60; i++) {
+    const symbol = symbols[Math.floor(Math.random() * symbols.length)]!;
+    // Spread across the last hour, oldest first.
+    const ts = now - Math.round((60 - i) * 60_000 * (0.6 + Math.random() * 0.4));
+    prints.push(...simulatePrints(symbol, SIM_SPOTS[symbol]!, ts)
+      .map((pr) => ({ ...pr, source: 'seed' })));
   }
+  prints.sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0));
 
-  flowEvents.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  const seeded = prints.flatMap(ingestPrint);
+  seeded.push(...drainIdle(0));
+  emitSignals(seeded);
 
   addDarkPoolPrints();
 
-  ['SPX', 'SPY', 'QQQ', 'NVDA'].forEach((s) => {
-    gexCache[s] = { levels: generateSyntheticGEX(s), fetchedAt: Date.now() };
+  ['SPX', 'SPY', 'QQQ', 'NVDA'].forEach((sym) => {
+    gexCache[sym] = { levels: generateSyntheticGEX(sym), fetchedAt: Date.now() };
   });
 }
 

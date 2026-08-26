@@ -5,7 +5,7 @@
  * NOTE: Requires OAuth2 flow — tokens are auto-refreshed every 29 min
  */
 import axios from 'axios';
-import { FlowEvent } from '../index';
+import { LegacyFlowEvent as FlowEvent } from '../index';
 import { computeHeatScore } from '../heatScore';
 import { classifySweep } from '../sweepDetector';
 

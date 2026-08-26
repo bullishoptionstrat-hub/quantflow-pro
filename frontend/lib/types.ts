@@ -1,10 +1,40 @@
+/**
+ * Signal kinds emitted by the backend flow engine.
+ *  SWEEP     — one order filled across multiple venues (or ISO-flagged)
+ *  BLOCK     — a single print clearing the size/premium threshold
+ *  SPLIT     — repeated prints on one contract+side inside a rolling window
+ *  MULTI_LEG — legs of one structure printing together (see `legs`)
+ *  LARGE     — single-venue cluster that still clears the premium threshold
+ */
+export type OrderType = 'SWEEP' | 'BLOCK' | 'SPLIT' | 'MULTI_LEG' | 'LARGE'
+
+/**
+ * Quote-rule side inference. AMBIGUOUS means the NBBO was missing or stale —
+ * the engine reports no direction rather than guessing one.
+ */
+export type InferredSide =
+  | 'BUY' | 'SELL' | 'BUY_LEAN' | 'SELL_LEAN' | 'AMBIGUOUS'
+
+export interface FlowEventLeg {
+  underlying: string
+  expiry: string
+  strike: number
+  option_type: 'C' | 'P'
+  side: InferredSide
+  total_size: number
+  total_premium: number
+  avg_price: number
+  prints: number
+  exchanges: string[]
+}
+
 export interface FlowEvent {
   id: string
   underlying: string
   expiry: string
   strike: number
   option_type: 'C' | 'P'
-  order_type: 'SWEEP' | 'BLOCK' | 'SPLIT'
+  order_type: OrderType
   total_size: number
   total_premium: number
   heat_score: number
@@ -21,6 +51,18 @@ export interface FlowEvent {
   created_at: string
   source: string
   ml_score?: number
+
+  // ── Engine-native fields ──
+  side?: InferredSide
+  /** Per-component score contributions — why the signal scored what it did. */
+  score_breakdown?: Record<string, number>
+  /** Present on MULTI_LEG: the full structure. The event is the dominant leg. */
+  legs?: FlowEventLeg[]
+  spread_guess?: 'VERTICAL' | 'CALENDAR' | 'STRADDLE_STRANGLE' | 'UNKNOWN'
+  /** Audit trail: the print ids that formed this signal. */
+  print_ids?: string[]
+  /** True when the source was simulated, replayed, or chain-derived. */
+  synthetic?: boolean
 }
 
 export interface DarkPoolPrint {
@@ -59,7 +101,7 @@ export interface FlowFilters {
   ticker: string
   minPremium: number
   optionType: 'ALL' | 'C' | 'P'
-  orderType: 'ALL' | 'SWEEP' | 'BLOCK' | 'SPLIT'
+  orderType: 'ALL' | OrderType
   sentiment: 'ALL' | 'BULLISH' | 'BEARISH' | 'NEUTRAL'
   minHeat: number
   unusualOnly: boolean
