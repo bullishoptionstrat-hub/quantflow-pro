@@ -1,35 +1,53 @@
 # NEXT_ACTIONS.md
 
-Read `PROJECT_STATE.md` and `REPO_AUDIT.md` first. All 10 waves are executed; what follows is
-what a next session should pick up, in priority order.
+Concrete next steps so a new session resumes without re-deriving context.
+Read `PROJECT_STATE.md` first, then this.
 
-1. **Human actions that no code can do.**
-   - Rotate the credentials in `docs/FORENSIC_AUDIT.md` #7 (Tradier, Firecrawl, NEXTAUTH_SECRET,
-     ML webhook secret) and review the Supabase project. They are in git history.
-   - Grant the Claude GitHub App write access so these branches can be pushed.
+**State:** Wave 0 v2 (post-merge audit) complete at head `47fa8c0`. 355 tests, 0 failures.
+Stopped at Wave 0 per the master prompt's START HERE instruction.
 
-2. **Unblock the data layer — this gates W5, W7 and W8.** Obtain at least one working key
-   (Tradier is the highest value: realtime WS + chains). Then:
-   - Wire `backend/src/gex/compute.ts` to real chain snapshots, replacing `generateSyntheticGEX`.
-   - Wire `backend/src/flow/adapter.ts` into live ingestion, retiring the `size > 200`
-     `classifySweep` path.
-   - Start collecting `flow_outcomes` so `train_real.py` can eventually pass its 1000-row gate.
+## 1. Fix finding #27 — `occ.ts` zero-sentinel + undeclared next-day delay (HIGH)
 
-3. **Re-verify the 16 UNVERIFIED rate limits** in `DATA_SOURCE_REGISTRY.md` against official docs
-   from a machine with network access, then update `backend/src/providers/registry.ts`.
+Highest severity of the three new findings, and the pattern is already solved: apply the
+same treatment `cboe.ts` received in `b547428`.
 
-4. **Remove the deprecated `synthetic` alias.** It was kept for one wave; `provenance.is_synthetic`
-   is now the contract. Touches `dataMode.ts`, `ingestion/index.ts`, `lib/types.ts`, `lib/utils.ts`.
+- `Number(x) || 0` -> `number | null` via the strict `num()` helper (export it from a shared
+  module rather than copying it a third time).
+- `vsMonthlyAverage` must be `null` when `monthlyDailyAverage` is unknown, not `0`.
+- Verify the `fiftytwo_week_high` key against a real payload — it is snake_case among
+  camelCase siblings and the sentinel would hide a permanent 0.
+- Attach `upstreamProvenance({ source:'occ', is_delayed:true, estimated_delay_seconds:... })`.
+  `packages/domain/src/pointInTime.ts` already models this as `OCC_CLEARING_LAG` (09:00 ET
+  next business day) — use it rather than inventing a number.
 
-5. **Finish the UI honesty pass.** Badges are wired into `FlowFeed`, the flow page and the
-   dark-pool page. Still unbadged: GEX, heat-map, macro, news, watchlist, power-alerts. The GEX
-   page should render `observed_inputs` / `model_assumptions` / `confidence`, which the API
-   already returns.
+## 2. Fix finding #26 — CBOE chain `asOf` falls back to `now()` (MEDIUM)
 
-6. **Decide the `flow_archive` read policy** (KNOWN_LIMITATIONS #16): it is currently readable by
-   unauthenticated users, which contradicts the login wall. Product decision, not a bug fix.
+`cboeOptions.ts:197`. Leave `asOf` null when the source carries no timestamp and flag
+`TRADE_DATE_INFERRED`; derive `delayedMinutes` from `asOf` instead of asserting a constant.
+`packages/domain/src/freshness.ts` `validatePayload()` already implements the verdict logic.
 
-7. **Harden the rate limiter** (audit #15): Upstash-backed, and stop trusting `x-forwarded-for`.
+## 3. Fix finding #28 — auth conflates outage with bad credentials (MEDIUM)
 
-8. **Dependency CVEs** (audit #16): drop unused `next-auth` and `uuid`, `npm audit fix`, bump Next
-   to 14.2.35 within the same minor.
+`middleware/auth.ts`. Log the swallowed cause with source; have `requireAuth` distinguish
+"token rejected" (401) from "could not verify" (503).
+
+## 4. Wire `@quantflow/domain` into the backend build
+
+The package is vendored, typechecked and tested (45 tests) but nothing in `backend/` imports
+it, so `DataResult<T>`, `asOf()` and the freshness contracts are not yet load-bearing. This
+was deliberately deferred: it adds cross-package build ordering that affects the Render
+deploy, which cannot be tested from this environment. Do it on a machine that can run the
+Render build, and it makes actions 1-3 substantially cleaner.
+
+## 5. Standing human actions (no code change resolves these)
+
+- **Rotate the credentials** in `quantflow.zip` and `qf-firecrawl (1).zip` (finding #7).
+  They are in git history; deleting the files does not undo the exposure.
+- Supply a Tradier token + egress allowance for `api.tradier.com` / `ws.tradier.com` if the
+  live-data-dependent gates (W5 real chains, W7 scheduler, W8 training) are to be closed.
+
+## Do NOT re-run Waves 1-10 from scratch
+
+They were executed against the pre-merge tree and their work is in the branch. Where the
+merge invalidated a conclusion, `REPO_AUDIT.md` -> "Corrections to rows above" says so
+explicitly. Re-running blind would duplicate work and risk reverting main's improvements.

@@ -2,9 +2,15 @@
 
 Read this first on any new/compacted session, then `NEXT_ACTIONS.md`.
 
-- **Current wave:** 10 of 10 — all waves executed
-- **Base commit:** `1c4e2fc` · **Branch:** `claude/quantflow-forensic-audit-64z608`
-- **Regression gate:** `npm run verify` — green (exit 0)
+- **Current wave:** Wave 0 re-run (v2) complete on the post-merge tree. Waves 1-10 were
+  executed earlier against the PRE-merge tree; their conclusions still hold except where
+  `REPO_AUDIT.md` -> "Corrections to rows above" marks them stale.
+- **Head:** `47fa8c0` · **Branch:** `claude/quantflow-forensic-audit-64z608`
+- **Merged:** `origin/main` `2d110b8` (PRs #6-#10) is now an ancestor. It brought a competing
+  flow-engine integration, keyless CBOE/OCC connectors, route auth and a narrowed CORS
+  allowlist. Both sides were kept: main's real-data pipeline AND this branch's Truth Firewall
+  (main had dropped the simulation live-mode gate and bypassed the `addFlowEvent` emit guard).
+- **Regression gate:** `npm run verify` — green (exit 0). 355 tests, 0 failures.
 
 ## Wave status
 
@@ -22,10 +28,28 @@ Read this first on any new/compacted session, then `NEXT_ACTIONS.md`.
 | W9 Alerts/Observability/Security | ✅ PASS | 1000→1 dedup, secret scan, 6/6 RLS |
 | W10 Adversarial Hardening | ✅ PASS | found + fixed 2 real grader bugs |
 
+## Wave 0 v2 (post-merge audit, 2026-08-28)
+
+Re-ran Wave 0 because the earlier audit predated the merge. Verified `CLAUDE.md`'s
+load-bearing vendoring claim by diff (**true**: only `.js` extension stripping + the
+documented `resetDaily()`), so the module's 14 tests remain a valid baseline for what ships.
+
+Three new defects found in the newly-merged code, all recorded in `docs/FORENSIC_AUDIT.md`
+and all **open**:
+
+| # | Severity | What |
+|---|---|---|
+| 26 | MEDIUM | CBOE chain `asOf` falls back to `now()` — stale snapshots read as current |
+| 27 | HIGH | `occ.ts` repeats the `\|\| 0` zero-sentinel AND hides a next-business-day delay |
+| 28 | MEDIUM | Auth returns 401 for a Supabase outage — indistinguishable from a bad token |
+
+Also corrected a claim I had made earlier in the session: CORS is **no longer** `origin:'*'`;
+main replaced it with an allowlist. That statement was true pre-merge and is now stale.
+
 ## Verification commands
 
 ```
-npm run verify              # 243 backend + 14 flow-engine + 29 frontend tests, prod build
+npm run verify              # 267 backend + 45 domain + 14 flow-engine + 29 frontend, prod build
 npm run verify:migrations   # apply + idempotency + exact rollback (needs Postgres)
 npm run verify:secrets      # credential scan
 npm run verify:rls          # 6 RLS checks as real unauthorized requests
@@ -34,8 +58,8 @@ PYTHON=<venv>/bin/python npm run verify:ml   # 23 ML gate tests
 
 ## Blocking issues (environmental, not code defects)
 
-1. **Cannot push.** Read-only GitHub App install; 403 on both git and MCP. Delivered as bundles.
-   Fix: https://github.com/apps/claude/installations/select_target
+1. ~~**Cannot push.**~~ **RESOLVED** — push access was granted mid-session; the branch is
+   pushed and PR #5 is open (draft).
 2. **No market-data access.** Egress proxy 403s every provider; no API keys. This is what
    BLOCKS W5's real chains, W7's scheduler and W8's training loop.
 3. **Credentials leaked in committed zips** (`docs/FORENSIC_AUDIT.md` #7). Human action; no code
