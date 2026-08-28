@@ -330,8 +330,30 @@ function startTradierIngestion(): void {
     return;
   }
 
-  function connect() {
+  // Tradier's stream will not accept a made-up session id. One has to be minted
+  // per connection from the REST API and is short-lived, so this runs on every
+  // (re)connect rather than being cached.
+  async function mintSessionId(): Promise<string> {
+    const res = await axios.post(
+      'https://api.tradier.com/v1/markets/events/session',
+      null,
+      {
+        headers: {
+          Authorization: `Bearer ${TRADIER_TOKEN}`,
+          Accept: 'application/json',
+        },
+        timeout: 10_000,
+      }
+    );
+    const sessionid = res.data?.stream?.sessionid;
+    if (!sessionid) throw new Error('no sessionid in /markets/events/session response');
+    return sessionid;
+  }
+
+  async function connect() {
     try {
+      const sessionid = await mintSessionId();
+
       tradierWs = new WebSocket(TRADIER_WS, {
         headers: { Authorization: `Bearer ${TRADIER_TOKEN}` },
       });
@@ -340,7 +362,7 @@ function startTradierIngestion(): void {
         sources['tradier'] = 'connected';
         const msg = JSON.stringify({
           symbols: WATCHED_SYMBOLS,
-          sessionid: 'quantflow',
+          sessionid,
           linebreak: true,
           filter: ['quote', 'trade', 'timesale'],
         });
@@ -365,16 +387,19 @@ function startTradierIngestion(): void {
       tradierWs.on('close', () => {
         sources['tradier'] = 'error';
         console.log('[tradier] WS closed — reconnecting in 5s');
-        setTimeout(connect, 5000);
+        setTimeout(() => { void connect(); }, 5000);
       });
     } catch (err: any) {
-      console.error('[tradier] connect failed:', err.message);
+      const detail = err.response?.status ? `HTTP ${err.response.status}` : err.message;
+      console.error('[tradier] connect failed:', detail);
       sources['tradier'] = 'error';
+      // Keep the feed alive with clearly-flagged synthetic prints, and retry.
       startSimulationFeed();
+      setTimeout(() => { void connect(); }, 30_000);
     }
   }
 
-  connect();
+  void connect();
 }
 
 function processMarketTick(data: any, source: string): void {
