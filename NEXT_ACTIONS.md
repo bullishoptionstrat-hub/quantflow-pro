@@ -1,18 +1,35 @@
 # NEXT_ACTIONS.md
 
-Concrete next steps so a fresh session resumes without re-deriving context.
-Read `PROJECT_STATE.md` and `REPO_AUDIT.md` first.
+Read `PROJECT_STATE.md` and `REPO_AUDIT.md` first. All 10 waves are executed; what follows is
+what a next session should pick up, in priority order.
 
-1. **Wave 1 — Data Truth Firewall.** Extend `backend/src/config/dataMode.ts` from `synthetic`
-   to the master prompt's `is_synthetic` + `is_demo` (keep `synthetic` as a deprecated alias for
-   one wave). Propagate through `/api/*` responses and Socket.IO payloads.
-2. **Wave 1 — UI provenance.** Add `vitest` + Testing Library to `frontend/`, build
-   `components/ui/ProvenanceBadge.tsx` (DEMO / DELAYED / INFERRED / LIVE), and gate the
-   frontend's own generators (`lib/utils.ts:generateSeedFlow`, `hooks/useFlowFeed.ts:97-102`).
-3. **Wave 1 — Health staleness.** Extend `backend/src/routes/health.ts` to report per-source
-   `lastEventAt` and computed staleness, sourced from a new tracker in `ingestion/index.ts`.
-4. **Wave 2 — Provider interface.** Formalize the existing `start*`/`on*`/`get*` connector shape
-   into `MarketDataProvider` + priority quota manager. Record every rate limit in
-   `DATA_SOURCE_REGISTRY.md` as VERIFIED or UNVERIFIED — never invent a number.
-5. **Human action, unblocked by no code:** rotate the credentials in `docs/FORENSIC_AUDIT.md` #7,
-   and grant the Claude GitHub App write access so these branches can actually be pushed.
+1. **Human actions that no code can do.**
+   - Rotate the credentials in `docs/FORENSIC_AUDIT.md` #7 (Tradier, Firecrawl, NEXTAUTH_SECRET,
+     ML webhook secret) and review the Supabase project. They are in git history.
+   - Grant the Claude GitHub App write access so these branches can be pushed.
+
+2. **Unblock the data layer — this gates W5, W7 and W8.** Obtain at least one working key
+   (Tradier is the highest value: realtime WS + chains). Then:
+   - Wire `backend/src/gex/compute.ts` to real chain snapshots, replacing `generateSyntheticGEX`.
+   - Wire `backend/src/flow/adapter.ts` into live ingestion, retiring the `size > 200`
+     `classifySweep` path.
+   - Start collecting `flow_outcomes` so `train_real.py` can eventually pass its 1000-row gate.
+
+3. **Re-verify the 16 UNVERIFIED rate limits** in `DATA_SOURCE_REGISTRY.md` against official docs
+   from a machine with network access, then update `backend/src/providers/registry.ts`.
+
+4. **Remove the deprecated `synthetic` alias.** It was kept for one wave; `provenance.is_synthetic`
+   is now the contract. Touches `dataMode.ts`, `ingestion/index.ts`, `lib/types.ts`, `lib/utils.ts`.
+
+5. **Finish the UI honesty pass.** Badges are wired into `FlowFeed`, the flow page and the
+   dark-pool page. Still unbadged: GEX, heat-map, macro, news, watchlist, power-alerts. The GEX
+   page should render `observed_inputs` / `model_assumptions` / `confidence`, which the API
+   already returns.
+
+6. **Decide the `flow_archive` read policy** (KNOWN_LIMITATIONS #16): it is currently readable by
+   unauthenticated users, which contradicts the login wall. Product decision, not a bug fix.
+
+7. **Harden the rate limiter** (audit #15): Upstash-backed, and stop trusting `x-forwarded-for`.
+
+8. **Dependency CVEs** (audit #16): drop unused `next-auth` and `uuid`, `npm audit fix`, bump Next
+   to 14.2.35 within the same minor.

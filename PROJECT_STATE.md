@@ -2,35 +2,48 @@
 
 Read this first on any new/compacted session, then `NEXT_ACTIONS.md`.
 
-- **Current wave:** 0 (Repository Truth) — COMPLETE
+- **Current wave:** 10 of 10 — all waves executed
 - **Base commit:** `1c4e2fc` · **Branch:** `claude/quantflow-forensic-audit-64z608`
 - **Regression gate:** `npm run verify` — green (exit 0)
 
-## Done
+## Wave status
 
-| Wave | Status | Evidence |
+| Wave | Result | Note |
 |---|---|---|
-| Session 1 (pre-wave audit + 3 safe fixes) | COMPLETE | `docs/FORENSIC_AUDIT.md`, 31 backend tests |
-| W0 Repository Truth | COMPLETE | `REPO_AUDIT.md`, this file, `IMPLEMENTATION_LEDGER.md` |
+| W0 Repository Truth | ✅ PASS | 50+ subsystems classified with evidence |
+| W1 Data Truth Firewall | ✅ PASS | adversarial pass found + closed a real fail-open leak |
+| W2 Provider Foundation | ✅ PASS* | *16 of 17 rate limits UNVERIFIED — vendor docs unreachable |
+| W3 Storage + Provenance | ✅ PASS | migration + rollback executed on real Postgres |
+| W4 Options Flow Engine | ✅ PASS | integrated flow-engine; not wired to live ingest (no per-print data) |
+| W5 GEX / Volatility | ⚠️ PARTIAL | math done + ×100 bug fixed; real chain snapshots BLOCKED |
+| W6 Market Structure | ✅ PASS | prefix/repaint properties proven to have teeth |
+| W7 Outcome Lab | ⚠️ PARTIAL | grading proven end-to-end; scheduler BLOCKED (no price feed) |
+| W8 ML Shadow | ✅ PASS | rng model quarantined; trainer refuses at 0/1000 |
+| W9 Alerts/Observability/Security | ✅ PASS | 1000→1 dedup, secret scan, 6/6 RLS |
+| W10 Adversarial Hardening | ✅ PASS | found + fixed 2 real grader bugs |
 
-## Next
+## Verification commands
 
-W1 Data Truth Firewall → W2 Provider Foundation → W3 Storage → W4 Flow Engine →
-W5 GEX → W6 Market Structure → W7 Outcome Lab → W8 ML Shadow → W9 Security → W10 Adversarial.
+```
+npm run verify              # 243 backend + 14 flow-engine + 29 frontend tests, prod build
+npm run verify:migrations   # apply + idempotency + exact rollback (needs Postgres)
+npm run verify:secrets      # credential scan
+npm run verify:rls          # 6 RLS checks as real unauthorized requests
+PYTHON=<venv>/bin/python npm run verify:ml   # 23 ML gate tests
+```
 
-## Blocking issues (environmental — not code defects)
+## Blocking issues (environmental, not code defects)
 
-1. **Cannot push.** Read-only GitHub App install; 403 on both git and MCP. Work is delivered
-   as git bundles. Fix: grant write at https://github.com/apps/claude/installations/select_target
-2. **No market-data access.** Egress proxy 403s every provider; no API keys. Waves 4-7 are
-   buildable and fixture-testable but **cannot be validated against live data here**.
-3. **Credentials leaked in committed zips** (`docs/FORENSIC_AUDIT.md` #7). Rotation is a
-   human action; it is not resolved by any code change in these waves.
+1. **Cannot push.** Read-only GitHub App install; 403 on both git and MCP. Delivered as bundles.
+   Fix: https://github.com/apps/claude/installations/select_target
+2. **No market-data access.** Egress proxy 403s every provider; no API keys. This is what
+   BLOCKS W5's real chains, W7's scheduler and W8's training loop.
+3. **Credentials leaked in committed zips** (`docs/FORENSIC_AUDIT.md` #7). Human action; no code
+   change resolves it.
 
 ## Standing decisions
 
 - Provenance field naming follows the master prompt (`is_synthetic`, `is_demo`, …).
-  `synthetic` is kept as a deprecated alias for one wave. `docs/EVENT_MODEL_V2.md` reconciled.
-- `quantflow-modules/flow-engine` is REUSED for Waves 4/7, not rebuilt — it already satisfies
-  the aggressor-inference and outcome-grading honesty contracts.
-- Any feature needing paid data is marked BLOCKED, never approximated.
+  `synthetic` remains a deprecated alias — **removal is the next scheduled cleanup**.
+- `quantflow-modules/flow-engine` is REUSED, not rebuilt.
+- Anything needing paid data is marked BLOCKED, never approximated.
