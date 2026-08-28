@@ -14,6 +14,7 @@ import axios from 'axios';
 import WebSocket from 'ws';
 import { fetchCboeChain, getCboeSnapshot, getCboeSymbols } from './connectors/cboeOptions';
 import { fetchOccVolume, getOccVolume } from './connectors/occ';
+import { describeHttpError } from './httpError';
 import {
   ingestPrint, drainIdle, resetDaily,
   type RawPrint, type WireFlowEvent,
@@ -356,38 +357,96 @@ const WATCHED_SYMBOLS = [
 let tradierWs: WebSocket | null = null;
 
 /**
- * Ask Tradier's REST API who this token belongs to.
+ * What the profile probe concluded about `TRADIER_TOKEN`.
  *
- * A 401 from the streaming session endpoint alone is ambiguous — it can mean an
- * invalid token, a sandbox token pointed at production, or a valid token with no
- * market-data entitlement. /v1/user/profile discriminates: a 200 proves the token
- * is valid for api.tradier.com, which narrows a streaming failure down to
- * entitlement. Result is recorded, never logged with the token itself.
+ * `rejected` and `sandbox` are terminal: neither resolves without someone
+ * changing the environment, so the reconnect loop stops on them instead of
+ * hammering Tradier every 30s for the life of the process.
  */
-async function probeTradierToken(): Promise<void> {
-  if (!TRADIER_TOKEN) {
-    sourceErrors['tradier_token'] = 'TRADIER_TOKEN is not set';
-    return;
-  }
+type TradierTokenVerdict = 'unknown' | 'valid' | 'sandbox' | 'rejected';
+
+let tradierTokenVerdict: TradierTokenVerdict = 'unknown';
+/** Resolves once the probe has run, so `connect()` can gate its retry on it. */
+let tradierProbe: Promise<void> = Promise.resolve();
+
+/**
+ * Ask Tradier who this token belongs to, on both hosts.
+ *
+ * A 401 from the streaming session endpoint is ambiguous on its own. The probe
+ * splits it three ways using `/v1/user/profile`, which both hosts serve:
+ *
+ *   - production 200            → the token is good; the streaming call itself
+ *                                 is what failed.
+ *   - production 401, sandbox 200 → a sandbox token aimed at production. This is
+ *                                 the single most common cause and it is not
+ *                                 fixable from here.
+ *   - both 401                  → wrong or revoked token.
+ *
+ * Note the earlier version of this concluded that a valid profile plus a
+ * streaming 401 meant "no market-data entitlement". Tradier documents
+ * entitlement failures as **403** and credential failures as 401, so that
+ * inference pointed at the wrong problem — a 401 after a good profile means the
+ * streaming request was malformed or the session expired, not that the account
+ * needs an upgrade.
+ *
+ * The token is never logged or included in any recorded message.
+ */
+async function probeTradierProfile(host: string): Promise<number | null> {
   try {
-    const res = await axios.get('https://api.tradier.com/v1/user/profile', {
+    const res = await axios.get(`https://${host}/v1/user/profile`, {
       headers: { Authorization: `Bearer ${TRADIER_TOKEN}`, Accept: 'application/json' },
       timeout: 10_000,
     });
-    sourceErrors['tradier_token'] =
-      `profile HTTP ${res.status} — token IS valid for api.tradier.com, ` +
-      `so a streaming 401 means no market-data entitlement on this account`;
+    return res.status;
   } catch (err: any) {
-    const code = err.response?.status;
-    sourceErrors['tradier_token'] = code
-      ? `profile HTTP ${code} — token REJECTED by api.tradier.com ` +
-        `(wrong token, revoked, or a sandbox token: sandbox tokens only work against sandbox.tradier.com)`
-      : `profile probe failed: ${err.message}`;
+    return err?.response?.status ?? null;
   }
 }
 
+async function probeTradierToken(): Promise<void> {
+  if (!TRADIER_TOKEN) {
+    tradierTokenVerdict = 'rejected';
+    sourceErrors['tradier_token'] = 'TRADIER_TOKEN is not set';
+    return;
+  }
+
+  const prod = await probeTradierProfile('api.tradier.com');
+
+  if (prod === 200) {
+    tradierTokenVerdict = 'valid';
+    sourceErrors['tradier_token'] =
+      'profile HTTP 200 — token is valid for api.tradier.com. A streaming 401 ' +
+      'therefore means the session request itself was rejected (Tradier reports ' +
+      'missing entitlements as 403, not 401).';
+    return;
+  }
+
+  if (prod === 401) {
+    const sandbox = await probeTradierProfile('sandbox.tradier.com');
+    if (sandbox === 200) {
+      tradierTokenVerdict = 'sandbox';
+      sourceErrors['tradier_token'] =
+        'profile HTTP 401 on api.tradier.com but HTTP 200 on sandbox.tradier.com — ' +
+        'this is a SANDBOX token. Sandbox tokens are only valid against ' +
+        'sandbox.tradier.com and cannot stream production market data. Issue a ' +
+        'production access token from the Tradier dashboard and set TRADIER_TOKEN to it.';
+    } else {
+      tradierTokenVerdict = 'rejected';
+      sourceErrors['tradier_token'] =
+        'profile HTTP 401 on both api.tradier.com and sandbox.tradier.com — ' +
+        'the token is wrong or has been revoked. Reissue it from the Tradier dashboard.';
+    }
+    return;
+  }
+
+  tradierTokenVerdict = 'unknown';
+  sourceErrors['tradier_token'] = prod === null
+    ? 'profile probe could not reach api.tradier.com (network or timeout) — token status unknown'
+    : `profile HTTP ${prod} on api.tradier.com — unexpected; token status unknown`;
+}
+
 function startTradierIngestion(): void {
-  void probeTradierToken();
+  tradierProbe = probeTradierToken();
 
   if (!TRADIER_TOKEN) {
     console.log('[tradier] No token — skipping WebSocket, using simulation');
@@ -396,10 +455,14 @@ function startTradierIngestion(): void {
     return;
   }
 
+  const BASE_RETRY_MS = 30_000;
+  const MAX_RETRY_MS = 10 * 60_000;
+  let retryDelayMs = BASE_RETRY_MS;
+
   // Tradier's stream will not accept a made-up session id. One has to be minted
   // per connection from the REST API and is short-lived, so this runs on every
   // (re)connect rather than being cached.
-  async function mintSessionId(): Promise<string> {
+  async function mintSessionId(): Promise<{ sessionid: string; url: string }> {
     const res = await axios.post(
       'https://api.tradier.com/v1/markets/events/session',
       null,
@@ -413,20 +476,27 @@ function startTradierIngestion(): void {
     );
     const sessionid = res.data?.stream?.sessionid;
     if (!sessionid) throw new Error('no sessionid in /markets/events/session response');
-    return sessionid;
+    // Tradier returns the socket URL alongside the id; prefer it over the
+    // hardcoded constant so a vendor-side move does not silently break this.
+    return { sessionid, url: res.data?.stream?.url || TRADIER_WS };
   }
 
   async function connect() {
     try {
-      const sessionid = await mintSessionId();
+      const { sessionid, url } = await mintSessionId();
 
-      tradierWs = new WebSocket(TRADIER_WS, {
+      // The Authorization header is not documented as required on the socket
+      // handshake (the sessionid in the first frame is the credential), but it
+      // is kept: the session mint fails first today, so this path has never
+      // been exercised and there is no way to detect a regression from removing it.
+      tradierWs = new WebSocket(url, {
         headers: { Authorization: `Bearer ${TRADIER_TOKEN}` },
       });
 
       tradierWs.on('open', () => {
         sources['tradier'] = 'connected';
         delete sourceErrors['tradier'];
+        retryDelayMs = BASE_RETRY_MS; // a real connection clears the backoff
         const msg = JSON.stringify({
           symbols: WATCHED_SYMBOLS,
           sessionid,
@@ -458,17 +528,37 @@ function startTradierIngestion(): void {
         setTimeout(() => { void connect(); }, 5000);
       });
     } catch (err: any) {
-      const body = err.response?.data;
-      const detail = err.response?.status
-        ? `HTTP ${err.response.status}` +
-          (typeof body === 'string' && body.length < 200 ? ` — ${body.trim()}` : '')
-        : err.message;
+      const status = err.response?.status;
+      const detail = describeHttpError(err);
       console.error('[tradier] connect failed:', detail);
       sources['tradier'] = 'error';
       sourceErrors['tradier'] = detail;
-      // Keep the feed alive with clearly-flagged synthetic prints, and retry.
+      // Keep the feed alive with clearly-flagged synthetic prints either way.
       startSimulationFeed();
-      setTimeout(() => { void connect(); }, 30_000);
+
+      // Wait for the probe before deciding whether retrying is worth anything.
+      await tradierProbe;
+
+      // A 401 on the session mint with a token the probe has already proven bad
+      // is not a transient failure — no number of retries fixes a sandbox or
+      // revoked token, and the old unconditional 30s loop meant a dead token
+      // produced two REST calls a minute forever. Stop, and leave the reason in
+      // `sourceErrors` where /api/health will show it.
+      if (status === 401 && (tradierTokenVerdict === 'sandbox' || tradierTokenVerdict === 'rejected')) {
+        sourceErrors['tradier'] =
+          `${detail} — retries stopped, see tradier_token for the reason. ` +
+          `Restart the service after setting a valid TRADIER_TOKEN.`;
+        console.error('[tradier] token is not usable; giving up on reconnect');
+        return;
+      }
+
+      // Anything else may be transient (Tradier outage, network, rate limit).
+      // Back off geometrically instead of a fixed 30s so an extended outage does
+      // not sustain a fixed request rate against a service that is already down.
+      const wait = retryDelayMs;
+      retryDelayMs = Math.min(retryDelayMs * 2, MAX_RETRY_MS);
+      console.log(`[tradier] retrying in ${Math.round(wait / 1000)}s`);
+      setTimeout(() => { void connect(); }, wait);
     }
   }
 
@@ -517,14 +607,27 @@ function startPolygonIngestion(): void {
     return;
   }
 
-  sources['polygon'] = 'connected';
+  // Deliberately not marked 'connected' here. The first poll runs immediately
+  // and reports what actually happened; claiming a connection before one has
+  // succeeded is how a dead key showed as healthy.
 
   async function poll() {
     try {
+      // Key goes in the Authorization header, not the query string: the URL
+      // shows up in vendor error bodies and proxy logs, and this error path
+      // now surfaces those bodies through the public /api/health route.
       const { data } = await axios.get(
-        `https://api.polygon.io/v3/trades/options?limit=25&apiKey=${POLYGON_KEY}`,
-        { timeout: 5000 }
+        'https://api.polygon.io/v3/trades/options?limit=25',
+        {
+          timeout: 5000,
+          headers: { Authorization: `Bearer ${POLYGON_KEY}` },
+        }
       );
+
+      // Recovered: a poll got through, so drop any stale failure reason. Without
+      // this the source stayed 'error' forever after one bad poll.
+      sources['polygon'] = 'connected';
+      delete sourceErrors['polygon'];
 
       if (data?.results) {
         for (const t of data.results) {
@@ -554,10 +657,15 @@ function startPolygonIngestion(): void {
         }
       }
     } catch (err: any) {
-      if (err.response?.status === 403) {
-        sources['polygon'] = 'error';
-        sourceErrors['polygon'] = 'HTTP 403 — options trades endpoint not included in this Polygon plan';
-      }
+      // Every failure is reported, and the vendor's own words are what get
+      // reported. This used to swallow anything that was not a 403 and, for a
+      // 403, substitute a guess ("not included in this Polygon plan") for
+      // Polygon's actual response — which made the health route confidently
+      // wrong about why the feed was down. Polygon names the reason in the
+      // body (NOT_AUTHORIZED vs. an entitlement message); that is the thing
+      // worth reading, so pass it through rather than editorializing.
+      sources['polygon'] = 'error';
+      sourceErrors['polygon'] = describeHttpError(err);
     }
   }
 
@@ -894,7 +1002,7 @@ function startCboeOptions(): void {
       }
     } catch (err: any) {
       sources['cboe_options'] = 'error';
-      sourceErrors['cboe_options'] = err.response?.status ? `HTTP ${err.response.status}` : err.message;
+      sourceErrors['cboe_options'] = describeHttpError(err);
     }
   }
   void tick();
@@ -910,7 +1018,7 @@ function startOcc(): void {
       delete sourceErrors['occ'];
     } catch (err: any) {
       sources['occ'] = 'error';
-      sourceErrors['occ'] = err.response?.status ? `HTTP ${err.response.status}` : err.message;
+      sourceErrors['occ'] = describeHttpError(err);
     }
   }
   void tick();

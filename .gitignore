@@ -12,3 +12,10 @@ __pycache__/
 ml-service/models/*.pkl
 .DS_Store
 *.tsbuildinfo
+
+# Local archive/staging dir (contains a 210MB Archive.zip) - never commit
+quanntflow/
+*.zip
+!qf-firecrawl (1).zip
+!qf-flow-engine.zip
+!quantflow.zip
