@@ -253,3 +253,85 @@ blocks every vendor domain, so only **Polygon's** limit could be confirmed (5 re
 delayed free tier, via cross-checked current sources, 2026-08-15). **The other 16 are marked
 `unverified` with the reason** and enforced at 50% of their declared value. They must be
 re-verified against the official pages before any deployment depends on them. No limit was invented.
+
+---
+
+## WAVE 3 — STORAGE + PROVENANCE
+
+**Objective:** the schema supports the Truth Firewall without duplicating existing tables.
+
+**Audit first (as the prompt requires):** the existing schema is sound — `flow_archive` already
+separates `event_at` from `created_at`, RLS is enabled on all 7 tables, and indexes exist. So this
+wave **ALTERs in place**. The only new table is `flow_outcomes`, justified because no existing
+table stores forward returns and grades have a different lifecycle (written later, by a scheduled
+job) than the events they grade.
+
+**Files changed:**
+- NEW `supabase/migrations/20260828000000_provenance.sql` (205 lines)
+- NEW `supabase/migrations/20260828000000_provenance.down.sql` (74 lines) — paired rollback
+- NEW `scripts/verify-migrations.sh` — repeatable gate; `npm run verify:migrations`
+
+**Executed against a REAL Postgres 16.13**, loaded with the actual production migration plus
+Supabase runtime shims (`auth.users`, `auth.uid()`, `auth.role()`) so the real RLS policies load
+verbatim:
+
+```
+BEFORE columns: 65
+=== APPLY ===        APPLY_EXIT=0
+AFTER columns:  116  (+51)
+=== IDEMPOTENCY: re-apply ===   re-apply OK (idempotent)
+=== ROLLBACK ===
+AFTER ROLLBACK: 65
+=== DIFF before vs rolled-back ===
+IDENTICAL ✅ — rollback fully restores the original schema
+```
+
+**The database now refuses the same malformed states the application refuses**, so a direct SQL
+writer cannot bypass the Truth Firewall:
+
+```
+rejected ✅  is_delayed with no estimate        rejected ✅  is_synthetic without is_demo
+rejected ✅  is_inferred with no method         rejected ✅  bogus classification grade
+rejected ✅  confidence > 1                     rejected ✅  invented aggressor side
+accepted ✅  delayed WITH estimate              accepted ✅  synthetic WITH demo
+accepted ✅  valid inference
+```
+
+**Dedup / idempotency / causality:**
+
+```
+duplicate (source, provider_event_id) rejected ✅
+NULL provider_event_id rows coexist    ✅  (partial index correct)
+flow_outcomes lookahead rejected       ✅  (actionable_at < signal_at)
+graded WIN with no return rejected     ✅
+duplicate (event, horizon) rejected    ✅
+UNGRADED + valid graded rows accepted  ✅
+```
+
+**Repeatable gate — actual output:**
+
+```
+$ ./scripts/verify-migrations.sh
+==> apply 20260828000000_provenance.sql        columns after: 116
+==> re-apply (idempotency)                     idempotent OK
+==> rollback 20260828000000_provenance.down.sql
+                                               rollback restores baseline EXACTLY OK
+==> ALL MIGRATIONS VERIFIED (apply + idempotent + rollback exact)
+GATE_EXIT=0
+```
+
+**Exit criteria:**
+
+| Criterion | Status |
+|---|---|
+| Migration runs cleanly on a copy of the current schema | ✅ MET — real Postgres 16.13, exit 0 |
+| Rollback script tested and proven | ✅ MET — column-level diff before vs after rollback is IDENTICAL |
+| No duplicate/orphaned tables without justification | ✅ MET — 3 tables ALTERed in place; 1 new table (`flow_outcomes`) justified above |
+
+**WAVE 3: PASS.**
+
+**Known limitations:** verified against local Postgres 16.13, not against the live Supabase
+project (unreachable from here). Supabase runs Postgres 15/16 with the same DDL semantics for
+everything used, but the migration should still be applied to a Supabase **branch** before
+production. `flow_outcomes` has an RLS read policy but no write policy — writes are service-role
+only, matching how `flow_archive` and `price_history` already behave.
