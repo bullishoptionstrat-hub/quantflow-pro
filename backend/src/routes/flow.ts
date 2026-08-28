@@ -1,7 +1,24 @@
 import { Router, Request, Response } from 'express';
-import { getRecentFlow, getFlowStats, FlowEvent } from '../ingestion/index';
+import { getRecentFlow, getFlowStats, getUnusualActivity, FlowEvent } from '../ingestion/index';
 
 const router = Router();
+
+// GET /api/flow/unusual — real (delayed) unusual options activity from CBOE
+// chains, ranked by notional. Distinct from /api/flow, which is the live tape:
+// this is a daily volume aggregate, so each row carries its own asOf and
+// delayedMinutes rather than pretending to be real time.
+router.get('/unusual', (req: Request, res: Response) => {
+  const symbol = (req.query.symbol as string)?.toUpperCase() || undefined;
+  const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+  const rows = getUnusualActivity(symbol).slice(0, limit);
+  res.json({
+    contracts: rows,
+    count: rows.length,
+    source: 'cboe',
+    realtime: false,
+    note: 'Daily cumulative volume per contract, delayed ~15 minutes. Not a trade tape.',
+  });
+});
 
 // GET /api/flow — paginated recent flow events
 router.get('/', (req: Request, res: Response) => {

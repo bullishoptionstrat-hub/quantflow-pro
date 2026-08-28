@@ -12,6 +12,8 @@
  */
 import axios from 'axios';
 import WebSocket from 'ws';
+import { fetchCboeChain, getCboeSnapshot, getCboeSymbols } from './connectors/cboeOptions';
+import { fetchOccVolume, getOccVolume } from './connectors/occ';
 import {
   ingestPrint, drainIdle, resetDaily,
   type RawPrint, type WireFlowEvent,
@@ -156,6 +158,15 @@ export function getDarkPoolPrints(): DarkPoolPrint[] {
 }
 
 export function getGEXLevels(symbol: string): GEXLevel[] {
+  // Real chain first. CBOE publishes per-contract gamma and open interest, so
+  // this is a direct computation; generateSyntheticGEX below is a fallback for
+  // symbols CBOE hasn't been polled for yet, not a preference.
+  const snap = getCboeSnapshot(symbol);
+  if (snap && snap.gex.length > 0) {
+    gexCache[symbol] = { levels: snap.gex, fetchedAt: Date.now() };
+    return snap.gex;
+  }
+
   const cached = gexCache[symbol];
   if (cached && Date.now() - cached.fetchedAt < 60_000) {
     return cached.levels;
@@ -194,7 +205,22 @@ export function getFlowStats() {
 }
 
 export function getIngestionStatus() {
-  return { active: ingestionActive, sources, sourceErrors };
+  return { active: ingestionActive, sources, sourceErrors, occ: getOccVolume() };
+}
+
+/** Symbols with a real (non-synthetic) CBOE chain loaded. */
+export function getRealGexSymbols(): string[] {
+  return getCboeSymbols();
+}
+
+/** Delayed-but-real unusual options activity, ranked by notional. */
+export function getUnusualActivity(symbol?: string) {
+  const syms = symbol ? [symbol.toUpperCase()] : getCboeSymbols();
+  const out = syms.flatMap((sy) => {
+    const snap = getCboeSnapshot(sy);
+    return snap ? snap.unusual.map((u) => ({ ...u, asOf: snap.asOf, delayedMinutes: snap.delayedMinutes })) : [];
+  });
+  return out.sort((a, b) => b.notional - a.notional);
 }
 
 // ─── Initializer ────────────────────────────────────────────────────────────
@@ -205,6 +231,9 @@ export function startIngestion(io: any): void {
 
   // Seed with realistic data immediately
   seedInitialData();
+
+  startCboeOptions();
+  startOcc();
 
   // ── Legacy connectors ──
   startTradierIngestion();
@@ -844,4 +873,46 @@ function generateSyntheticGEX(symbol: string): GEXLevel[] {
   }
 
   return levels.sort((a, b) => a.strike - b.strike);
+}
+
+
+// ─── CBOE delayed options chains ─────────────────────────────────────────────
+// Real strikes, OI and greeks with no API key. Polled one symbol at a time:
+// an SPX chain is ~13MB of JSON, and Render's free tier has 512MB.
+const CBOE_SYMBOLS = ['SPY', 'QQQ', 'NVDA', 'TSLA', 'AAPL', 'SPX'];
+let cboeIdx = 0;
+
+function startCboeOptions(): void {
+  async function tick() {
+    const sym = CBOE_SYMBOLS[cboeIdx % CBOE_SYMBOLS.length]!;
+    cboeIdx++;
+    try {
+      const snap = await fetchCboeChain(sym);
+      if (snap) {
+        sources['cboe_options'] = 'connected';
+        delete sourceErrors['cboe_options'];
+      }
+    } catch (err: any) {
+      sources['cboe_options'] = 'error';
+      sourceErrors['cboe_options'] = err.response?.status ? `HTTP ${err.response.status}` : err.message;
+    }
+  }
+  void tick();
+  setInterval(() => { void tick(); }, 20_000);
+}
+
+// ─── OCC cleared volume ──────────────────────────────────────────────────────
+function startOcc(): void {
+  async function tick() {
+    try {
+      await fetchOccVolume();
+      sources['occ'] = 'connected';
+      delete sourceErrors['occ'];
+    } catch (err: any) {
+      sources['occ'] = 'error';
+      sourceErrors['occ'] = err.response?.status ? `HTTP ${err.response.status}` : err.message;
+    }
+  }
+  void tick();
+  setInterval(() => { void tick(); }, 300_000);
 }
