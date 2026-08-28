@@ -188,3 +188,68 @@ disproved that contract; the tests now assert the stricter rule explicitly.
   (GEX, heat-map, macro, news, watchlist, power-alerts) still need badges — Wave 5/9.
 - `is_delayed` is not yet set by cboe/stooq/fred, which are all delayed sources. Wave 2 assigns
   each provider its real delay characteristics via the `MarketDataProvider` interface.
+
+---
+
+## WAVE 2 — PROVIDER / QUALITY FOUNDATION
+
+**Objective:** every provider declares its real capabilities and limits, enforced in code.
+
+**Files changed:**
+- NEW `backend/src/providers/types.ts` — `MarketDataProvider` contract: capabilities, priority
+  (P0–P5), latency class, rate limit + verification state, auth, required env, ToS, fallback.
+  `validateDescriptor()` rejects contradictions (e.g. realtime AND a delay estimate).
+- NEW `backend/src/providers/registry.ts` — all 17 providers declared, each rate limit marked
+  `verified` (with source + date) or `unverified` (with the reason).
+- NEW `backend/src/providers/quota.ts` — priority quota manager, circuit breaker, typed decisions.
+- NEW `backend/test/providers.test.ts` (40 tests)
+- MOD `backend/src/ingestion/index.ts` — Polygon poll quota-gated; errors logged, never swallowed.
+- MOD `backend/src/routes/health.ts` — `GET /api/health/providers`.
+
+**Design decisions that carry the honesty requirement into code:**
+- Provenance is DERIVED from the provider descriptor (`provenanceFromDescriptor`), so a delayed
+  provider cannot produce an undelayed event regardless of what a connector author remembers.
+- `UNVERIFIED_SAFETY_FACTOR = 0.5`: an unconfirmed limit is spent at half its declared value.
+- `PRIORITY_RESERVE`: P5 background work stops at 50% of a budget so P0 live work keeps headroom.
+- Failover sets `is_inferred` + `inference_method: 'failover_from:<id>'` + `confidence`, so a
+  stand-in provider's data is visibly a stand-in.
+
+**W0-B DEFECT FIXED:** Polygon polled every 10 s = 6 req/min against its VERIFIED 5 req/min free
+limit. Now quota-gated with a 15 s interval (4 req/min). It remains declared `is_delayed` with a
+900 s estimate because the free tier serves EOD/15-min-delayed data, not realtime option trades.
+
+**Tests run — actual output:**
+
+```
+$ npm test
+# tests 123 / # pass 123 / # fail 0     (backend; was 83)
+```
+
+**ADVERSARIAL PASS — 0 failures:**
+
+```
+held ✅  10k-call storm never throws                      actions seen: allow,defer
+held ✅  exhaustion stops allowing                        allowed=5/20 (budget 5)
+held ✅  failover is stamped on the event, not silent     method=failover_from:tradier
+held ✅  degraded stand-in never renders LIVE             badge=DELAYED
+held ✅  every provider produces a VALID provenance envelope
+held ✅  BLOCKED provider is unreachable via capability lookup
+held ✅  unknown/unconfigured deny cleanly
+FAILURES: 0
+```
+
+**Exit criteria:**
+
+| Criterion | Status |
+|---|---|
+| Quota exhaustion degrades gracefully rather than crashing | ✅ MET — typed `allow/defer/degrade/deny`; 10k-call storm throws nothing; declared fallback used, else a retry hint |
+| Provider failover is explicitly flagged, never silent | ✅ MET — `is_inferred` + `failover_from:<id>` + confidence on the event; badge can never read LIVE |
+
+**WAVE 2: PASS — with one caveat stated plainly.**
+
+**CAVEAT (does not meet the prompt's "re-check official docs" instruction in full):** the prompt
+requires verifying every rate limit against current official docs. This environment's egress proxy
+blocks every vendor domain, so only **Polygon's** limit could be confirmed (5 req/min, EOD/15-min-
+delayed free tier, via cross-checked current sources, 2026-08-15). **The other 16 are marked
+`unverified` with the reason** and enforced at 50% of their declared value. They must be
+re-verified against the official pages before any deployment depends on them. No limit was invented.

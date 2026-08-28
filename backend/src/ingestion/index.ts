@@ -15,6 +15,7 @@ import {
   syntheticGeneratorsAllowed,
 } from '../config/dataMode';
 import { provenanceLogLine, type Provenance, upstreamProvenance } from '../config/provenance';
+import { reportFailure, reportSuccess, requestQuota } from '../providers/quota';
 import {
   getOverallHealth,
   getSourceHealth,
@@ -474,6 +475,15 @@ function startPolygonIngestion(): void {
   sources['polygon'] = 'connected';
 
   async function poll() {
+    // W0-B fix: this used to fire every 10s = 6 req/min against Polygon's
+    // VERIFIED 5 req/min free limit. The quota manager is now the authority,
+    // so the interval can never exceed the declared budget.
+    const decision = requestQuota('polygon', { priority: 0 });
+    if (decision.action !== 'allow') {
+      // Degradation is logged, never silent.
+      console.warn(`[polygon] skipping poll: ${decision.action} (${'reason' in decision ? decision.reason : ''})`);
+      return;
+    }
     try {
       const { data } = await axios.get(
         `https://api.polygon.io/v3/trades/options?limit=25&apiKey=${POLYGON_KEY}`,
@@ -523,12 +533,17 @@ function startPolygonIngestion(): void {
           });
         }
       }
+      reportSuccess('polygon');
     } catch (err: any) {
+      // Never swallow: log source and cause (prompt prohibition, line 29).
+      console.error(`[polygon] poll failed: ${err?.response?.status ?? ''} ${err?.message ?? err}`);
+      reportFailure('polygon');
       if (err.response?.status === 403) sources['polygon'] = 'error';
     }
   }
 
-  setInterval(poll, 10_000);
+  // 15s ⇒ 4 req/min, inside the verified 5 req/min free-tier budget.
+  setInterval(poll, 15_000);
   poll();
 }
 

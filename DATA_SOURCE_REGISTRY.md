@@ -12,12 +12,18 @@ proxy 403s all of them) and cannot fetch vendor doc pages (WebFetch `EGRESS_BLOC
 
 No number in this file was invented. Where I don't know, it says UNVERIFIED.
 
+> **As of Wave 2 these declarations are ENFORCED IN CODE**, not just documented:
+> `backend/src/providers/registry.ts` holds the machine-readable version and
+> `backend/src/providers/quota.ts` enforces it. An `UNVERIFIED` limit is spent at only
+> **50%** of its declared value (`UNVERIFIED_SAFETY_FACTOR`) — if we are not sure where the
+> ceiling is, we must not walk up to our guess of it.
+
 ## Active in the ingestion path
 
 | Source | Provides | Rate limit | Verification | Auth | Realtime? | Status |
 |---|---|---|---|---|---|---|
 | **Tradier** | Option chains, WS timesale/trade | UNVERIFIED | — | `TRADIER_TOKEN` bearer | Realtime WS **with brokerage account**; sandbox delayed | Configured, unverifiable here |
-| **Polygon** | Option trades REST | **5 req/min free**; free tier is **end-of-day / 15-min delayed**, not realtime options trades | VERIFIED-SEARCH-2026-08 | `POLYGON_API_KEY` query param | **NO** on free | ⚠️ **DEFECT: `index.ts:426` polls every 10 s = 6 req/min, over the free limit, against an endpoint free tier likely does not serve.** Fix in Wave 2 |
+| **Polygon** | Option trades REST | **5 req/min free**; free tier is **end-of-day / 15-min delayed**, not realtime options trades | VERIFIED-SEARCH-2026-08 | `POLYGON_API_KEY` query param | **NO** on free | ✅ **FIXED in W2**: poll is now quota-gated and runs at 15 s (4 req/min, inside the 5 req/min budget). Still marked `is_delayed: 900s` because the free tier is not realtime |
 | **Finnhub** | Equity trade WS | UNVERIFIED | — | token in WS URL | Realtime equities | ⚠️ Used to **fabricate** option flow (`index.ts:454-456`) — must stop (Wave 1/4) |
 | **Yahoo** | Quotes, option chains | Unofficial/undocumented | VERIFIED-SEARCH-2026-08 that **v7 requires crumb+cookie** | None sent (User-Agent only) | Delayed ~15 min | ⚠️ **Likely BROKEN**; also re-emits daily cumulative volume as new trades. ToS: scraping restricted — no redistribution |
 | **CBOE** | VIX term structure, put/call ratios | UNVERIFIED | — | None (public CDN) | **Delayed** | Endpoint path plausible; `/api/macro/vix` hardcodes `termStructure:'contango'` — must be computed |
