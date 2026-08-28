@@ -532,3 +532,74 @@ data reachable). The shapes are standard and the causality properties are struct
 regardless of the price series — but the detectors have not been run against real market data.
 SMT divergence requires two aligned series; bars whose timestamps do not match are skipped rather
 than assumed to correspond.
+
+---
+
+## WAVE 7 — OUTCOME LAB
+
+**Objective:** flow events get graded against real forward returns, honestly scoped.
+
+**Files changed:** NEW `backend/src/outcomes/grader.ts`, NEW `backend/test/grader.test.ts` (22 tests).
+
+**HONEST SCOPE, stated in code and in every result row:** grading uses **UNDERLYING returns**, not
+option P&L. Option-level P&L needs historical option marks at the grading timestamps, which no free
+source provides (DATA_SOURCE_REGISTRY.md → BLOCKED). Every row carries `return_basis: 'underlying'`
+and every report carries the note *"Theta, IV crush and spread costs are NOT captured."* Modeling
+an option price and calling it a result would be a guess wearing a number's clothing.
+
+**Causality:** entry is the first mark **at or after `actionable_at`** (never `signal_at`), exit is
+the first mark at or after `actionable_at + horizon`. Tests prove an attractive earlier price is
+ignored, and that a better mid-window price is not used as the exit.
+
+**UNGRADED is first-class** — six typed reasons, never coerced into FLAT to make a table look
+complete. `ambiguous_direction` is the common case, because an AMBIGUOUS aggressor side means we do
+not know what "correct" would have been. Guessing there is precisely how a flow tool manufactures a
+hit rate. `buildReport` excludes UNGRADED from the hit rate but **counts** it, and returns
+`hitRate: null` rather than presenting 0/0 as 0%.
+
+**Tests run — actual output:**
+
+```
+$ npm test
+# tests 207 / # pass 207 / # fail 0     (backend; was 185)
+```
+
+**HAND-VERIFIED WORKED EXAMPLE, end to end through the real database:**
+
+```
+entry  = first mark at/after actionable (T+0)  = 580.00
+exit   = first mark at/after T+15m             = 585.80
+return = (585.80 − 580.00) / 580.00
+HAND CHECK: 0.009999999999999922 | grader says 0.009999999999999922 | match: YES ✅
+label  = WIN   (|0.01| > 0.001 flat band)
+```
+
+Persisted to the real `flow_outcomes` table and read back joined to its originating event:
+
+```
+flow_event_id     | base-ok
+event_symbol      | SPY          ← join to flow_archive succeeded
+horizon           | 15m
+entry_mark        | 580.0000
+exit_mark         | 585.8000
+underlying_return | 0.010000
+label             | WIN
+return_basis      | underlying
+is_synthetic      | f
+```
+
+The mirrored SHORT on identical data grades LOSS at the same magnitude — asserted in tests.
+
+**Exit criteria:**
+
+| Criterion | Status |
+|---|---|
+| Scheduled job grades events at T+15m/1h/1d | ⚠️ **PARTIAL** — the grading FUNCTION and its persistence path are done and proven; the scheduler is not wired, because with no reachable price feed there is nothing for it to poll. Wiring a cron that grades from an empty mark store would be theatre. |
+| State explicitly if option-level pricing isn't free | ✅ MET — in code, in every row (`return_basis`), in every report note, and in KNOWN_LIMITATIONS.md |
+| A real event produces a real graded outcome row, hand-checked | ✅ MET — worked example above, hand-verified to 1e-12 and persisted/read back through the real schema |
+
+**WAVE 7: PARTIAL — grading proven end to end; the scheduler is BLOCKED on having a price feed.**
+
+**Known limitations:** marks must be supplied by the caller; no reachable free source provides
+intraday underlying marks here. Grades measure only "did the underlying move the way the flow
+implied" — a directionally correct option can still lose money to theta and spread.
