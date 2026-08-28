@@ -471,3 +471,64 @@ value at expiry, and an implied-vol round trip — confirming the Black-Scholes 
 
 **WAVE 5: PARTIAL — 2 of 4 criteria fully met, 1 partial, 1 BLOCKED on data access.**
 Recorded as such rather than claimed as a pass.
+
+---
+
+## WAVE 6 — MARKET STRUCTURE / CROSS-ASSET ENGINE
+
+**Objective:** non-repainting, causally valid structure detection + SMT divergence.
+
+**Files changed:** NEW `backend/src/structure/detect.ts`, NEW `backend/test/structure.test.ts` (17 tests).
+
+**The causality contract, enforced in code:** every detection carries three genuinely different
+times — `formation_time` (when the pattern's bars occurred), `confirmation_time` (when the
+confirming bar CLOSED), `actionable_time` (earliest a strategy could act). `assertCausality()`
+**throws** on `formation > confirmation > actionable` rather than emitting the detection, and is
+called on every construction path.
+
+**Design choices that prevent repainting:**
+- BOS uses the **CLOSE**, never the wick. A test proves an intrabar spike to 106 above a 105 swing
+  that closes back at 103 produces **no** BOS — that exact wick-then-reject is instead detected as
+  a LIQUIDITY_SWEEP, which is what it actually is.
+- A swing at index `s` is not breakable until `s + lookback`, since it is not a swing until then.
+- Detectors take a bar array and never mutate prior output.
+
+**Tests run — actual output:**
+
+```
+$ npm test
+# tests 185 / # pass 185 / # fail 0     (backend; was 168)
+```
+
+**PROOF THE LOOKAHEAD TESTS HAVE TEETH.** A passing test proves nothing if it is vacuous, so I
+verified both halves:
+
+```
+honest detector, detections per prefix length:
+  n=3: 0 []   n=4: 0 []   n=5: 0 []   n=6: 0 []
+  n=7: 1 [BOS@6]          n=8: 2 [BOS@6, FVG@7]      n=9: 2 [BOS@6, FVG@7]
+counts vary across prefixes: YES ✅ — the prefix test compares changing, non-empty sets
+
+MUTATION (BOS confirmed at the swing bar = lookahead):
+  prefix property rejects the mutant: YES ✅
+  n=3: prefix=[] vs expected=[BOS|BULLISH|2|2|105]
+```
+
+My first mutation attempt was badly constructed — it emitted identical output for both prefixes
+and therefore demonstrated nothing. Replaced with one that genuinely confirms a BOS at the swing
+bar (classic lookahead); the prefix property rejects it.
+
+**Exit criteria:**
+
+| Criterion | Status |
+|---|---|
+| Lookahead/repainting regression tests pass against fixed fixtures | ✅ MET — prefix property asserted at EVERY split point; appending a violent future bar (130/80) changes no earlier detection; detections are never withdrawn as data grows |
+| Same-bar execution leakage test passes | ✅ MET — `actionable_time` is never before the confirming bar's close, so a fill cannot use that bar's own intrabar range |
+
+**WAVE 6: PASS.**
+
+**Known limitations:** fixtures are hand-constructed rather than real historical bars (no market
+data reachable). The shapes are standard and the causality properties are structural, so they hold
+regardless of the price series — but the detectors have not been run against real market data.
+SMT divergence requires two aligned series; bars whose timestamps do not match are skipped rather
+than assumed to correspond.
