@@ -18,3 +18,4 @@ ml-service/models/*.pkl
 # directory, e.g. a Next.js frontend/public/ static folder.
 /public/
 *.tsbuildinfo
+packages/*/dist
