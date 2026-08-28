@@ -603,3 +603,72 @@ The mirrored SHORT on identical data grades LOSS at the same magnitude — asser
 **Known limitations:** marks must be supplied by the caller; no reachable free source provides
 intraday underlying marks here. Grades measure only "did the underlying move the way the flow
 implied" — a directionally correct option can still lose money to theta and spread.
+
+---
+
+## WAVE 8 — ML SHADOW PLATFORM
+
+**Objective:** ML trains only on real graded data and never appears authoritative until validated.
+
+**Files changed:** NEW `ml-service/train_real.py`, `ml-service/model_registry.py`,
+`ml-service/test_ml_gates.py` (23 tests), `ml-service/requirements-dev.txt`.
+MOD `ml-service/main.py` — quarantine + score provenance. `verify:ml` now runs pytest.
+
+**THE RNG MODEL IS QUARANTINED.** `flow_scorer.pkl` (from `train.py`, AUC 1.0000 by construction)
+is refused at load unless `MODEL_STAGE >= VALIDATED` or an explicit `ALLOW_UNVALIDATED_MODEL=true`
+opt-in. Proven:
+
+```
+WARNING QUARANTINED: models/flow_scorer.pkl exists but MODEL_STAGE=RESEARCH is below VALIDATED.
+        Refusing to load it; using the heuristic scorer instead.
+model_loaded : False
+stage        : RESEARCH
+authoritative: False
+```
+
+**`/symbols/heat` no longer fabricates.** It returned `random.uniform(40, 95)` per symbol dressed
+as analysis; it now returns 501 with the reason. Verified zero `random` remains as executable code
+in `main.py` (only two explanatory comments mention it).
+
+**Score provenance:** every `ScoreResponse` carries `scorer` (heuristic|model), `is_authoritative`
+and `model_stage`, stamped at the single exit point of `score_event` so no branch can omit them.
+
+**`train_real.py` REFUSES on insufficient data — the correct behavior today:**
+
+```
+$ python train_real.py --dry-run
+WARNING REFUSING TO TRAIN — insufficient_real_samples: 0 graded non-synthetic outcomes,
+        need 1000. Collecting data (0/1000).
+INFO    This is the correct outcome, not an error. A model fitted to 0 examples would
+        encode noise, exactly like the rng-trained train.py it replaces.
+exit 0
+```
+
+It writes `models/training_status.json` so the UI can show *"collecting data (0/1000)"* rather
+than a score. With `--assume-samples 1500` the gate passes and the model would start at RESEARCH.
+
+**Promotion ladder enforced mechanically** (RESEARCH→CANDIDATE→SHADOW→VALIDATED→PRODUCTION):
+one rung at a time; VALIDATED+ requires out-of-sample evidence that must be `chronological`, have
+≥200 rows, a ≥1-day embargo, and a test period after the train period. **An AUC ≥ 0.999 is
+rejected as implausible** — that is the exact signature of the bug this wave exists to prevent.
+Demotion is always allowed.
+
+**Tests run — actual output:**
+
+```
+$ python -m pytest test_ml_gates.py -q
+....................... [100%]
+23 passed in 0.05s
+```
+
+**Exit criteria:**
+
+| Criterion | Status |
+|---|---|
+| Refuse to train below a stated minimum, printing the count | ✅ MET — refuses at 0/1000, prints the count, exits 0 |
+| Model cannot reach PRODUCTION without out-of-sample evidence | ✅ MET — skipping VALIDATED raises; evidence must be chronological, ≥200 rows, embargoed, and non-degenerate |
+| UI never shows a score from an unvalidated model as fact | ✅ MET — `may_show_in_ui` gate + `is_authoritative` on every response + `training_status.json` placeholder |
+| Chronological splits only, with purging/embargo | ✅ MET — `chronological_split` tested for ordering and that the embargo drops boundary rows |
+| Train on `flow_outcomes` | ⚠️ **PARTIAL** — the query filters graded, non-synthetic rows in SQL, but has never executed against a populated table because Wave 7 cannot collect real outcomes here. The fitting step is intentionally not implemented behind the gate: writing an unexercised training loop would be the "placeholder in a production path" the prompt forbids. |
+
+**WAVE 8: PASS on every gate; the training loop itself is BLOCKED on real data, by design.**

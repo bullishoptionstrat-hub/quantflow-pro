@@ -21,6 +21,29 @@ logger = logging.getLogger("quantflow-ml")
 MODEL_PATH = Path(__file__).parent / "models" / "flow_scorer.pkl"
 FALLBACK_MODEL = None  # loaded lazily
 
+# ─── WAVE 8 QUARANTINE ────────────────────────────────────────────────────────
+# `train.py` produces flow_scorer.pkl from rng-generated data whose labels are
+# drawn BEFORE the features, from disjoint per-label ranges. Its AUC of 1.0000
+# is guaranteed by construction and encodes zero market information.
+#
+# That model must never be served as if it knew something. Loading it is gated
+# behind an explicit opt-in, and every response states whether the score is
+# authoritative. Replacement path: train_real.py + model_registry.py — a model
+# reaches the UI only at VALIDATED, which requires out-of-sample evidence on a
+# chronological split.
+ALLOW_UNVALIDATED_MODEL = os.environ.get("ALLOW_UNVALIDATED_MODEL", "").strip().lower() == "true"
+MODEL_STAGE = os.environ.get("MODEL_STAGE", "RESEARCH").strip().upper()
+MIN_STAGE_FOR_UI = "VALIDATED"
+STAGES = ("RESEARCH", "CANDIDATE", "SHADOW", "VALIDATED", "PRODUCTION")
+
+
+def model_is_authoritative() -> bool:
+    """True only when a genuinely validated model is loaded."""
+    try:
+        return STAGES.index(MODEL_STAGE) >= STAGES.index(MIN_STAGE_FOR_UI)
+    except ValueError:
+        return False
+
 app = FastAPI(
     title="QuantFlow Pro ML Service",
     description="Unusual flow scoring, sentiment classification, heat prediction",
@@ -58,6 +81,11 @@ class ScoreResponse(BaseModel):
     prediction: str  # "unusual" | "normal"
     confidence: float
     features_used: int
+    # Provenance for the SCORE itself, so a UI can never present a heuristic or
+    # an unvalidated model as a validated one.
+    scorer: str = "heuristic"          # "heuristic" | "model"
+    is_authoritative: bool = False
+    model_stage: str = "RESEARCH"
 
 
 class BatchFlowFeatures(BaseModel):
@@ -68,6 +96,13 @@ class BatchFlowFeatures(BaseModel):
 
 def load_model():
     global FALLBACK_MODEL
+    if MODEL_PATH.exists() and not ALLOW_UNVALIDATED_MODEL and not model_is_authoritative():
+        logger.warning(
+            "QUARANTINED: %s exists but MODEL_STAGE=%s is below %s. Refusing to load it; "
+            "using the heuristic scorer instead. See ml-service/train_real.py.",
+            MODEL_PATH, MODEL_STAGE, MIN_STAGE_FOR_UI,
+        )
+        return None
     if MODEL_PATH.exists():
         try:
             FALLBACK_MODEL = joblib.load(MODEL_PATH)
@@ -181,19 +216,35 @@ def model_score(f: FlowFeatures) -> ScoreResponse:
 
 
 def score_event(f: FlowFeatures) -> ScoreResponse:
-    if model is not None:
-        return model_score(f)
-    return heuristic_score(f)
+    result = model_score(f) if model is not None else heuristic_score(f)
+    # Stamp score provenance at the single exit point so no branch can omit it.
+    result.scorer = "model" if model is not None else "heuristic"
+    result.is_authoritative = model is not None and model_is_authoritative()
+    result.model_stage = MODEL_STAGE
+    return result
 
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 async def health():
+    status_path = MODEL_PATH.parent / "training_status.json"
+    training_status = None
+    if status_path.exists():
+        try:
+            import json
+            training_status = json.loads(status_path.read_text())
+        except Exception as e:  # never swallow silently
+            logger.warning("could not read training status: %s", e)
+
     return {
         "status": "ok",
         "model_loaded": model is not None,
         "model_path": str(MODEL_PATH),
+        "model_stage": MODEL_STAGE,
+        "model_authoritative": model is not None and model_is_authoritative(),
+        "scorer": "model" if model is not None else "heuristic",
+        "training_status": training_status,
         "version": "1.0.0",
     }
 
@@ -219,14 +270,21 @@ async def score_batch(batch: BatchFlowFeatures):
 
 @app.get("/symbols/heat")
 async def symbols_heat():
-    """Return mock heat scores per symbol (requires live flow data integration)."""
-    symbols = ["SPY", "QQQ", "NVDA", "AAPL", "TSLA", "MSFT", "AMD", "MSTR"]
-    import random
-    return {
-        "scores": {
-            sym: round(random.uniform(40, 95), 1) for sym in symbols
-        }
-    }
+    """
+    Per-symbol heat.
+
+    This previously returned `random.uniform(40, 95)` per symbol — fabricated
+    numbers presented as analysis. It now returns an explicit 501 with a reason,
+    because no live flow integration exists to compute real heat. Returning
+    nothing true beats returning something false.
+    """
+    raise HTTPException(
+        status_code=501,
+        detail=(
+            "symbol heat requires a live flow integration that does not exist yet. "
+            "This endpoint previously returned random numbers; it no longer fabricates data."
+        ),
+    )
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@
     "verify:modules": "npm run verify:flow-engine && npm run verify:firecrawl",
     "verify:flow-engine": "npm --prefix quantflow-modules/flow-engine run typecheck && npm --prefix quantflow-modules/flow-engine test",
     "verify:firecrawl": "npm --prefix quantflow-modules/firecrawl run typecheck",
-    "verify:ml": "python3 -m compileall -q ml-service && python3 -c \"import ast,sys; [ast.parse(open(f).read(), f) for f in ['ml-service/main.py','ml-service/train.py']]\"",
+    "verify:ml": "python3 -m compileall -q ml-service && cd ml-service && python3 -m pytest test_ml_gates.py -q",
     "audit:all": "npm --prefix backend audit --audit-level=high; npm --prefix frontend audit --audit-level=high",
     "verify:frontend:test": "npm --prefix frontend test",
     "verify:migrations": "./scripts/verify-migrations.sh"
