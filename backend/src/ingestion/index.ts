@@ -135,6 +135,10 @@ let gexCache: Record<string, { levels: GEXLevel[]; fetchedAt: number }> = {};
 let ioInstance: any = null;
 let ingestionActive = false;
 let sources: Record<string, 'connected' | 'error' | 'disabled'> = {};
+// Why a source is in 'error'. Surfaced via /api/health because the hosting
+// platform's logs aren't always reachable when diagnosing a live deploy.
+// Status codes and messages only — never credentials.
+let sourceErrors: Record<string, string> = {};
 
 // ─── Public getters ─────────────────────────────────────────────────────────
 
@@ -190,7 +194,7 @@ export function getFlowStats() {
 }
 
 export function getIngestionStatus() {
-  return { active: ingestionActive, sources };
+  return { active: ingestionActive, sources, sourceErrors };
 }
 
 // ─── Initializer ────────────────────────────────────────────────────────────
@@ -360,6 +364,7 @@ function startTradierIngestion(): void {
 
       tradierWs.on('open', () => {
         sources['tradier'] = 'connected';
+        delete sourceErrors['tradier'];
         const msg = JSON.stringify({
           symbols: WATCHED_SYMBOLS,
           sessionid,
@@ -381,6 +386,7 @@ function startTradierIngestion(): void {
 
       tradierWs.on('error', (err) => {
         sources['tradier'] = 'error';
+        sourceErrors['tradier'] = `ws: ${err.message}`;
         console.error('[tradier] WS error:', err.message);
       });
 
@@ -390,9 +396,14 @@ function startTradierIngestion(): void {
         setTimeout(() => { void connect(); }, 5000);
       });
     } catch (err: any) {
-      const detail = err.response?.status ? `HTTP ${err.response.status}` : err.message;
+      const body = err.response?.data;
+      const detail = err.response?.status
+        ? `HTTP ${err.response.status}` +
+          (typeof body === 'string' && body.length < 200 ? ` — ${body.trim()}` : '')
+        : err.message;
       console.error('[tradier] connect failed:', detail);
       sources['tradier'] = 'error';
+      sourceErrors['tradier'] = detail;
       // Keep the feed alive with clearly-flagged synthetic prints, and retry.
       startSimulationFeed();
       setTimeout(() => { void connect(); }, 30_000);
@@ -481,7 +492,10 @@ function startPolygonIngestion(): void {
         }
       }
     } catch (err: any) {
-      if (err.response?.status === 403) sources['polygon'] = 'error';
+      if (err.response?.status === 403) {
+        sources['polygon'] = 'error';
+        sourceErrors['polygon'] = 'HTTP 403 — options trades endpoint not included in this Polygon plan';
+      }
     }
   }
 
