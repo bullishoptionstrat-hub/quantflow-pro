@@ -24,9 +24,9 @@ export async function middleware(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
 
   const isAuthRoute = req.nextUrl.pathname.startsWith('/login') || req.nextUrl.pathname.startsWith('/register')
-  const isProtectedRoute = !isAuthRoute && req.nextUrl.pathname !== '/'
 
-  if (!user && isProtectedRoute) {
+  // Everything the matcher lets through is either an auth route or protected.
+  if (!user && !isAuthRoute) {
     return NextResponse.redirect(new URL('/login', req.url))
   }
 
@@ -37,6 +37,23 @@ export async function middleware(req: NextRequest) {
   return res
 }
 
+// Listed explicitly rather than as a catch-all: every path this matches costs a
+// `supabase.auth.getUser()` round-trip, so the landing page, static assets and
+// the /api/* proxy must not be in here.
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|api/).*)'],
+  matcher: [
+    '/calculator/:path*',
+    '/dark-pool/:path*',
+    '/flow/:path*',
+    '/gex/:path*',
+    '/heat-map/:path*',
+    '/macro/:path*',
+    '/news/:path*',
+    '/optimizer/:path*',
+    '/power-alerts/:path*',
+    '/settings/:path*',
+    '/watchlist/:path*',
+    '/login/:path*',
+    '/register/:path*',
+  ],
 }

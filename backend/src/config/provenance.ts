@@ -143,6 +143,15 @@ export function upstreamProvenance(
     is_delayed?: true;
     estimated_delay_seconds?: number;
     provider_status?: ProviderStatus;
+    /**
+     * Set when the record's value was derived rather than observed (e.g. an
+     * aggressor side from the quote rule). Requires both a method and a
+     * confidence — `validateProvenance` rejects it otherwise. `confidence: 0`
+     * is legal and is the honest value for an AMBIGUOUS inference.
+     */
+    is_inferred?: true;
+    inference_method?: string;
+    confidence?: number;
   },
   now: () => Date = () => new Date(),
 ): Provenance {
@@ -159,6 +168,9 @@ export function upstreamProvenance(
     ...(typeof input.estimated_delay_seconds === 'number'
       ? { estimated_delay_seconds: input.estimated_delay_seconds }
       : {}),
+    ...(input.is_inferred ? { is_inferred: true as const } : {}),
+    ...(input.inference_method ? { inference_method: input.inference_method } : {}),
+    ...(typeof input.confidence === 'number' ? { confidence: input.confidence } : {}),
     schema_version: PROVENANCE_SCHEMA_VERSION,
     provider_status: input.provider_status ?? 'ok',
   };

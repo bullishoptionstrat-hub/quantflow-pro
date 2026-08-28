@@ -33,8 +33,16 @@ export function syntheticGeneratorsAllowed(env: NodeJS.ProcessEnv = process.env)
 
 /** Anything that can be emitted onto the flow/print/level surfaces. */
 export interface SyntheticTaggable {
-  /** @deprecated one-wave alias for provenance.is_synthetic. Removed in W2. */
-  synthetic?: true;
+  /**
+   * @deprecated one-wave alias for provenance.is_synthetic.
+   *
+   * Typed `boolean`, not `true`-only: the flow engine genuinely emits `false`
+   * (`flow-engine/types.ts`). `rejectEmission` below tests `=== true`, so a
+   * `false` here is NOT read as a claim that the data is real — it simply fails
+   * to assert syntheticness, and the provenance envelope decides. Narrowing
+   * this back to `true` would make the engine's own wire type unassignable.
+   */
+  synthetic?: boolean;
   provenance?: Provenance;
   source?: string;
 }

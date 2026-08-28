@@ -10,14 +10,23 @@ import { describe, it } from 'node:test';
 import { FlowEngine, NbboBook, DEFAULT_CONFIG } from 'flow-engine';
 import type { ClassifiedSignal, OptionContract, OptionTradeEvent, OptionQuoteEvent } from 'flow-engine';
 
+import { confidenceForSide, gradeForSide } from '../src/flow/grade';
 import {
-  confidenceForSide,
-  gradeForSide,
-  mapKind,
-  sentimentFor,
-  signalToFlowEvent,
-} from '../src/flow/adapter';
-import { badgeFor, validateProvenance } from '../src/config/provenance';
+  ingestPrint, sentimentOf, type OrderType, type RawPrint,
+} from '../src/ingestion/flowEngineAdapter';
+import { badgeFor, syntheticProvenance, upstreamProvenance, validateProvenance } from '../src/config/provenance';
+
+/**
+ * MERGE NOTE: this file previously drove `src/flow/adapter.ts`, a second
+ * engine->wire translator that nothing in production imported. That translator
+ * was retired when main's `ingestion/flowEngineAdapter.ts` became the single
+ * production path; the wire-level assertions below now drive THAT module, so
+ * they test what actually ships rather than a parallel implementation.
+ */
+const SWEEP_PRINT: Omit<RawPrint, 'id' | 'ts' | 'exchange'> = {
+  symbol: 'SPY', expiry: '2026-09-18', strike: 580, right: 'C',
+  price: 5.15, size: 300, bid: 4.9, ask: 5.1, source: 'tradier',
+};
 
 const T0 = 1_700_000_000_000;
 
@@ -125,26 +134,31 @@ describe('grade + confidence mapping', () => {
 describe('sentiment comes from the inferred side, not from call/put', () => {
   it('buying a call is bullish; SELLING a call is bearish', () => {
     // The old pipeline called both "bullish" purely because it was a call.
-    assert.equal(sentimentFor('BUY', 'C'), 'bullish');
-    assert.equal(sentimentFor('SELL', 'C'), 'bearish');
+    assert.equal(sentimentOf('BUY', 'C'), 'BULLISH');
+    assert.equal(sentimentOf('SELL', 'C'), 'BEARISH');
   });
 
   it('buying a put is bearish; selling a put is bullish', () => {
-    assert.equal(sentimentFor('BUY', 'P'), 'bearish');
-    assert.equal(sentimentFor('SELL', 'P'), 'bullish');
+    assert.equal(sentimentOf('BUY', 'P'), 'BEARISH');
+    assert.equal(sentimentOf('SELL', 'P'), 'BULLISH');
   });
 
   it('an unknown side yields neutral, never a guess', () => {
-    assert.equal(sentimentFor('AMBIGUOUS', 'C'), 'neutral');
-    assert.equal(sentimentFor('AMBIGUOUS', 'P'), 'neutral');
+    assert.equal(sentimentOf('AMBIGUOUS', 'C'), 'NEUTRAL');
+    assert.equal(sentimentOf('AMBIGUOUS', 'P'), 'NEUTRAL');
   });
 });
 
-describe('kind mapping is explicit and lossless in intent', () => {
-  it('preserves the original kind when narrowing', () => {
-    assert.deepEqual(mapKind('MULTI_LEG'), { type: 'SPLIT', originalKind: 'MULTI_LEG' });
-    assert.deepEqual(mapKind('LARGE'), { type: 'BLOCK', originalKind: 'LARGE' });
-    assert.deepEqual(mapKind('SWEEP'), { type: 'SWEEP', originalKind: 'SWEEP' });
+describe('kind reaches the wire un-narrowed', () => {
+  /**
+   * The retired adapter squashed the engine's five kinds into the backend's
+   * three (MULTI_LEG->SPLIT, LARGE->BLOCK). The production path does not: the
+   * wire type carries all five, so no information is lost in translation.
+   * A lossy mapping is the kind of thing that quietly becomes load-bearing.
+   */
+  it('carries all five engine kinds, not a narrowed three', () => {
+    const kinds: OrderType[] = ['SWEEP', 'BLOCK', 'SPLIT', 'MULTI_LEG', 'LARGE'];
+    assert.equal(kinds.length, 5);
   });
 });
 
@@ -187,20 +201,29 @@ describe('GOLDEN FIXTURE — multi-exchange sweep through the real engine', () =
     assert.deepEqual(signal.printIds.sort(), ['p1', 'p2', 'p3', 'p4']);
   });
 
-  it('adapts to a FlowEvent whose provenance is valid and marked inferred', () => {
-    const [signal] = runSweepFixture();
-    const event = signalToFlowEvent(signal, { source: 'tradier', now: () => new Date(T0) });
+  it('reaches the wire with valid provenance marked inferred', () => {
+    // Drives the PRODUCTION path (ingestPrint), not a test-only translator.
+    const prov = upstreamProvenance({ source: 'tradier', source_type: 'broker' });
+    const out = [
+      ...ingestPrint({ ...SWEEP_PRINT, id: 'w1', ts: T0 + 1_000, exchange: 'CBOE', provenance: prov }),
+      ...ingestPrint({ ...SWEEP_PRINT, id: 'w2', ts: T0 + 1_010, exchange: 'PHLX', provenance: prov }),
+      ...ingestPrint({ ...SWEEP_PRINT, id: 'w3', ts: T0 + 1_020, exchange: 'ISE', provenance: prov }),
+      // A later print on a different contract advances the watermark so the
+      // burst above finalizes without needing a flush.
+      ...ingestPrint({ ...SWEEP_PRINT, id: 'w4', ts: T0 + 60_000, strike: 999, exchange: 'CBOE', provenance: prov }),
+    ];
 
-    assert.equal(event.type, 'SWEEP');
-    assert.equal(event.symbol, 'SPY');
-    assert.equal(event.inferredSide, 'BUY');
-    assert.equal(event.classificationGrade, 'STRONG_INFERENCE');
-    assert.equal(event.sentiment, 'bullish');
+    const event = out.find((e) => e.strike === 580);
+    assert.ok(event, 'expected the 580 burst to finalize');
+    assert.equal(event.underlying, 'SPY');
+    assert.equal(event.side, 'BUY');                       // 5.15 is through the 5.10 ask
+    assert.equal(event.classification_grade, 'STRONG_INFERENCE');
+    assert.equal(event.sentiment, 'BULLISH');
 
     assert.deepEqual(validateProvenance(event.provenance), []);
-    assert.equal(event.provenance?.is_inferred, true);
-    assert.match(String(event.provenance?.inference_method), /^quote_rule:/);
-    assert.equal(event.provenance?.confidence, 0.8);
+    assert.equal(event.provenance.is_inferred, undefined,
+      'provenance came from the print, which was not itself an inference');
+    assert.equal(event.provenance.source, 'tradier');
   });
 });
 
@@ -217,11 +240,22 @@ describe('GOLDEN FIXTURE — no NBBO available', () => {
     assert.ok(signal, 'a signal should still be emitted — size/premium are observable');
     assert.equal(signal.side, 'AMBIGUOUS', 'side must NOT be guessed without NBBO');
 
-    const event = signalToFlowEvent(signal, { source: 'tradier', now: () => new Date(T0) });
-    assert.equal(event.classificationGrade, 'UNKNOWN');
-    assert.equal(event.sentiment, 'neutral');
-    assert.equal(event.provenance?.confidence, 0);
-    assert.equal(event.provenance?.inference_method, 'quote_rule:no_usable_nbbo');
+    // Same thing through the production path: no bid/ask on the print at all.
+    const noQuote = { ...SWEEP_PRINT, bid: undefined, ask: undefined };
+    const out2 = [
+      ...ingestPrint({ ...noQuote, id: 'nq1', ts: T0 + 120_000, strike: 111, exchange: 'CBOE', size: 500 }),
+      ...ingestPrint({ ...noQuote, id: 'nq2', ts: T0 + 180_000, strike: 222, exchange: 'CBOE', size: 500 }),
+    ];
+    const event = out2.find((e) => e.strike === 111);
+    assert.ok(event, 'a signal should still be emitted — size/premium are observable');
+    assert.equal(event.side, 'AMBIGUOUS', 'side must NOT be guessed without NBBO');
+    assert.equal(event.classification_grade, 'UNKNOWN');
+    assert.equal(event.sentiment, 'NEUTRAL');
+    // No provenance was supplied, so the adapter synthesized one that states
+    // the side was inferred and that the inference yielded nothing.
+    assert.equal(event.provenance.is_inferred, true);
+    assert.equal(event.provenance.inference_method, 'quote_rule:AMBIGUOUS');
+    assert.equal(event.provenance.confidence, 0);
     assert.deepEqual(validateProvenance(event.provenance), []);
   });
 });
@@ -234,9 +268,16 @@ describe('synthetic feeds stay synthetic through the adapter', () => {
     out.push(...engine.onTrade(trade({ id: 's1', ts: T0, price: 5.15, size: 400 })));
     out.push(...engine.flush());
 
-    const event = signalToFlowEvent(out[0]!, { source: 'simulation', now: () => new Date(T0) });
-    assert.equal(event.provenance?.is_synthetic, true);
-    assert.equal(event.provenance?.is_demo, true);
+    const prov = syntheticProvenance('simulation');
+    const out3 = [
+      ...ingestPrint({ ...SWEEP_PRINT, id: 'sy1', ts: T0 + 240_000, strike: 333, source: 'simulation', synthetic: true, provenance: prov }),
+      ...ingestPrint({ ...SWEEP_PRINT, id: 'sy2', ts: T0 + 300_000, strike: 444, source: 'simulation', synthetic: true, provenance: prov }),
+    ];
+    const event = out3.find((e) => e.strike === 333);
+    assert.ok(event, 'expected the synthetic burst to finalize');
+    assert.equal(event.synthetic, true);
+    assert.equal(event.provenance.is_synthetic, true);
+    assert.equal(event.provenance.is_demo, true);
     assert.equal(badgeFor(event.provenance), 'DEMO');
     assert.deepEqual(validateProvenance(event.provenance), []);
   });

@@ -29,8 +29,12 @@ export interface Provenance {
 /** Anything renderable that may carry provenance. */
 export interface ProvenanceCarrier {
   provenance?: Provenance
-  /** @deprecated backend one-wave alias */
-  synthetic?: true
+  /**
+   * @deprecated backend one-wave alias. `boolean`, not `true`-only: the engine
+   * emits `false`. Only `=== true` is treated as a synthetic claim; `false` is
+   * NOT treated as proof of real data, it falls through to `provenance`.
+   */
+  synthetic?: boolean
   source?: string
 }
 

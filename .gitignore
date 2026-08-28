@@ -17,3 +17,4 @@ ml-service/models/*.pkl
 # Anchored with a leading slash so it does NOT swallow a workspace's own public/
 # directory, e.g. a Next.js frontend/public/ static folder.
 /public/
+*.tsbuildinfo

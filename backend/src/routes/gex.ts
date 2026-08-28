@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { getGEXLevels, GEXLevel } from '../ingestion/index';
+import { getGEXLevels, getRealGexSymbols, GEXLevel } from '../ingestion/index';
 
 const router = Router();
 
@@ -7,6 +7,7 @@ const router = Router();
 router.get('/', (req: Request, res: Response) => {
   const symbol = ((req.query.symbol as string) || 'SPX').toUpperCase();
   const levels: GEXLevel[] = getGEXLevels(symbol);
+  const isReal = getRealGexSymbols().includes(symbol);
 
   // Find gamma flip (where gex transitions from + to -)
   let flipStrike: number | null = null;
@@ -38,6 +39,13 @@ router.get('/', (req: Request, res: Response) => {
       minGEX: minGEX?.gex ?? null,
     },
     updatedAt: new Date().toISOString(),
+    // Whether these levels came from a real CBOE chain (per-contract gamma and
+    // open interest) or the synthetic fallback. The UI must be able to tell
+    // them apart — a fabricated gamma flip looks exactly like a real one.
+    source: isReal ? 'cboe' : 'synthetic',
+    realData: isReal,
+    realtime: false,
+    delayedMinutes: isReal ? 15 : null,
   });
 });
 

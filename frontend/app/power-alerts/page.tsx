@@ -3,9 +3,13 @@ import { useStore } from '@/store/useStore'
 import { formatTime, formatPremium, heatColor } from '@/lib/utils'
 import { HeatBadge } from '@/components/ui/HeatBadge'
 
+const DEFAULT_ALERT_COLOR = '#8b5cf6'
 const ALERT_TYPE_COLORS: Record<string, string> = {
   SWEEP: '#8b5cf6', BLOCK: '#3b82f6', DARK_POOL: '#fbbf24', GEX_FLIP: '#f97316', ML_SIGNAL: '#22c55e',
+  // Flow-engine signal kinds arrive here via useFlowFeed's order_type passthrough.
+  SPLIT: '#fbbf24', MULTI_LEG: '#34d399', LARGE: '#f472b6',
 }
+const alertColor = (t: string) => ALERT_TYPE_COLORS[t] || DEFAULT_ALERT_COLOR
 
 export default function PowerAlertsPage() {
   const { powerAlerts, voiceEnabled, setVoiceEnabled } = useStore()
@@ -53,14 +57,14 @@ export default function PowerAlertsPage() {
               className="card"
               style={{
                 padding: 14,
-                borderLeft: `3px solid ${ALERT_TYPE_COLORS[alert.alert_type] || '#8b5cf6'}`,
+                borderLeft: `3px solid ${alertColor(alert.alert_type)}`,
                 animation: Date.now() - new Date(alert.created_at).getTime() < 5000 ? 'flash 0.4s ease-out' : 'none',
               }}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16 }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-                    <span style={{ background: `${ALERT_TYPE_COLORS[alert.alert_type]}20`, color: ALERT_TYPE_COLORS[alert.alert_type], fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 4, fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.05em' }}>
+                    <span style={{ background: `${alertColor(alert.alert_type)}20`, color: alertColor(alert.alert_type), fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 4, fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.05em' }}>
                       {alert.alert_type}
                     </span>
                     <span className="ticker-pill">{alert.underlying}</span>

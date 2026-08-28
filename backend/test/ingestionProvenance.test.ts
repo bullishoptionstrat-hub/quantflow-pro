@@ -30,20 +30,41 @@ after(() => {
   else process.env.DATA_MODE = originalDataMode;
 });
 
+/**
+ * MERGE NOTE: `FlowEvent` is now main's snake_case `WireFlowEvent` (the shape
+ * `frontend/lib/types.ts` actually consumes). This fixture was the old
+ * camelCase shape and is ported rather than deleted — what it asserts (that the
+ * emit boundary drops untagged synthetic data) is independent of field naming.
+ */
 function baseEvent(overrides: Partial<FlowEvent>): FlowEvent {
   return {
     id: 'test-1',
-    timestamp: new Date().toISOString(),
-    symbol: 'SPY',
-    expiration: '2026-09-18',
+    created_at: new Date().toISOString(),
+    underlying: 'SPY',
+    expiry: '2026-09-18',
     strike: 580,
-    callPut: 'C',
-    type: 'BLOCK',
-    size: 100,
-    premium: 10_000,
-    heatScore: 50,
-    sentiment: 'neutral',
+    option_type: 'C',
+    order_type: 'BLOCK',
+    total_size: 100,
+    total_premium: 10_000,
+    heat_score: 50,
+    sentiment: 'NEUTRAL',
     source: 'tradier',
+    is_unusual: false,
+    exchange_count: 1,
+    avg_price: 1,
+    iv: 0,
+    delta: 0,
+    open_interest: 0,
+    days_to_expiry: 30,
+    moneyness: 'ATM',
+    spot_price: 580,
+    side: 'AMBIGUOUS',
+    classification_grade: 'UNKNOWN',
+    score_breakdown: {},
+    print_ids: ['test-1'],
+    synthetic: false,
+    provenance: upstreamProvenance({ source: 'tradier', source_type: 'broker' }),
     ...overrides,
   };
 }
@@ -115,14 +136,22 @@ describe('live mode', () => {
     }));
     const found = getRecentFlow().find((e) => e.id === 'live-real');
     assert.ok(found, 'real upstream events must pass through in live mode');
-    assert.equal(found?.synthetic, undefined);
+    // `synthetic` is a required boolean on the wire shape, so the assertion is
+    // "does not claim to be synthetic" rather than "is absent".
+    assert.notEqual(found?.synthetic, true);
     assert.equal(found?.provenance?.is_synthetic, undefined);
   });
 
   it('refuses an upstream event with NO provenance in live mode', () => {
     // Fail-closed rule from the Wave 1 adversarial pass.
     process.env.DATA_MODE = 'live';
-    addFlowEvent(baseEvent({ id: 'live-no-prov', source: 'tradier' }));
+    const ev = baseEvent({ id: 'live-no-prov', source: 'tradier' });
+    // Simulate a producer that simply forgot the field. The cast is the point:
+    // the type system says this cannot happen, and this test proves the runtime
+    // guard still catches it when something bypasses the types (a JSON payload,
+    // an `any`, a future refactor).
+    delete (ev as Partial<FlowEvent>).provenance;
+    addFlowEvent(ev);
     assert.equal(getRecentFlow().find((e) => e.id === 'live-no-prov'), undefined);
   });
 

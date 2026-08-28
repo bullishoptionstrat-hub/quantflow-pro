@@ -35,6 +35,8 @@ export function OrderBadge({ type }: { type: string }) {
     SWEEP: { color: '#a78bfa', bg: 'rgba(139,92,246,0.15)' },
     BLOCK: { color: '#60a5fa', bg: 'rgba(96,165,250,0.15)' },
     SPLIT: { color: '#fbbf24', bg: 'rgba(251,191,36,0.15)' },
+    MULTI_LEG: { color: '#34d399', bg: 'rgba(52,211,153,0.15)' },
+    LARGE: { color: '#f472b6', bg: 'rgba(244,114,182,0.15)' },
   }
   const c = colors[type] || colors.BLOCK
   return (

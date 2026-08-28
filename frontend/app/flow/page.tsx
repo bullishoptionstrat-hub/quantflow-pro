@@ -1,5 +1,6 @@
 'use client'
 import { FlowFeed } from '@/components/flow/FlowFeed'
+import { UnusualActivity } from '@/components/flow/UnusualActivity'
 import { DemoModeBanner } from '@/components/ui/ProvenanceBadge'
 import { useDataMode } from '@/hooks/useDataMode'
 
@@ -21,6 +22,7 @@ export default function FlowPage() {
         </p>
       </div>
       <DemoModeBanner dataMode={dataMode} />
+      <UnusualActivity />
       <FlowFeed />
     </div>
   )
