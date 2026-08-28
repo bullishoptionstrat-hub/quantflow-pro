@@ -326,7 +326,40 @@ const WATCHED_SYMBOLS = [
 
 let tradierWs: WebSocket | null = null;
 
+/**
+ * Ask Tradier's REST API who this token belongs to.
+ *
+ * A 401 from the streaming session endpoint alone is ambiguous — it can mean an
+ * invalid token, a sandbox token pointed at production, or a valid token with no
+ * market-data entitlement. /v1/user/profile discriminates: a 200 proves the token
+ * is valid for api.tradier.com, which narrows a streaming failure down to
+ * entitlement. Result is recorded, never logged with the token itself.
+ */
+async function probeTradierToken(): Promise<void> {
+  if (!TRADIER_TOKEN) {
+    sourceErrors['tradier_token'] = 'TRADIER_TOKEN is not set';
+    return;
+  }
+  try {
+    const res = await axios.get('https://api.tradier.com/v1/user/profile', {
+      headers: { Authorization: `Bearer ${TRADIER_TOKEN}`, Accept: 'application/json' },
+      timeout: 10_000,
+    });
+    sourceErrors['tradier_token'] =
+      `profile HTTP ${res.status} — token IS valid for api.tradier.com, ` +
+      `so a streaming 401 means no market-data entitlement on this account`;
+  } catch (err: any) {
+    const code = err.response?.status;
+    sourceErrors['tradier_token'] = code
+      ? `profile HTTP ${code} — token REJECTED by api.tradier.com ` +
+        `(wrong token, revoked, or a sandbox token: sandbox tokens only work against sandbox.tradier.com)`
+      : `profile probe failed: ${err.message}`;
+  }
+}
+
 function startTradierIngestion(): void {
+  void probeTradierToken();
+
   if (!TRADIER_TOKEN) {
     console.log('[tradier] No token — skipping WebSocket, using simulation');
     sources['tradier'] = 'disabled';
