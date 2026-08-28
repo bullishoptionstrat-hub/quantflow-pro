@@ -413,3 +413,61 @@ ingestion path** — doing so requires per-print exchange + NBBO data, which no 
 free provider supplies (Polygon's free tier is delayed/EOD; Yahoo is daily cumulative volume).
 The legacy `classifySweep` (`size > 200`) therefore still runs in `ingestion/index.ts`. Swapping
 it is a data-availability problem, not a code problem, and is recorded in NEXT_ACTIONS.md.
+
+---
+
+## WAVE 5 — GEX / VOLATILITY ENGINE
+
+**Objective:** real gamma exposure and vol metrics with assumptions shown, not hidden.
+
+**Files changed:**
+- NEW `backend/src/gex/compute.ts` — chain-snapshot GEX with the sign convention documented at
+  the top of the file and asserted in tests.
+- NEW `backend/src/gex/volatility.ts` — IV rank/percentile, term structure, skew.
+- NEW `backend/test/gex.test.ts` (27 tests), `frontend/lib/blackScholes.test.ts` (9 tests).
+- MOD `frontend/lib/blackScholes.ts` — **contract-multiplier bug fixed**.
+
+**BUG FIXED — GEX magnitude was 100× too small.** `frontend/lib/blackScholes.ts:computeGEX`
+omitted the ×100 contract multiplier. Hand-check: 1,000 OI × 0.02 gamma × 100 × 580² × 0.01 =
+**6,728,000**, asserted identically in the backend and frontend suites so the two cannot drift.
+
+**SIGN CONVENTION — asserted, not assumed:** call GEX positive, put GEX negative, tested with
+call-only (net > 0, SUPPORT), put-only (net < 0, RESISTANCE) and balanced (exactly 0, NEUTRAL)
+chains. The dealer-inventory assumption is stated in `model_assumptions` on every result:
+*"Dealers are assumed net LONG calls and net SHORT puts. Actual dealer inventory is not public."*
+
+**Bug found by a test and fixed in the CODE, not the test:** `-0 * x` is `-0`, which is not
+strictly equal to `0` and would surprise any downstream `Object.is` or strict comparison. Added
+`normalizeZero()` in both implementations rather than loosening the assertion.
+
+**Honesty behaviors:**
+- `computeIvRank` **refuses** below 60 observations, returning nulls plus the count it had —
+  a 10-day "52-week IV rank" is not a rank.
+- IV rank and IV percentile are computed and reported as **different** numbers (test asserts they
+  differ: rank 50 vs percentile 99 on the same series).
+- `computeTermStructure` **computes** contango/backwardation/flat/mixed. The existing
+  `/api/macro/vix` hardcodes `'contango'`; the test proves backwardation is now detectable.
+- `computeSkew` returns `missing_leg` rather than assuming symmetry.
+- Zero OI or zero gamma ⇒ `confidence: 0`, not a confident zero.
+
+**Tests run — actual output:**
+
+```
+$ npm test (backend)        # tests 168 / # pass 168 / # fail 0     (was 141)
+$ npx vitest run (frontend) Test Files 3 passed (3) / Tests 29 passed (29)
+```
+
+Frontend suite also verifies put-call parity, delta bounds, the call/put gamma identity, intrinsic
+value at expiry, and an implied-vol round trip — confirming the Black-Scholes core is sound.
+
+**Exit criteria:**
+
+| Criterion | Status |
+|---|---|
+| Sign-convention unit tests pass | ✅ MET — call/put/balanced cases assert sign and level type |
+| GEX reproducible from a fixed input fixture | ✅ MET — identical across runs and order-independent (shuffled strikes give the same result) |
+| UI clearly separates "observed" from "estimated" | ⚠️ **PARTIAL** — the API contract now carries `observed_inputs`, `model_assumptions`, `confidence` and `quality_flags` on every result, but the GEX **page** does not yet render them. UI wiring is Wave 9. |
+| Replace synthetic GEX with real chain-snapshot calculation | 🚫 **BLOCKED** — no reachable free chain-snapshot source (egress proxy blocks every provider; Polygon free is delayed/EOD; FlashAlpha needs a key). The honest calculation exists and is tested; `ingestion/index.ts` still generates synthetic GEX in demo mode, correctly tagged. |
+
+**WAVE 5: PARTIAL — 2 of 4 criteria fully met, 1 partial, 1 BLOCKED on data access.**
+Recorded as such rather than claimed as a pass.
