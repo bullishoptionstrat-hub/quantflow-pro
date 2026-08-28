@@ -335,3 +335,81 @@ project (unreachable from here). Supabase runs Postgres 15/16 with the same DDL 
 everything used, but the migration should still be applied to a Supabase **branch** before
 production. `flow_outcomes` has an RLS read policy but no write policy — writes are service-role
 only, matching how `flow_archive` and `price_history` already behave.
+
+---
+
+## WAVE 4 — OPTIONS FLOW ENGINE
+
+**Objective:** sweep/block/split classification and aggressor inference are real, tested, honest.
+
+**KEY DECISION — integrate, do not rebuild.** `quantflow-modules/flow-engine` already implemented
+this wave's requirements correctly, with 14 passing deterministic tests, and was **completely
+disconnected** (nothing imported it). Rebuilding would have duplicated working code and risked
+losing its central guarantee: `NbboBook.inferSide()` returns `AMBIGUOUS` whenever the NBBO is
+missing or stale. That IS this wave's exit criterion. Prompt rule 27 (don't rewrite a working
+subsystem) and step 39 (extend, don't duplicate) both point the same way.
+
+**Files changed:**
+- `quantflow-modules/flow-engine`: added `build` (esbuild → CJS bundle + `tsc` → `.d.ts`) so the
+  CommonJS backend can consume the ESM module. **No source logic changed.**
+- Backend now depends on `flow-engine` via `file:` — one source of truth, no copied algorithms.
+- NEW `backend/src/flow/adapter.ts` — translation only: `InferredSide` → grade, `SignalKind` →
+  the backend's narrower type, `ClassifiedSignal` → `FlowEvent` + provenance.
+- NEW `backend/test/flowAdapter.test.ts` — 18 golden-fixture tests, fully deterministic.
+
+**Honesty decisions encoded in the adapter:**
+- **Nothing is ever graded `OBSERVED`.** This pipeline never receives an exchange aggressor flag,
+  so at-the-touch is `STRONG_INFERENCE` (0.8) and inside-spread is `WEAK_INFERENCE` (0.55).
+  Confidence is never 1.0.
+- **Sentiment comes from the inferred side, not from call/put.** The old pipeline set
+  `sentiment = call ? bullish : bearish`, which is not information — buying and selling a call are
+  opposite trades. `AMBIGUOUS` ⇒ `neutral`, never a guess.
+- `AMBIGUOUS` still records `is_inferred` with method `quote_rule:no_usable_nbbo`, so "we tried and
+  could not determine" is distinguishable from "we never looked".
+- Lossy kind narrowing (`MULTI_LEG`→SPLIT, `LARGE`→BLOCK) preserves the original in `conditions`.
+
+**Tests run — actual output:**
+
+```
+$ npm test
+# tests 141 / # pass 141 / # fail 0     (backend; was 123)
+```
+
+**A REAL MISTAKE I MADE, AND THE FIX:** my first fixture put the OCC symbol on
+`contract.contractSymbol`, but the engine keys the NBBO book off `contract.symbol`. The lookup
+missed, so every trade came back `AMBIGUOUS` and the sweep fixture failed. I had written the
+fixture with `as OptionTradeEvent` casts, which suppressed exactly the type error that would have
+caught it. Fix: removed the casts and used the real `OptionContract` type, so TypeScript now
+enforces fixture shape. The engine was correct throughout; my test was wrong.
+
+**Golden fixture (deterministic, asserted exact):** 4 prints, same contract and side, 3 exchanges,
+inside the 100 ms window ⇒ `kind=SWEEP`, `side=BUY` (5.15 through a 5.10 ask), `totalSize=900`,
+`totalPremium=463,500` (= 5.15 × 900 × 100 exactly), `printIds=[p1,p2,p3,p4]`. Run twice per test
+run and asserted identical, proving no random data.
+
+**ADVERSARIAL PASS — 0 failures:**
+
+```
+held ✅  garbage NBBO (zero ask / negative bid / crossed) → no confident side   side=AMBIGUOUS
+held ✅  ancient NBBO is not reused                                            side=AMBIGUOUS
+held ✅  every side produces a VALID, inference-marked envelope
+held ✅  AMBIGUOUS never becomes bullish/bearish                    sentiment=neutral conf=0
+held ✅  legless signal is refused, not fabricated
+held ✅  engine-declared synthetic cannot be overridden by the caller           badge=DEMO
+FAILURES: 0
+```
+
+**Exit criteria:**
+
+| Criterion | Status |
+|---|---|
+| Golden fixtures produce exact expected classifications | ✅ MET — exact kind/side/size/premium/printIds, determinism asserted |
+| Aggressor inference never fabricates a side without NBBO | ✅ MET — 6 unit cases + 4 adversarial cases; no-quote, stale, at-mid, crossed, zero-ask, negative-bid all ⇒ AMBIGUOUS |
+
+**WAVE 4: PASS.**
+
+**Known limitations:** the adapter is tested end-to-end but is **not yet wired into the live
+ingestion path** — doing so requires per-print exchange + NBBO data, which no currently reachable
+free provider supplies (Polygon's free tier is delayed/EOD; Yahoo is daily cumulative volume).
+The legacy `classifySweep` (`size > 200`) therefore still runs in `ingestion/index.ts`. Swapping
+it is a data-availability problem, not a code problem, and is recorded in NEXT_ACTIONS.md.

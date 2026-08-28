@@ -2,13 +2,14 @@
   "name": "flow-engine",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "dist/index.cjs",
   "directories": {
     "test": "test"
   },
   "scripts": {
     "test": "tsx --test test/engine.test.ts test/outcome.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "node_modules/.bin/esbuild src/index.ts --bundle --platform=node --format=cjs --outfile=dist/index.cjs --external:zod && tsc -p tsconfig.dts.json"
   },
   "keywords": [],
   "author": "",
@@ -21,5 +22,6 @@
     "@types/node": "^25.9.3",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3"
-  }
+  },
+  "types": "dist/index.d.ts"
 }
