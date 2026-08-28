@@ -43,6 +43,18 @@ do with a caveat a user must see. Never let UI copy contradict this file.
 13. **Real credentials exist in committed zip archives and in git history.** They must be
     rotated by a human; deleting the files does not undo the exposure. (#7)
 
+## Access control (verified against a real Postgres, Wave 9)
+
+16. **`flow_archive` and `price_history` are readable by UNAUTHENTICATED users** by existing
+    policy (`USING (true)`). Verified: an anon request with `auth.uid()` null read 7 archived flow
+    rows. Per-user data is correctly isolated (a user cannot read, delete or insert into another
+    user's `watchlist` or `api_keys` — all six checks pass in `scripts/verify-rls.sh`), but the
+    flow archive itself is public. If flow data is meant to sit behind the login wall, that policy
+    contradicts it. Left unchanged because narrowing it is a product decision, not a bug fix.
+17. **`api_keys.key_value` is stored in plaintext** (schema comment says "should be encrypted in
+    production"). RLS prevents cross-user reads, but anyone with service-role access or a database
+    dump reads every user's provider keys.
+
 ## Environmental (this session only, not product defects)
 
 14. No network access to any market-data provider and no API keys, so no connector can be
