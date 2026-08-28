@@ -55,11 +55,21 @@ let stateReason = 'FIRECRAWL_API_KEY is not set — web enrichment is off';
 let latchedOff = false;
 
 /**
- * Build the client if a key is configured. Safe to call more than once and safe
- * to call with no key — a missing key is a configuration choice, not a failure,
- * and reports as `disabled` exactly like every other keyless connector.
+ * Build the client if a key is configured. Safe to call with no key — a missing
+ * key is a configuration choice, not a failure, and reports as `disabled`
+ * exactly like every other keyless connector.
+ *
+ * Startup-only, and it enforces that itself: a second call is a no-op. Without
+ * the guard, calling this again would clear `latchedOff` and quietly re-enable a
+ * service that a 401 or a 402 had deliberately shut off — which is exactly the
+ * "until restart" the latch is supposed to mean.
  */
+let started = false;
+
 export function startEnrichment(): void {
+  if (started) return;
+  started = true;
+
   if (!process.env.FIRECRAWL_API_KEY) {
     state = 'disabled';
     stateReason = 'FIRECRAWL_API_KEY is not set — web enrichment is off';

@@ -130,6 +130,22 @@ test('401 latches off too — a revoked key does not un-revoke itself', async ()
   assert.equal(seam.getEnrichmentStatus().latchedOff, true);
 });
 
+test('re-running startEnrichment cannot un-latch a service a 402 shut off', async () => {
+  process.env.FIRECRAWL_API_KEY = 'fc-testkey';
+  const seam = await loadSeam();
+  const fetchStub = stubFetch(() => ({ status: 402 }));
+  seam.startEnrichment();
+
+  await assert.rejects(() => seam.fetchNewsContext('SPY'), (e: any) => e.httpStatus === 503);
+  assert.equal(seam.getEnrichmentStatus().latchedOff, true);
+
+  // "Until restart" has to mean it. A second start is a no-op, not a reset.
+  seam.startEnrichment();
+  assert.equal(seam.getEnrichmentStatus().latchedOff, true);
+  await assert.rejects(() => seam.fetchNewsContext('SPY'), (e: any) => e.httpStatus === 503);
+  assert.equal(fetchStub.calls(), 1, 'still latched: no further request');
+});
+
 test('a transient upstream failure does NOT latch — the next request may try again', async () => {
   process.env.FIRECRAWL_API_KEY = 'fc-testkey';
   const seam = await loadSeam();
