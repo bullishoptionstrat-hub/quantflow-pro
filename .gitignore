@@ -13,3 +13,7 @@ __pycache__/
 *.pyo
 ml-service/models/*.pkl
 .DS_Store
+# Root-only: the Vercel root-directory build output (scripts/build-root-placeholder.mjs).
+# Anchored with a leading slash so it does NOT swallow a workspace's own public/
+# directory, e.g. a Next.js frontend/public/ static folder.
+/public/
