@@ -745,3 +745,72 @@ Also recorded: `api_keys.key_value` is plaintext (#17).
 | Rate limiting on public endpoints | ⚠️ **PARTIAL** — the existing in-memory limiter still trusts `x-forwarded-for` and resets on restart (audit #15). Upstash-backed replacement not built; recorded in NEXT_ACTIONS. |
 
 **WAVE 9: PASS on all three stated exit criteria; rate-limiter hardening carried forward.**
+
+---
+
+## WAVE 10 — ADVERSARIAL HARDENING + PRODUCTION VALIDATION
+
+**Objective:** attack everything built so far before calling any of it done.
+
+**Files changed:** NEW `backend/test/adversarialWave10.test.ts` (20 cross-wave tests),
+NEW `scripts/verify-ml.sh`, `ml-service/requirements-dev.txt`.
+MOD `backend/src/outcomes/grader.ts` — **two real bugs fixed, found by this wave**.
+
+**TWO REAL BUGS FOUND AND FIXED (clock-drift probe):**
+
+1. **Entry and exit could resolve to the SAME mark.** With one usable price observation, both
+   `firstMarkAtOrAfter(actionableAt)` and `firstMarkAtOrAfter(exitTime)` returned it, giving a 0%
+   return and a spurious **FLAT** — a fabricated grade dressed as a real one. Now
+   `entry_and_exit_same_mark`: one observation cannot be both sides of a trade.
+2. **No staleness bound on the entry mark.** A mark 10 days after the signal satisfied "at or after
+   actionable_at" and was accepted as the entry for a 15-minute horizon. Now
+   `entry_mark_too_stale`, bounded by the horizon itself.
+
+Both were caught by an adversarial test, not by review, and both are fixed in the code with the
+probe preserved as a permanent regression test.
+
+**Adversarial coverage (all passing):**
+
+| Condition | Assertion |
+|---|---|
+| Provider outage | 200 consecutive failures then 200 requests — only typed decisions, never a throw |
+| Silent source | degrades to `stale` on its own; a never-reporting source stays visible |
+| Malformed data | zero-OI/zero-gamma GEX ⇒ confidence 0; empty chain invents no levels; empty IV series refuses; degenerate bars emit nothing |
+| Clock drift | future marks rejected; grading before the horizon refuses; **staleness never negative**; alert gate survives out-of-order timestamps |
+| Quota exhaustion | all 17 providers × 500 calls each — only typed decisions |
+| Cross-wave invariant | every descriptor yields a valid envelope; **no delayed provider can badge LIVE**; 5 synthetic disguises all refused in live mode; zero-row report never claims a hit rate; every BLOCKED provider states why |
+
+**`verify:ml` was silently passing on a missing dependency.** It ran `pytest` against system
+python, where pytest is absent, and the failure was being lost. Replaced with `scripts/verify-ml.sh`
+which fails loudly with an actionable install line — a gate that quietly does nothing is worse than
+no gate.
+
+**FINAL FULL VALIDATION — actual output:**
+
+```
+$ npm run verify
+# tests 243 / # pass 243 / # fail 0        backend
+# tests  14 / # pass  14 / # fail 0        flow-engine
+  Test Files 3 passed (3) / Tests 29 passed (29)   frontend
+✓ Compiled successfully                    frontend production build
+VERIFY_EXIT=0
+
+$ PYTHON=<venv> npm run verify:ml       23 passed
+$ npm run verify:migrations             ==> ALL MIGRATIONS VERIFIED (apply + idempotent + rollback exact)
+$ npm run verify:secrets                ==> SECRET SCAN PASSED
+$ npm run verify:rls                    ==> RLS GATE PASSED (6/6)
+```
+
+**No TODO/FIXME/XXX/HACK in any production path** — verified: `count: 0` across `backend/src`,
+`frontend/{lib,components,hooks,app}` and `ml-service`.
+
+**Exit criteria:**
+
+| Criterion | Status |
+|---|---|
+| Re-run prior fixtures under adversarial conditions; fix what breaks | ✅ MET — 20 new tests; 2 real grader bugs found and fixed |
+| Full build + test + lint pass across the repo | ✅ MET — all six gates exit 0 (309 tests total) |
+| No TODO/placeholder in production paths | ✅ MET — count 0 |
+| Ledger shows real evidence for every wave | ✅ MET — every wave has pasted command output, including the BLOCKED ones |
+
+**WAVE 10: PASS.**

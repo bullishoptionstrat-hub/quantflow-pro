@@ -46,6 +46,8 @@ export type UngradedReason =
   | 'no_exit_mark'             // no price at/after the horizon
   | 'entry_mark_before_actionable'
   | 'zero_entry_price'
+  | 'entry_mark_too_stale'     // nearest mark is far past actionable_at
+  | 'entry_and_exit_same_mark' // one observation cannot be both
   | 'horizon_not_elapsed';     // too early to grade
 
 export interface PriceMark {
@@ -73,6 +75,12 @@ export interface GradeInput {
   now: number;
   /** |return| below this is FLAT rather than a WIN/LOSS. */
   flatThreshold?: number;
+  /**
+   * How far after `actionable_at` an entry mark may be. Defaults to the
+   * horizon: an entry observed later than the horizon itself is not an entry
+   * for that horizon, it is a different trade.
+   */
+  maxEntryStalenessMs?: number;
   isSynthetic?: boolean;
 }
 
@@ -112,6 +120,7 @@ export function gradeEvent(input: GradeInput): GradeResult {
     flowEventId, symbol, signalAt, actionableAt, impliedDirection, horizon,
     marks, now, flatThreshold = DEFAULT_FLAT_THRESHOLD, isSynthetic = false,
   } = input;
+  const maxEntryStalenessMs = input.maxEntryStalenessMs ?? HORIZON_MS[input.horizon];
 
   const base = {
     flowEventId, symbol, horizon, signalAt, actionableAt,
@@ -146,8 +155,18 @@ export function gradeEvent(input: GradeInput): GradeResult {
   if (entry.time < actionableAt) return ungraded('entry_mark_before_actionable');
   if (entry.price === 0) return ungraded('zero_entry_price');
 
+  // Found by the Wave 10 clock-drift probe: a single mark far in the future
+  // satisfied "at or after actionable_at" and was accepted as the entry.
+  // An entry observed later than the horizon is not an entry for that horizon.
+  if (entry.time - actionableAt > maxEntryStalenessMs) return ungraded('entry_mark_too_stale');
+
   const exit = firstMarkAtOrAfter(marks, exitTime);
   if (!exit) return ungraded('no_exit_mark');
+
+  // Same probe: with one usable mark, entry and exit resolved to the SAME
+  // observation, yielding a 0% return and a spurious FLAT. One observation
+  // cannot be both sides of a trade.
+  if (exit.time === entry.time) return ungraded('entry_and_exit_same_mark');
 
   const rawReturn = (exit.price - entry.price) / entry.price;
   // A SHORT profits when the underlying falls, so its return is negated.
