@@ -1,8 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
-
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'http://localhost:3001'
-const API = WS_URL.replace('ws://', 'http://').replace('wss://', 'https://')
+import { apiFetch } from '@/lib/apiFetch'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 interface VIXData {
@@ -298,9 +296,9 @@ export default function MacroPage() {
     async function fetchAll() {
       try {
         const [vixRes, macroRes, cryptoRes] = await Promise.allSettled([
-          fetch(`${API}/api/macro/vix`).then(r => r.json()),
-          fetch(`${API}/api/macro`).then(r => r.json()),
-          fetch(`${API}/api/macro/crypto`).then(r => r.json()),
+          apiFetch('/api/macro/vix').then(r => r.json()),
+          apiFetch('/api/macro').then(r => r.json()),
+          apiFetch('/api/macro/crypto').then(r => r.json()),
         ])
 
         if (vixRes.status === 'fulfilled' && vixRes.value?.vix != null) {
@@ -319,7 +317,7 @@ export default function MacroPage() {
         }
 
         // Try stooq quotes from /api/macro/quotes
-        const quotesRes = await fetch(`${API}/api/macro/quotes`).catch(() => null)
+        const quotesRes = await apiFetch('/api/macro/quotes').catch(() => null)
         if (quotesRes?.ok) {
           const q = await quotesRes.json()
           if (Array.isArray(q)) setStooqData(q)
