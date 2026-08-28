@@ -814,3 +814,47 @@ $ npm run verify:rls                    ==> RLS GATE PASSED (6/6)
 | Ledger shows real evidence for every wave | ✅ MET — every wave has pasted command output, including the BLOCKED ones |
 
 **WAVE 10: PASS.**
+
+---
+
+## CORRECTION — `Vercel – quantflow-deploy` is NOT caused by this branch
+
+**Commit `3a8c827` claims this failure was caused by this PR's root `package.json`. That claim is
+wrong and is retracted here.** The record is corrected rather than rewritten, because the commit is
+already pushed.
+
+**What I did wrong:** I established that the root `package.json` was new in this branch, reproduced
+a plausible failure (`npm run build` → `Missing script: "build"`), and concluded causation. I never
+checked the one thing that would have falsified it — whether the check was green on the base branch
+before. Reproducing *a* failure is not evidence that it is *the* failure.
+
+**The falsifying evidence,** from PR #2 (`1ec50ec`, merged to `main` 2026-07-08, when the repo root
+contained no `package.json` at all):
+
+```
+failure   Vercel – quantflow-deploy    dpl_D8ywNJKvLxMTuJv3xSU2QeQXwrXN   2026-07-08
+failure   Vercel – quantflow-pro       dpl_3q5dG9NnhpbBjyctQ8sgo86nRnLj   2026-07-08
+success   Vercel – quantflow-pro-main
+```
+
+The check failed in a tree that did not contain the file I blamed. It is **pre-existing**.
+
+**Current state on `3a8c827` — 5 of 6 green.** `Vercel – quantflow-pro` (rootDirectory `frontend`,
+the real application) **failed on PR #2 and passes on this branch**. The rollup check reports "All
+required and affected projects deployed", indicating `quantflow-deploy` is not a required project.
+
+**Why it cannot be fixed from here:** the available Vercel token does not list `quantflow-deploy`
+among its projects; `get_project`, `get_deployment` and build-log reads all return 404. Neither the
+logs nor a re-run are reachable. Ruled out locally from a clean clone of this branch:
+`npm install` → up to date, `npm run build` → exit 0, writes `public/index.html`. The cause lies in
+that project's own Vercel settings.
+
+**Disposition:** stood down with a single explanatory comment on PR #5 (per the CI-red rule), naming
+the check, the evidence that it is not this PR's, and that no re-run is possible. The root build
+script from `3a8c827` is retained on its own small merit — a root `npm run build` that errors is a
+papercut — and explicitly **not** as a CI fix.
+
+**Lesson recorded for later waves:** this repeats, in my own work, the failure mode the audit was
+written to catch — a plausible mechanism accepted as an established cause without testing the
+falsifier. Wave 0's own rule covers it: verify against the base state, not just against a story that
+fits.

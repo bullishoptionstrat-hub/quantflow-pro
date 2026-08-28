@@ -5,14 +5,17 @@
  * not a deployable app — the deployable frontend lives in `frontend/`, which
  * has its own Vercel project and its own `vercel.json`.
  *
- * Before this repo had a root `package.json`, Vercel found no Node project at
- * the root and served it statically, which succeeded. Adding the root
- * `package.json` (for `npm run verify`) made Vercel auto-detect a Node project,
- * run `npm run build`, and fail with `Missing script: "build"`.
+ * WHAT THIS IS NOT: this was originally added believing it would fix a failing
+ * `Vercel - quantflow-deploy` check. It did not. That check was already failing
+ * on PR #2 in July, in a tree with no root `package.json` at all, so it is
+ * pre-existing and unrelated (see IMPLEMENTATION_LEDGER.md - CORRECTION).
  *
- * This emits a small static page into `public/` (Vercel's default output
- * directory for the "Other" preset) so a root-directory build succeeds and
- * says plainly what it is, instead of silently serving the raw repo.
+ * It is kept on its own smaller merit: without a root `build` script,
+ * `npm run build` at the repo root fails with `Missing script: "build"`, and
+ * any Vercel project that auto-detects a Node project here would too. This
+ * emits a small static page into `public/` (Vercel's default output directory
+ * for the "Other" preset) so that command does something sensible and says
+ * plainly what the root is.
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
