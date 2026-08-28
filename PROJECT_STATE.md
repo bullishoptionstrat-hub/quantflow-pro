@@ -42,9 +42,12 @@ and all **open**:
 | 26 | MEDIUM | CBOE chain `asOf` falls back to `now()` — stale snapshots read as current |
 | 27 | HIGH | `occ.ts` repeats the `\|\| 0` zero-sentinel AND hides a next-business-day delay |
 | 28 | MEDIUM | Auth returns 401 for a Supabase outage — indistinguishable from a bad token |
+| 29 | **HIGH** | Socket.IO has no auth and `origin:'*'` — it broadcasts the same data the six `requireAuth` routes protect, so route auth is bypassable |
 
-Also corrected a claim I had made earlier in the session: CORS is **no longer** `origin:'*'`;
-main replaced it with an allowlist. That statement was true pre-merge and is now stale.
+Also corrected a claim I had made earlier in the session — but only **half** of it was stale.
+main replaced the HTTP CORS wildcard with an allowlist; the **Socket.IO** config still has
+`origin:'*'` + `credentials:true` and no handshake auth. Chasing that half-correction is what
+surfaced #29, which is the most serious finding in this pass.
 
 ## Verification commands
 
