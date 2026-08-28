@@ -13,6 +13,7 @@ import healthRouter from './routes/health';
 import macroRouter from './routes/macro';
 import sentimentRouter from './routes/sentiment';
 import { rateLimiter } from './middleware/rateLimiter';
+import { requireAuth } from './middleware/auth';
 
 config();
 
@@ -30,17 +31,24 @@ export const io = new Server(httpServer, {
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 app.use(helmet({ contentSecurityPolicy: false }));
-app.use(cors({ origin: '*', credentials: true }));
+// HTTP traffic now arrives via the frontend's /api/* rewrite proxy, which is
+// server-to-server and sends no Origin — so this only has to cover a browser
+// talking to the backend directly, i.e. local development.
+const CORS_ORIGINS = [FRONTEND_URL, 'http://localhost:3000'];
+app.use(cors({ origin: CORS_ORIGINS, credentials: true }));
 app.use(express.json({ limit: '1mb' }));
 app.use(rateLimiter(200, 60_000));
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
-app.use('/api/flow', flowRouter);
-app.use('/api/darkpool', darkpoolRouter);
-app.use('/api/gex', gexRouter);
-app.use('/api/chain', chainRouter);
-app.use('/api/macro', macroRouter);
-app.use('/api/sentiment', sentimentRouter);
+// Authenticated: these serve paid upstream data (Tradier / Polygon / MarketData).
+app.use('/api/flow', requireAuth, flowRouter);
+app.use('/api/darkpool', requireAuth, darkpoolRouter);
+app.use('/api/gex', requireAuth, gexRouter);
+app.use('/api/chain', requireAuth, chainRouter);
+app.use('/api/macro', requireAuth, macroRouter);
+app.use('/api/sentiment', requireAuth, sentimentRouter);
+
+// Unauthenticated by design — render.yaml sets healthCheckPath: /api/health.
 app.use('/api/health', healthRouter);
 app.get('/health', (_req, res) => res.json({ ok: true, ts: new Date().toISOString(), uptime: process.uptime() }));
 
@@ -57,29 +65,28 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => console.log(`[Socket] disconnected: ${socket.id}`));
 });
 
-// ─── Batch broadcast queue ────────────────────────────────────────────────────
-const eventQueue: any[] = [];
-let batchTimer: ReturnType<typeof setTimeout> | null = null;
-
-export function queueBroadcast(event: any) {
-  eventQueue.push(event);
-  if (!batchTimer) {
-    batchTimer = setTimeout(() => {
-      if (eventQueue.length > 0) {
-        io.emit('flow_batch', [...eventQueue]);
-        eventQueue.forEach((e) => { if (e.symbol) io.to(e.symbol).emit('flow_update', e); });
-      }
-      eventQueue.length = 0;
-      batchTimer = null;
-    }, 100);
-  }
-}
+// ─── Batch broadcast ──────────────────────────────────────────────────────────
+// Batching lives in `ingestion/index.ts` (`emitSignals`), which owns the io
+// handle and the engine's output. The former `queueBroadcast` here was never
+// called, and emitted both a global `flow_batch` and a per-symbol
+// `flow_update` — delivering every event twice to room subscribers.
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 const PORT = Number(process.env.PORT) || 3001;
 httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`[Backend] QuantFlow Pro running on port ${PORT}`);
   console.log(`[Backend] Frontend URL: ${FRONTEND_URL}`);
+
+  // requireAuth can only validate tokens when the service-role client exists.
+  // Without these it rejects every authenticated route, so say so loudly rather
+  // than letting the app look "up" while serving nothing but 401s.
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) {
+    console.error(
+      '[Backend] FATAL CONFIG: SUPABASE_URL / SUPABASE_SERVICE_KEY are unset — ' +
+      'every authenticated /api route will return 401. Set both in the Render dashboard.'
+    );
+  }
+
   startIngestion(io);
 });
 

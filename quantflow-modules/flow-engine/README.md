@@ -4,6 +4,15 @@ Provider-agnostic options flow classification engine — the core IP layer of a
 FlowAlgo-class product. Sweep / Block / Split / Multi-Leg / Large detection with
 NBBO side inference, rule-based unusualness scoring, and a full audit trail.
 
+> **Integration status:** the backend ships a *vendored copy* of `src/` at
+> `backend/src/flow-engine/` — the backend is CommonJS and this module is ESM,
+> so it is copied rather than imported (relative-import extensions stripped,
+> plus an added `resetDaily()`). The two are otherwise identical. **Change the
+> engine in both places**, or this test suite stops being a valid baseline for
+> what actually ships. The adapter that feeds it lives at
+> `backend/src/ingestion/flowEngineAdapter.ts`.
+
+
 ## Status (verified 2026-06-12)
 
 | Check | Result |

@@ -11,3 +11,4 @@ __pycache__/
 *.pyo
 ml-service/models/*.pkl
 .DS_Store
+*.tsbuildinfo

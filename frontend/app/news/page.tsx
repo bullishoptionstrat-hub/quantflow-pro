@@ -1,8 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
-
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'http://localhost:3001'
-const API = WS_URL.replace('ws://', 'http://').replace('wss://', 'https://')
+import { apiFetch } from '@/lib/apiFetch'
 
 interface NewsHeadline {
   id: string
@@ -241,9 +239,9 @@ export default function NewsPage() {
     async function fetchAll() {
       try {
         const [newsRes, sentRes, earningsRes] = await Promise.allSettled([
-          fetch(`${API}/api/sentiment/news/headlines`).then(r => r.json()),
-          fetch(`${API}/api/sentiment`).then(r => r.json()),
-          fetch(`${API}/api/sentiment/earnings/calendar`).then(r => r.json()),
+          apiFetch('/api/sentiment/news/headlines').then(r => r.json()),
+          apiFetch('/api/sentiment').then(r => r.json()),
+          apiFetch('/api/sentiment/earnings/calendar').then(r => r.json()),
         ])
 
         if (newsRes.status === 'fulfilled' && Array.isArray(newsRes.value)) {
