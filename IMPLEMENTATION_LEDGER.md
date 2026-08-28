@@ -107,3 +107,84 @@ size_norm range | normal : (0.693, 4.605)
 **Known limitations of this wave:** 9 connectors are classed UNVERIFIED because no key exists and
 the egress proxy 403s every provider — their classification is *code-read only*, and Wave 2 must
 re-verify each against its official docs before quota logic depends on it.
+
+---
+
+## WAVE 1 — DATA TRUTH FIREWALL
+
+**Objective:** make it structurally impossible for synthetic data to reach production silently.
+
+**Files changed:**
+- NEW `backend/src/config/provenance.ts` — the Truth Firewall envelope (prompt field names verbatim)
+- NEW `backend/src/ingestion/sourceHealth.ts` — measured per-source staleness
+- NEW `frontend/lib/provenance.ts`, `frontend/components/ui/ProvenanceBadge.tsx`, `frontend/hooks/useDataMode.ts`
+- NEW tests: `backend/test/{provenance,sourceHealth,wave1ExitCriteria,adversarialProvenance}.test.ts`,
+  `frontend/lib/provenance.test.ts`, `frontend/components/ui/ProvenanceBadge.test.tsx`
+- MOD `backend/src/config/dataMode.ts` (provenance-aware emit guard), `backend/src/ingestion/index.ts`
+  (provenance on real connectors, health recording), `backend/src/routes/health.ts` (staleness)
+- MOD `frontend/lib/utils.ts` (`syntheticAllowed()`, provenance-stamped generator),
+  `frontend/hooks/useFlowFeed.ts` (generators gated), `frontend/components/flow/FlowFeed.tsx` (badge per row),
+  `frontend/app/flow/page.tsx` + `app/dark-pool/page.tsx` (banners + honest copy)
+- NEW frontend test infra: vitest + jsdom + Testing Library; `verify:frontend:test` added to the gate
+
+**Tests run — actual output:**
+
+```
+$ npm run verify
+# tests 83 / # pass 83 / # fail 0     (backend, was 31)
+# tests 14 / # pass 14 / # fail 0     (flow-engine)
+ Test Files  2 passed (2)
+      Tests  20 passed (20)            (frontend, new)
+ ✓ Compiled successfully               (frontend production build)
+VERIFY_EXIT=0
+```
+
+**ADVERSARIAL PASS — found a real leak, then closed it.**
+
+First run of a 9-attack probe against the live-mode firewall:
+
+```
+held ✅  source spoofing: synthetic payload, real source name    rejection=synthetic_in_live_mode
+held ✅  flag stripping: is_synthetic deleted                    rejection=untagged_synthetic_source
+held ✅  both flags stripped, synthetic source                   rejection=untagged_synthetic_source
+held ✅  casing evasion on source                                rejection=synthetic_in_live_mode
+LEAK ❌  unknown generator name, no tags                         rejection=ADMITTED
+held ✅  is_demo only (half-tagged)                              rejection=invalid_provenance
+held ✅  delayed with no estimate                                rejection=invalid_provenance
+held ✅  inferred with no method/confidence                      rejection=invalid_provenance
+held ✅  confidence out of range                                 rejection=invalid_provenance
+LEAKS: 1
+```
+
+**Root cause:** `SYNTHETIC_SOURCES` is a name allowlist, so it fails **open** for every generator
+name not yet on it. A generator added later would publish into a live feed untagged.
+
+**Fix:** provenance is now MANDATORY in live mode (`missing_provenance_in_live_mode`). A record
+that cannot state where it came from is not publishable as real market data. Added defense in
+depth: `source_type: 'generator'` alone forces the DEMO badge even if both booleans are stripped.
+Real connectors (tradier, polygon, marketdata, schwab, tastytrade, yahoo) now declare provenance
+at their wiring points, so the stricter rule does not silently disable them.
+
+**Re-run after fix: `LEAKS: 0`.** Preserved permanently as `test/adversarialProvenance.test.ts`.
+
+**Two Session-1 tests were updated**, not silenced: they asserted the old fail-open contract
+("accepts untagged payloads from real upstream sources in both modes"). The adversarial pass
+disproved that contract; the tests now assert the stricter rule explicitly.
+
+**Exit criteria:**
+
+| Criterion | Status |
+|---|---|
+| A test proves no synthetic event can appear without its flags set | ✅ MET — `wave1ExitCriteria.test.ts` EXIT 1 (5 cases, incl. half-tagged + source-spoofed) |
+| A test proves live mode never emits simulation events | ✅ MET — EXIT 2, sweeps 4 sources × 4 tag variants = 16 combinations, all rejected |
+| Health endpoint returns real per-source staleness | ✅ MET — EXIT 3 asserts measured staleness, `never_reported` visibility, and self-degradation to `stale` |
+
+**WAVE 1: PASS.**
+
+**Known limitations:**
+- Polygon is marked `is_delayed` with a 900 s estimate from its verified free-tier terms; the
+  true lag is not measured because no live connection is possible here.
+- The badge is wired into `FlowFeed` rows plus the flow and dark-pool pages. Remaining surfaces
+  (GEX, heat-map, macro, news, watchlist, power-alerts) still need badges — Wave 5/9.
+- `is_delayed` is not yet set by cboe/stooq/fred, which are all delayed sources. Wave 2 assigns
+  each provider its real delay characteristics via the `MarketDataProvider` interface.

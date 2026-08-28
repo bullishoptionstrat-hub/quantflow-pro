@@ -14,6 +14,7 @@ const originalDataMode = process.env.DATA_MODE;
 // Seeding happens inside startIngestion, which reads DATA_MODE at call time.
 process.env.DATA_MODE = 'demo';
 
+import { upstreamProvenance } from '../src/config/provenance';
 import {
   addFlowEvent,
   getDarkPoolPrints,
@@ -105,12 +106,24 @@ describe('live mode', () => {
     assert.equal(getRecentFlow().find((e) => e.id === 'live-tagged'), undefined);
   });
 
-  it('still accepts genuine upstream events', () => {
+  it('accepts genuine upstream events that declare provenance', () => {
     process.env.DATA_MODE = 'live';
-    addFlowEvent(baseEvent({ id: 'live-real', source: 'tradier' }));
+    addFlowEvent(baseEvent({
+      id: 'live-real',
+      source: 'tradier',
+      provenance: upstreamProvenance({ source: 'tradier', source_type: 'broker' }),
+    }));
     const found = getRecentFlow().find((e) => e.id === 'live-real');
     assert.ok(found, 'real upstream events must pass through in live mode');
     assert.equal(found?.synthetic, undefined);
+    assert.equal(found?.provenance?.is_synthetic, undefined);
+  });
+
+  it('refuses an upstream event with NO provenance in live mode', () => {
+    // Fail-closed rule from the Wave 1 adversarial pass.
+    process.env.DATA_MODE = 'live';
+    addFlowEvent(baseEvent({ id: 'live-no-prov', source: 'tradier' }));
+    assert.equal(getRecentFlow().find((e) => e.id === 'live-no-prov'), undefined);
   });
 
   it('admits nothing synthetic across a sweep of every source name', () => {

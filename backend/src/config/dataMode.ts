@@ -13,6 +13,8 @@
  * prevent.
  */
 
+import { type Provenance, syntheticProvenance, validateProvenance } from './provenance';
+
 export type DataMode = 'live' | 'demo';
 
 export const DEFAULT_DATA_MODE: DataMode = 'demo';
@@ -31,7 +33,9 @@ export function syntheticGeneratorsAllowed(env: NodeJS.ProcessEnv = process.env)
 
 /** Anything that can be emitted onto the flow/print/level surfaces. */
 export interface SyntheticTaggable {
+  /** @deprecated one-wave alias for provenance.is_synthetic. Removed in W2. */
   synthetic?: true;
+  provenance?: Provenance;
   source?: string;
 }
 
@@ -40,8 +44,18 @@ export interface SyntheticTaggable {
  * `synthetic: true` so no generator can produce an untagged record even by
  * omission.
  */
-export function markSynthetic<T extends object>(value: T): T & { synthetic: true } {
-  return { ...value, synthetic: true };
+export function markSynthetic<T extends object>(
+  value: T,
+): T & { synthetic: true; provenance: Provenance } {
+  const carrier = value as { provenance?: Provenance; source?: string };
+  const existing = carrier.provenance;
+  return {
+    ...value,
+    // Deprecated flat alias, kept one wave for downstream compatibility.
+    synthetic: true,
+    // Full Truth Firewall envelope: is_synthetic + is_demo travel together.
+    provenance: existing ?? syntheticProvenance(carrier.source ?? "generator"),
+  };
 }
 
 /**
@@ -51,7 +65,11 @@ export function markSynthetic<T extends object>(value: T): T & { synthetic: true
  *   2. In any mode, an untagged payload from a synthetic source must never be
  *      emitted.
  */
-export type EmissionRejection = 'synthetic_in_live_mode' | 'untagged_synthetic_source';
+export type EmissionRejection =
+  | 'synthetic_in_live_mode'
+  | 'untagged_synthetic_source'
+  | 'invalid_provenance'
+  | 'missing_provenance_in_live_mode';
 
 /**
  * Sources whose records are generated locally rather than received from an
@@ -68,12 +86,31 @@ export function rejectEmission(
   payload: SyntheticTaggable,
   env: NodeJS.ProcessEnv = process.env,
 ): EmissionRejection | null {
-  const tagged = payload.synthetic === true;
+  // A record counts as synthetic if EITHER the deprecated flat alias or the
+  // provenance envelope says so, so a half-migrated producer still fails closed.
+  const tagged = payload.synthetic === true || payload.provenance?.is_synthetic === true;
   const fromSyntheticSource = isSyntheticSource(payload.source);
 
   if (fromSyntheticSource && !tagged) return 'untagged_synthetic_source';
   if ((tagged || fromSyntheticSource) && resolveDataMode(env) === 'live') {
     return 'synthetic_in_live_mode';
   }
+  // A malformed envelope (delayed with no estimate, inferred with no method or
+  // confidence, is_synthetic without is_demo) must not reach any consumer.
+  if (payload.provenance && validateProvenance(payload.provenance).length > 0) {
+    return 'invalid_provenance';
+  }
+
+  // FAIL CLOSED. Found by the Wave 1 adversarial pass: a generator with a source
+  // name not on SYNTHETIC_SOURCES and no envelope was admitted to a live feed,
+  // because a name allowlist fails open for every name not yet on it.
+  //
+  // In live mode, provenance is therefore MANDATORY. A record that cannot state
+  // where it came from is not publishable as real market data — absence of
+  // provenance is not evidence of authenticity.
+  if (!payload.provenance && resolveDataMode(env) === 'live') {
+    return 'missing_provenance_in_live_mode';
+  }
+
   return null;
 }

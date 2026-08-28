@@ -3,6 +3,7 @@ import { useRef, useState, useCallback } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useStore } from '@/store/useStore'
 import { useFlowFeed } from '@/hooks/useFlowFeed'
+import { ProvenanceBadge } from '@/components/ui/ProvenanceBadge'
 import { HeatBadge, SentimentBadge, OrderBadge, PremiumBadge } from '@/components/ui/HeatBadge'
 import { FlowFilters } from './FlowFilters'
 import { FlowStats } from './FlowStats'
@@ -150,7 +151,11 @@ export function FlowFeed() {
                         {formatTime(e.created_at)}
                       </td>
                       <td className="col-symbol">
-                        <span className="ticker-pill">{e.underlying}</span>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                          <span className="ticker-pill">{e.underlying}</span>
+                          {/* Every rendered event shows its own provenance. */}
+                          <ProvenanceBadge carrier={e} showDelay={false} />
+                        </span>
                       </td>
                       <td className="col-exp" style={{ color: 'var(--text-secondary)', fontSize: 11 }}>
                         {formatExpiry(e.expiry)}

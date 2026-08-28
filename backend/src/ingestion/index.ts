@@ -14,6 +14,14 @@ import {
   resolveDataMode,
   syntheticGeneratorsAllowed,
 } from '../config/dataMode';
+import { provenanceLogLine, type Provenance, upstreamProvenance } from '../config/provenance';
+import {
+  getOverallHealth,
+  getSourceHealth,
+  recordDisabled,
+  recordEvent,
+  registerSource,
+} from './sourceHealth';
 
 // ─── 13 New Connectors ───────────────────────────────────────────────────────
 import { startFlashAlpha, getFlashGEX } from './connectors/flashAlpha';
@@ -92,8 +100,11 @@ export interface FlowEvent {
    * Present and true only for locally generated records. Absent means the
    * record came from an upstream feed. Never set to false — absence is the
    * negative case, so a forgotten field cannot read as "this is real".
+   * @deprecated one-wave alias for provenance.is_synthetic. Removed in W2.
    */
   synthetic?: true;
+  /** Truth Firewall envelope. See src/config/provenance.ts. */
+  provenance?: Provenance;
 }
 
 export interface DarkPoolPrint {
@@ -107,6 +118,7 @@ export interface DarkPoolPrint {
   source: string;
   /** See FlowEvent.synthetic. */
   synthetic?: true;
+  provenance?: Provenance;
 }
 
 export interface GEXLevel {
@@ -118,7 +130,16 @@ export interface GEXLevel {
   putGamma: number;
   /** See FlowEvent.synthetic. */
   synthetic?: true;
+  provenance?: Provenance;
 }
+
+/** Every source this pipeline can carry. Declared so silence is visible. */
+export const ALL_KNOWN_SOURCES: readonly string[] = [
+  'tradier', 'polygon', 'finnhub',
+  'flashalpha', 'marketdata', 'schwab', 'tastytrade', 'twelvedata', 'fmp',
+  'coingecko', 'fred', 'reddit', 'newsapi', 'cboe', 'yahoo', 'stooq',
+  'simulation', 'seed',
+];
 
 // ─── In-memory stores ───────────────────────────────────────────────────────
 
@@ -181,7 +202,15 @@ export function getFlowStats() {
 }
 
 export function getIngestionStatus() {
-  return { active: ingestionActive, dataMode: resolveDataMode(), sources };
+  return {
+    active: ingestionActive,
+    dataMode: resolveDataMode(),
+    // Legacy string map, kept for the existing /api/flow/stats consumer.
+    sources,
+    // Measured per-source staleness (Wave 1 exit criterion).
+    sourceHealth: getSourceHealth(),
+    overall: getOverallHealth(),
+  };
 }
 
 // ─── Initializer ────────────────────────────────────────────────────────────
@@ -192,6 +221,10 @@ export function startIngestion(io: any): void {
 
   const dataMode = resolveDataMode();
   console.log(`[ingestion] DATA_MODE=${dataMode}`);
+
+  // Declare every known source up front. A source that never delivers then
+  // shows as 'never_reported' instead of being invisible.
+  for (const s of ALL_KNOWN_SOURCES) registerSource(s);
 
   // Seeding is generation, not ingestion. It runs in demo mode only.
   if (syntheticGeneratorsAllowed()) {
@@ -207,10 +240,34 @@ export function startIngestion(io: any): void {
 
   // ── 13 New connectors ──
   // Wire incoming flow events from market-data connectors into central store
-  onMarketDataFlow((e) => addFlowEvent({ ...e, source: 'marketdata' }));
-  onSchwabFlow((e) => addFlowEvent({ ...e, source: 'schwab' }));
-  onTastytradeFlow((e) => addFlowEvent({ ...e, source: 'tastytrade' }));
-  onYahooFlow((e) => addFlowEvent({ ...e, source: 'yahoo' }));
+  // Each connector declares its own provenance here. A connector that cannot
+  // state where its data came from is not publishable in live mode (enforced at
+  // the emit boundary), so this wiring is mandatory, not decorative.
+  onMarketDataFlow((e) =>
+    addFlowEvent({
+      ...e, source: 'marketdata',
+      provenance: e.provenance ?? upstreamProvenance({ source: 'marketdata', source_type: 'vendor' }),
+    }));
+  onSchwabFlow((e) =>
+    addFlowEvent({
+      ...e, source: 'schwab',
+      provenance: e.provenance ?? upstreamProvenance({ source: 'schwab', source_type: 'broker' }),
+    }));
+  onTastytradeFlow((e) =>
+    addFlowEvent({
+      ...e, source: 'tastytrade',
+      provenance: e.provenance ?? upstreamProvenance({ source: 'tastytrade', source_type: 'broker' }),
+    }));
+  onYahooFlow((e) =>
+    addFlowEvent({
+      ...e, source: 'yahoo',
+      // Yahoo is delayed ~15 min and is NOT a per-trade feed: this connector
+      // reports daily cumulative contract volume (KNOWN_LIMITATIONS #5).
+      provenance: e.provenance ?? upstreamProvenance({
+        source: 'yahoo', source_type: 'aggregator',
+        is_delayed: true, estimated_delay_seconds: 900,
+      }),
+    }));
 
   // Wire quote updates to broadcast via Socket.IO
   onTwelveDataSpot((q) => {
@@ -243,31 +300,31 @@ export function startIngestion(io: any): void {
   // Start all 13 connectors (each handles missing env vars gracefully)
   Promise.allSettled([
     startFlashAlpha().then(() => { sources['flashalpha'] = 'connected'; })
-      .catch(() => { sources['flashalpha'] = 'disabled'; }),
+      .catch(() => { sources['flashalpha'] = 'disabled'; recordDisabled('flashalpha'); }),
     startMarketData().then(() => { sources['marketdata'] = 'connected'; })
-      .catch(() => { sources['marketdata'] = 'disabled'; }),
+      .catch(() => { sources['marketdata'] = 'disabled'; recordDisabled('marketdata'); }),
     startSchwab().then(() => { sources['schwab'] = 'connected'; })
-      .catch(() => { sources['schwab'] = 'disabled'; }),
+      .catch(() => { sources['schwab'] = 'disabled'; recordDisabled('schwab'); }),
     startTastytrade().then(() => { sources['tastytrade'] = 'connected'; })
-      .catch(() => { sources['tastytrade'] = 'disabled'; }),
+      .catch(() => { sources['tastytrade'] = 'disabled'; recordDisabled('tastytrade'); }),
     startTwelveData().then(() => { sources['twelvedata'] = 'connected'; })
-      .catch(() => { sources['twelvedata'] = 'disabled'; }),
+      .catch(() => { sources['twelvedata'] = 'disabled'; recordDisabled('twelvedata'); }),
     startFMP().then(() => { sources['fmp'] = 'connected'; })
-      .catch(() => { sources['fmp'] = 'disabled'; }),
+      .catch(() => { sources['fmp'] = 'disabled'; recordDisabled('fmp'); }),
     startCoinGecko().then(() => { sources['coingecko'] = 'connected'; })
-      .catch(() => { sources['coingecko'] = 'disabled'; }),
+      .catch(() => { sources['coingecko'] = 'disabled'; recordDisabled('coingecko'); }),
     startFRED().then(() => { sources['fred'] = 'connected'; })
-      .catch(() => { sources['fred'] = 'disabled'; }),
+      .catch(() => { sources['fred'] = 'disabled'; recordDisabled('fred'); }),
     startReddit().then(() => { sources['reddit'] = 'connected'; })
-      .catch(() => { sources['reddit'] = 'disabled'; }),
+      .catch(() => { sources['reddit'] = 'disabled'; recordDisabled('reddit'); }),
     startNewsAPI().then(() => { sources['newsapi'] = 'connected'; })
-      .catch(() => { sources['newsapi'] = 'disabled'; }),
+      .catch(() => { sources['newsapi'] = 'disabled'; recordDisabled('newsapi'); }),
     startCBOE().then(() => { sources['cboe'] = 'connected'; })
-      .catch(() => { sources['cboe'] = 'disabled'; }),
+      .catch(() => { sources['cboe'] = 'disabled'; recordDisabled('cboe'); }),
     startYahoo().then(() => { sources['yahoo'] = 'connected'; })
-      .catch(() => { sources['yahoo'] = 'disabled'; }),
+      .catch(() => { sources['yahoo'] = 'disabled'; recordDisabled('yahoo'); }),
     startStooq().then(() => { sources['stooq'] = 'connected'; })
-      .catch(() => { sources['stooq'] = 'disabled'; }),
+      .catch(() => { sources['stooq'] = 'disabled'; recordDisabled('stooq'); }),
   ]).then((results) => {
     const connected = results.filter((r) => r.status === 'fulfilled').length;
     console.log(`[ingestion] ${connected}/13 new connectors started`);
@@ -303,6 +360,7 @@ function startTradierIngestion(): void {
   if (!TRADIER_TOKEN) {
     console.log('[tradier] No token — skipping WebSocket');
     sources['tradier'] = 'disabled';
+    recordDisabled('tradier');
     startSimulationFeed();
     return;
   }
@@ -385,6 +443,12 @@ function processMarketTick(data: any, source: string): void {
     : (price > (bid + ask) / 2 ? 'bearish' : 'neutral');
 
   addFlowEvent({
+    provenance: upstreamProvenance({
+      source,
+      source_type: 'broker',
+      // Tradier timesale carries no explicit exchange timestamp on this path.
+      provider_timestamp: typeof data.date === 'string' ? data.date : null,
+    }),
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     timestamp: new Date().toISOString(),
     symbol: sym,
@@ -403,6 +467,7 @@ const POLYGON_KEY = process.env.POLYGON_API_KEY || '';
 function startPolygonIngestion(): void {
   if (!POLYGON_KEY) {
     sources['polygon'] = 'disabled';
+    recordDisabled('polygon');
     return;
   }
 
@@ -429,6 +494,17 @@ function startPolygonIngestion(): void {
           });
 
           addFlowEvent({
+            provenance: upstreamProvenance({
+              source: 'polygon',
+              source_type: 'vendor',
+              // sip_timestamp is a REAL exchange time — the only source that has one.
+              exchange_timestamp: t.sip_timestamp
+                ? new Date(t.sip_timestamp / 1_000_000).toISOString()
+                : null,
+              // Polygon's free tier serves 15-min-delayed/EOD data, never realtime.
+              is_delayed: true,
+              estimated_delay_seconds: 900,
+            }),
             id: `poly-${t.sequence_number ?? Date.now()}`,
             timestamp: new Date(t.sip_timestamp / 1_000_000).toISOString(),
             symbol: t.underlying_asset?.ticker ?? 'UNK',
@@ -463,6 +539,7 @@ const FINNHUB_KEY = process.env.FINNHUB_API_KEY || '';
 function startFinnhubIngestion(): void {
   if (!FINNHUB_KEY) {
     sources['finnhub'] = 'disabled';
+    recordDisabled('finnhub');
     return;
   }
 
@@ -506,6 +583,7 @@ export function startSimulationFeed(): void {
   // deployment with no upstream feed shows an empty tape, not invented flow.
   if (!syntheticGeneratorsAllowed()) {
     sources['simulation'] = 'disabled';
+    recordDisabled('simulation');
     console.log('[ingestion] live mode — simulation feed refused');
     return;
   }
@@ -580,9 +658,15 @@ function generateFlowFromSpot(symbol: string, spotPrice: number, source: string)
 export function addFlowEvent(event: FlowEvent): void {
   const rejection = rejectEmission(event);
   if (rejection) {
-    console.warn(`[ingestion] dropped event id=${event.id} source=${event.source}: ${rejection}`);
+    // Log with full provenance so a drop is diagnosable, never silent.
+    console.warn(
+      `[ingestion] DROPPED id=${event.id} reason=${rejection} ${provenanceLogLine(event.provenance)}`,
+    );
     return;
   }
+
+  // Real measured arrival — this is what /api/health reports staleness from.
+  recordEvent(event.source, event.provenance);
 
   flowEvents.unshift(event);
   if (flowEvents.length > MAX_FLOW_EVENTS) {

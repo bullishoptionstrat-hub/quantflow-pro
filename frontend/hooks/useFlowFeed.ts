@@ -2,7 +2,7 @@
 import { useEffect, useCallback, useRef } from 'react'
 import { useStore } from '@/store/useStore'
 import type { FlowEvent, PowerAlert } from '@/lib/types'
-import { generateSeedFlow } from '@/lib/utils'
+import { generateSeedFlow, syntheticAllowed } from '@/lib/utils'
 
 // Seed with demo data immediately
 let seeded = false
@@ -67,8 +67,9 @@ export function useFlowFeed() {
   }, [passesFilters, voiceEnabled, addFlowEvent, addPowerAlert])
 
   useEffect(() => {
-    // Seed demo data immediately
-    if (!seeded) {
+    // Seed demo data immediately — demo mode only. In live mode an empty tape
+    // is honest; invented flow is not.
+    if (!seeded && syntheticAllowed()) {
       seeded = true
       const seed = generateSeedFlow(50)
       addFlowBatch(seed)
@@ -92,14 +93,24 @@ export function useFlowFeed() {
     }
     trySocket()
 
-    // Simulate new events every 15s when not connected to real backend
+    // Client-side simulator: demo mode ONLY. This is the generator that used to
+    // inject invented events into a "live" terminal whenever the socket dropped
+    // (audit #8). In live mode it never starts.
     const tickers = ['NVDA','SPX','SPY','QQQ','MSTR','MSFT','AAPL','META','TSLA','AMD']
-    simulatorRef.current = setInterval(() => {
-      if (socketLoaded) return
-      const [event] = generateSeedFlow(1)
-      const ticker = tickers[Math.floor(Math.random() * tickers.length)]
-      handleEvent({ ...event, underlying: ticker, created_at: new Date().toISOString(), id: `sim-${Date.now()}` })
-    }, 8000)
+    if (syntheticAllowed()) {
+      simulatorRef.current = setInterval(() => {
+        if (socketLoaded) return
+        const [event] = generateSeedFlow(1)
+        const ticker = tickers[Math.floor(Math.random() * tickers.length)]
+        // generateSeedFlow already stamps provenance; preserve it on the clone.
+        handleEvent({
+          ...event,
+          underlying: ticker,
+          created_at: new Date().toISOString(),
+          id: `sim-${Date.now()}`,
+        })
+      }, 8000)
+    }
 
     return () => {
       if (simulatorRef.current) clearInterval(simulatorRef.current)

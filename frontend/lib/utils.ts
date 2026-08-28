@@ -66,7 +66,15 @@ export function sentimentBg(s: string): string {
   return 'rgba(161,161,170,0.12)'
 }
 
-// Generate realistic seed flow events for demo
+/**
+ * Client-side demo generator.
+ *
+ * This produces FABRICATED events. Every record it returns is stamped with a
+ * full provenance envelope (is_synthetic + is_demo) so it can never render
+ * without a DEMO badge, and callers must gate it behind `syntheticAllowed()`.
+ *
+ * NEXT_PUBLIC_DATA_MODE=live disables it entirely — see syntheticAllowed().
+ */
 export function generateSeedFlow(count = 50): import('./types').FlowEvent[] {
   const tickers = ['NVDA','SPX','SPY','QQQ','MSTR','MSFT','MU','MRVL','AAPL','TSLA','META','AMD','AMZN','GOOGL','SOXL','IWM','XLF','GLD','ARKK']
   const sentiments: Array<'BULLISH'|'BEARISH'|'NEUTRAL'> = ['BULLISH','BULLISH','BULLISH','BEARISH','BEARISH','NEUTRAL']
@@ -105,6 +113,36 @@ export function generateSeedFlow(count = 50): import('./types').FlowEvent[] {
       spot_price: spot,
       created_at: new Date(now - i * 35000).toISOString(),
       source: 'seed',
+      synthetic: true as const,
+      provenance: {
+        source: 'seed',
+        source_type: 'generator',
+        provider_timestamp: null,
+        exchange_timestamp: null,
+        received_at: new Date(now - i * 35000).toISOString(),
+        raw_or_derived: 'derived' as const,
+        is_synthetic: true as const,
+        is_demo: true as const,
+        quality_score: 0,
+        schema_version: 2,
+      },
     }
   })
+}
+
+/**
+ * Client-side mirror of the backend DATA_MODE gate.
+ *
+ * Defaults to demo for the same reason the backend does: this build's default
+ * configuration produces generated data, and defaulting to live would label
+ * fabrication as real.
+ */
+export function clientDataMode(): 'live' | 'demo' {
+  const raw = (process.env.NEXT_PUBLIC_DATA_MODE ?? '').trim().toLowerCase()
+  return raw === 'live' ? 'live' : 'demo'
+}
+
+/** True when the client may run its own generators at all. */
+export function syntheticAllowed(): boolean {
+  return clientDataMode() === 'demo'
 }

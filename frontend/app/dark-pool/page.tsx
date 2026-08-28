@@ -4,9 +4,17 @@ import { formatPremium, formatTime } from '@/lib/utils'
 import { HeatBadge } from '@/components/ui/HeatBadge'
 import { TableSkeleton } from '@/components/ui/Skeleton'
 import type { DarkPoolPrint } from '@/lib/types'
+import { DemoModeBanner } from '@/components/ui/ProvenanceBadge'
+import { useDataMode } from '@/hooks/useDataMode'
 
 const EXCHANGES = ['NYSE', 'NASDAQ', 'CBOE', 'BATS', 'IEX', 'DARK_NYSE', 'DARK_NASDAQ']
 
+/**
+ * FABRICATED DATA. There is no dark-pool feed in this build (KNOWN_LIMITATIONS #1).
+ * Note also that FINRA ATS data — the only free option — is WEEKLY AGGREGATED
+ * VOLUME, never intraday prints, so a future real integration must not be
+ * labeled "prints" either.
+ */
 function generateDarkPool(count = 30): DarkPoolPrint[] {
   const tickers = ['NVDA','AAPL','MSFT','META','TSLA','AMZN','GOOGL','AMD','MU','MRVL','SPY','QQQ','IWM','GLD','XLF','SOXL']
   return Array.from({ length: count }, (_, i) => {
@@ -49,8 +57,24 @@ export default function DarkPoolPage() {
 
   return (
     <div>
+      {/* This page is fabricated in EVERY mode — no dark-pool feed exists. */}
+      <div
+        data-testid="darkpool-synthetic-warning"
+        role="status"
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.35)',
+          color: '#fbbf24', borderRadius: 6, padding: '8px 12px', marginBottom: 14,
+          fontSize: 12, fontFamily: "'JetBrains Mono', monospace",
+        }}
+      >
+        <span style={{ fontWeight: 700 }}>DEMO DATA</span>
+        <span style={{ color: '#fcd34d' }}>
+          These prints are generated, not real. This build has no dark-pool feed. Do not trade on this.
+        </span>
+      </div>
       <div style={{ marginBottom: 16 }}>
-        <h1 style={{ fontSize: 18, fontWeight: 700, color: '#fafafa', marginBottom: 4 }}>🌑 Dark Pool Prints</h1>
+        <h1 style={{ fontSize: 18, fontWeight: 700, color: '#fafafa', marginBottom: 4 }}>🌑 Dark Pool Prints (Demo Data)</h1>
         <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
           <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>Off-exchange institutional block trades · 24-hour delay disclaimer</p>
           <span style={{ background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.3)', color: '#fbbf24', fontSize: 10, padding: '2px 8px', borderRadius: 4, fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 }}>

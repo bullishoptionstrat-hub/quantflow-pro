@@ -21,6 +21,10 @@ export interface FlowEvent {
   created_at: string
   source: string
   ml_score?: number
+  /** @deprecated one-wave alias for provenance.is_synthetic */
+  synthetic?: true
+  /** Truth Firewall envelope — see lib/provenance.ts */
+  provenance?: import('./provenance').Provenance
 }
 
 export interface DarkPoolPrint {

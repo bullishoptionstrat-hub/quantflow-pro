@@ -86,10 +86,22 @@ describe('rejectEmission — no synthetic event is emittable untagged', () => {
     );
   });
 
-  it('accepts untagged payloads from real upstream sources in both modes', () => {
+  it('accepts untagged real-source payloads in DEMO mode', () => {
     for (const source of ['tradier', 'polygon', 'yahoo', 'marketdata', 'schwab']) {
-      assert.equal(rejectEmission({ source }, live), null);
       assert.equal(rejectEmission({ source }, demo), null);
+    }
+  });
+
+  it('REQUIRES provenance in live mode, even from a real-looking source', () => {
+    // Tightened after the Wave 1 adversarial pass: a source-name allowlist fails
+    // open for every name not on it, so an unknown generator was reaching a live
+    // feed untagged. Live mode now demands an explicit envelope from everyone.
+    for (const source of ['tradier', 'polygon', 'yahoo', 'marketdata', 'schwab', 'brand-new-generator']) {
+      assert.equal(
+        rejectEmission({ source }, live),
+        'missing_provenance_in_live_mode',
+        `${source} must not publish to a live feed without provenance`,
+      );
     }
   });
 
