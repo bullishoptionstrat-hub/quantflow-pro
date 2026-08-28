@@ -34,10 +34,33 @@ router.get('/vix', (_req, res) => {
     vix3m: cboe.vix3m,
     vix6m: cboe.vix6m,
     vix1y: cboe.vix1y,
-    termStructure: 'contango',
+    // Was hardcoded to 'contango'. That is an analytical conclusion about the
+    // shape of the curve, not a constant — it was asserted as fact regardless
+    // of the actual values, and would have read "contango" during a genuine
+    // backwardation, which is exactly when the claim matters most.
+    termStructure: classifyTermStructure(cboe.vix, cboe.vix3m),
+    fetchStatus: cboe.fetchStatus,
     updatedAt: cboe.updatedAt,
   });
 });
+
+/**
+ * Contango = further-dated vol above front vol (the usual, calm state).
+ * Backwardation = front above further-dated (stress).
+ *
+ * Returns null when either leg is missing: with no curve there is no shape,
+ * and naming one would be inventing the answer.
+ */
+export function classifyTermStructure(
+  front: number | null,
+  back: number | null,
+): 'contango' | 'backwardation' | 'flat' | null {
+  if (front === null || back === null || front <= 0 || back <= 0) return null;
+  const spread = back - front;
+  // Within 1% of front vol reads as flat rather than a directional claim.
+  if (Math.abs(spread) < front * 0.01) return 'flat';
+  return spread > 0 ? 'contango' : 'backwardation';
+}
 
 // GET /api/macro/pcr — put/call ratios
 router.get('/pcr', (_req, res) => {

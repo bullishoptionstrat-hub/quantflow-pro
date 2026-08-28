@@ -2,25 +2,75 @@
  * CBOE — VIX, Put/Call Ratio, daily options volume
  * No API key required — public endpoints
  * Docs: https://www.cboe.com/us/options/market_statistics/
+ *
+ * ─── THE ZERO-SENTINEL DEFECT THIS FILE USED TO HAVE ───────────────────────
+ *
+ * Every field here was `?? 0` on failure, in two layers: the fetchers caught
+ * their errors and returned `{}` or `0`, and the assembler then applied `?? 0`
+ * again. The put/call endpoint returns HTTP 403; the catch swallowed it; and
+ * the UI rendered "P/C Ratio: 0.00" and "VIX: 0.00" as real, plottable market
+ * data. The log line even said `[cboe] Updated`, so the failure was invisible.
+ *
+ * A put/call ratio of 0.00 is not a plausible market state — it means every
+ * single option traded was a call. VIX 0.00 is impossible. Presenting either as
+ * a number is worse than presenting nothing, because a reader cannot tell it
+ * apart from a real reading.
+ *
+ * In financial infrastructure, absent data and zero are different facts. Every
+ * numeric field below is therefore `number | null`, and `null` is the ONLY
+ * value used for "we do not know". See packages/domain/src/result.ts for the
+ * fuller DataResult<T> treatment this follows.
  */
 import axios from 'axios';
 
+/**
+ * `null` means "not retrieved", never "zero". Consumers MUST branch on null
+ * rather than formatting the value — `.toFixed(2)` on a null is a loud crash,
+ * which is the intended outcome versus silently printing 0.00.
+ */
 export interface CBOEData {
-  vix: number;
-  vix9d: number;
-  vix3m: number;
-  vix6m: number;
-  vix1y: number;
-  putCallRatioEquity: number;
-  putCallRatioIndex: number;
-  putCallRatioTotal: number;
-  equityCallVolume: number;
-  equityPutVolume: number;
-  indexCallVolume: number;
-  indexPutVolume: number;
-  totalOptionsVolume: number;
+  vix: number | null;
+  vix9d: number | null;
+  vix3m: number | null;
+  vix6m: number | null;
+  vix1y: number | null;
+  putCallRatioEquity: number | null;
+  putCallRatioIndex: number | null;
+  putCallRatioTotal: number | null;
+  equityCallVolume: number | null;
+  equityPutVolume: number | null;
+  indexCallVolume: number | null;
+  indexPutVolume: number | null;
+  totalOptionsVolume: number | null;
   updatedAt: string;
   source: 'cboe';
+  /** Which upstream fetches actually succeeded this cycle. */
+  fetchStatus: {
+    vix: 'ok' | 'failed';
+    putCall: 'ok' | 'failed';
+    /** Present when something failed — the reason, never swallowed. */
+    note?: string;
+  };
+}
+
+/**
+ * Parse to a finite number, or null. Never 0-on-failure.
+ *
+ * Deliberately STRICT rather than using `parseFloat` directly: parseFloat is a
+ * prefix parser, so `parseFloat('403 Forbidden')` is 403 and
+ * `parseFloat('1.2 (est)')` is 1.2. A partially-numeric string becoming a
+ * confident reading is the same class of defect as `?? 0` — it manufactures a
+ * plausible number out of something that was not one.
+ */
+export function num(v: unknown): number | null {
+  if (v === null || v === undefined || v === '') return null;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  if (typeof v !== 'string') return null;
+  const t = v.trim();
+  // Must be numeric in its entirety — no trailing units, notes or status text.
+  if (!/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(t)) return null;
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
 }
 
 let cboeData: CBOEData | null = null;
@@ -35,24 +85,28 @@ export function getCBOEData(): CBOEData | null { return cboeData; }
 const VIX_URL = 'https://cdn.cboe.com/api/global/delayed_quotes/charts/historical/_VIX.json';
 const PCR_URL = 'https://cdn.cboe.com/data/us/options/market_statistics/options_volume.json';
 
-async function fetchVIX(): Promise<number> {
+async function fetchVIX(): Promise<number | null> {
   try {
     const { data } = await axios.get(VIX_URL, { timeout: 8000 });
     const obs = data?.data;
     if (Array.isArray(obs) && obs.length > 0) {
       const latest = obs[obs.length - 1];
-      return parseFloat(latest?.[4] ?? latest?.[1] ?? 0); // close price
+      return num(latest?.[4]) ?? num(latest?.[1]); // close price
     }
-    return 0;
+    return null; // endpoint answered but carried nothing — not "VIX is zero"
   } catch {
-    return 0;
+    return null;
   }
 }
 
 // Alternative VIX from Yahoo Finance (no-auth fallback)
-async function fetchVIXYahoo(): Promise<{ vix: number; vix9d: number; vix3m: number; vix6m: number; vix1y: number }> {
+async function fetchVIXYahoo(): Promise<{
+  vix: number | null; vix9d: number | null; vix3m: number | null;
+  vix6m: number | null; vix1y: number | null; failures: string[];
+}> {
   const symbols = ['^VIX', '^VIX9D', '^VIX3M', '^VIX6M', '^VIX1Y'];
   const results: Record<string, number> = {};
+  const failures: string[] = [];
 
   for (const sym of symbols) {
     try {
@@ -64,21 +118,27 @@ async function fetchVIXYahoo(): Promise<{ vix: number; vix9d: number; vix3m: num
           timeout: 5000,
         }
       );
-      const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
-      if (price) results[sym] = parseFloat(price);
-    } catch {}
+      const price = num(data?.chart?.result?.[0]?.meta?.regularMarketPrice);
+      if (price !== null) results[sym] = price;
+      else failures.push(`${sym}: no price in payload`);
+    } catch (err: any) {
+      // Never swallow silently — a bare `catch {}` is how a dead source looks
+      // healthy. Record it so fetchStatus can report the truth.
+      failures.push(`${sym}: ${err?.response?.status ?? ''} ${err?.message ?? err}`.trim());
+    }
   }
 
   return {
-    vix: results['^VIX'] ?? 0,
-    vix9d: results['^VIX9D'] ?? 0,
-    vix3m: results['^VIX3M'] ?? 0,
-    vix6m: results['^VIX6M'] ?? 0,
-    vix1y: results['^VIX1Y'] ?? 0,
+    vix: results['^VIX'] ?? null,
+    vix9d: results['^VIX9D'] ?? null,
+    vix3m: results['^VIX3M'] ?? null,
+    vix6m: results['^VIX6M'] ?? null,
+    vix1y: results['^VIX1Y'] ?? null,
+    failures,
   };
 }
 
-async function fetchPutCallRatios(): Promise<Partial<CBOEData>> {
+async function fetchPutCallRatios(): Promise<Partial<CBOEData> & { error?: string }> {
   try {
     const { data } = await axios.get(PCR_URL, {
       headers: { 'User-Agent': 'Mozilla/5.0' },
@@ -86,20 +146,21 @@ async function fetchPutCallRatios(): Promise<Partial<CBOEData>> {
     });
 
     const today = data?.data?.[0];
-    if (!today) return {};
+    if (!today) return { error: 'put/call endpoint returned no rows' };
 
     return {
-      putCallRatioEquity: parseFloat(today.equity_put_call_ratio ?? 0),
-      putCallRatioIndex: parseFloat(today.index_put_call_ratio ?? 0),
-      putCallRatioTotal: parseFloat(today.total_put_call_ratio ?? 0),
-      equityCallVolume: parseInt(today.equity_call_volume ?? 0),
-      equityPutVolume: parseInt(today.equity_put_volume ?? 0),
-      indexCallVolume: parseInt(today.index_call_volume ?? 0),
-      indexPutVolume: parseInt(today.index_put_volume ?? 0),
-      totalOptionsVolume: parseInt(today.total_volume ?? 0),
+      putCallRatioEquity: num(today.equity_put_call_ratio),
+      putCallRatioIndex: num(today.index_put_call_ratio),
+      putCallRatioTotal: num(today.total_put_call_ratio),
+      equityCallVolume: num(today.equity_call_volume),
+      equityPutVolume: num(today.equity_put_volume),
+      indexCallVolume: num(today.index_call_volume),
+      indexPutVolume: num(today.index_put_volume),
+      totalOptionsVolume: num(today.total_volume),
     };
-  } catch {
-    return {};
+  } catch (err: any) {
+    // The real observed failure here is HTTP 403. It used to become 0.00.
+    return { error: `${err?.response?.status ?? ''} ${err?.message ?? err}`.trim() };
   }
 }
 
@@ -116,20 +177,41 @@ async function fetchAll(): Promise<void> {
       vix3m: vixData.vix3m,
       vix6m: vixData.vix6m,
       vix1y: vixData.vix1y,
-      putCallRatioEquity: pcr.putCallRatioEquity ?? 0,
-      putCallRatioIndex: pcr.putCallRatioIndex ?? 0,
-      putCallRatioTotal: pcr.putCallRatioTotal ?? 0,
-      equityCallVolume: pcr.equityCallVolume ?? 0,
-      equityPutVolume: pcr.equityPutVolume ?? 0,
-      indexCallVolume: pcr.indexCallVolume ?? 0,
-      indexPutVolume: pcr.indexPutVolume ?? 0,
-      totalOptionsVolume: pcr.totalOptionsVolume ?? 0,
+      putCallRatioEquity: pcr.putCallRatioEquity ?? null,
+      putCallRatioIndex: pcr.putCallRatioIndex ?? null,
+      putCallRatioTotal: pcr.putCallRatioTotal ?? null,
+      equityCallVolume: pcr.equityCallVolume ?? null,
+      equityPutVolume: pcr.equityPutVolume ?? null,
+      indexCallVolume: pcr.indexCallVolume ?? null,
+      indexPutVolume: pcr.indexPutVolume ?? null,
+      totalOptionsVolume: pcr.totalOptionsVolume ?? null,
       updatedAt: new Date().toISOString(),
       source: 'cboe',
+      fetchStatus: {
+        vix: vixData.vix === null ? 'failed' : 'ok',
+        putCall: pcr.putCallRatioTotal === undefined || pcr.putCallRatioTotal === null
+          ? 'failed' : 'ok',
+        ...(vixData.failures.length || pcr.error
+          ? { note: [...vixData.failures, pcr.error].filter(Boolean).join('; ') }
+          : {}),
+      },
     };
 
     onCBOEUpdate?.(cboeData);
-    console.log(`[cboe] Updated — VIX: ${cboeData.vix.toFixed(2)} | P/C Ratio: ${cboeData.putCallRatioTotal.toFixed(2)}`);
+
+    // The log must not claim success when nothing was retrieved. The previous
+    // line called `.toFixed(2)` on values that were 0-on-failure and printed
+    // "[cboe] Updated — VIX: 0.00 | P/C Ratio: 0.00" for a total outage.
+    const fmt = (v: number | null) => (v === null ? 'unavailable' : v.toFixed(2));
+    const { vix, putCall, note } = cboeData.fetchStatus;
+    if (vix === 'failed' && putCall === 'failed') {
+      console.error(`[cboe] FETCH FAILED — no data retrieved. ${note ?? ''}`.trim());
+    } else {
+      console.log(
+        `[cboe] Updated — VIX: ${fmt(cboeData.vix)} | P/C Ratio: ${fmt(cboeData.putCallRatioTotal)}` +
+        (note ? ` | partial: ${note}` : ''),
+      );
+    }
   } catch (err: any) {
     console.error('[cboe] fetch error:', err.message);
   }
