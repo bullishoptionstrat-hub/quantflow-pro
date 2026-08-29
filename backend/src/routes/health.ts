@@ -3,6 +3,7 @@ import { getIngestionStatus } from '../ingestion/index';
 import { resolveDataMode } from '../config/dataMode';
 import { PROVIDERS, missingEnvFor } from '../providers/registry';
 import { quotaSnapshot } from '../providers/quota';
+import { getEnrichmentStatus } from '../enrichment/index';
 
 const router = Router();
 
@@ -25,6 +26,9 @@ router.get('/', (_req, res) => {
     // Promoted to the top level: this is the contract the UI badge reads.
     sourceHealth: status.sourceHealth,
     overall: status.overall,
+    // Reported separately from `ingestion.sources`: enrichment is not a tape
+    // source and never contributes a print — it answers requests on demand.
+    enrichment: getEnrichmentStatus(),
     uptime: Math.floor(process.uptime()),
     memory: {
       heapUsedMB: Math.round(process.memoryUsage().heapUsed / 1_048_576),

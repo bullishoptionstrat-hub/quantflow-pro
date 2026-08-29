@@ -5,6 +5,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import { config } from 'dotenv';
 import { startIngestion } from './ingestion/index';
+import { startEnrichment } from './enrichment/index';
 import flowRouter from './routes/flow';
 import darkpoolRouter from './routes/darkpool';
 import gexRouter from './routes/gex';
@@ -106,6 +107,9 @@ httpServer.listen(PORT, '0.0.0.0', () => {
   }
 
   startIngestion(io);
+  // Builds the Firecrawl client if a key is present; it does not fetch anything.
+  // Enrichment is demand-driven because its calls cost metered credits.
+  startEnrichment();
 });
 
 export default app;

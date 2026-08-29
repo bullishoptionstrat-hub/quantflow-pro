@@ -19,3 +19,10 @@ ml-service/models/*.pkl
 /public/
 *.tsbuildinfo
 packages/*/dist
+
+# Local archive/staging dir (contains a 210MB Archive.zip) - never commit
+quanntflow/
+*.zip
+!qf-firecrawl (1).zip
+!qf-flow-engine.zip
+!quantflow.zip

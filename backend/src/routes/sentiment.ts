@@ -2,6 +2,13 @@ import { Router, Request, Response } from 'express';
 import { getRedditSentiment, getSymbolSentiment } from '../ingestion/connectors/reddit';
 import { getNewsHeadlines } from '../ingestion/connectors/newsApi';
 import { getFMPNews, getEarnings, getInsiderTrades } from '../ingestion/connectors/fmp';
+import {
+  fetchNewsContext,
+  fetchRegulatoryNotice,
+  getEnrichmentStatus,
+  EnrichmentUnavailable,
+  CONTEXT_ONLY_DISCLAIMER,
+} from '../enrichment/index';
 
 const router = Router();
 
@@ -55,6 +62,117 @@ router.get('/', (_req: Request, res: Response) => {
     newsCount: news.length + fmpNews.length,
     updatedAt: new Date().toISOString(),
   });
+});
+
+// ─── Web enrichment (Firecrawl) ─────────────────────────────────────────────
+//
+// Registered above `/:symbol` on purpose: that route matches any single path
+// segment, so anything declared after it would be captured as a ticker.
+//
+// These are the only endpoints in this service that spend metered credits, and
+// they spend them only when called — there is no poller behind them. Both carry
+// the context-only contract on the response body, because the client rendering
+// them has not read the module's README.
+
+/** Cap per request. Firecrawl bills per search; an unbounded limit bills badly. */
+const MAX_CONTEXT_ITEMS = 10;
+
+/**
+ * Regulatory pages this service is willing to fetch, by slug.
+ *
+ * Deliberately an allowlist rather than a `?url=` parameter. A caller-supplied
+ * URL would turn an authenticated endpoint into a request forwarder — any host
+ * the server can reach, billed to this account — which is a server-side request
+ * forgery surface and a credit-drain surface at the same time. Adding a source
+ * is a code change, reviewed like one.
+ */
+const REGULATORY_SOURCES: Record<string, { url: string; label: string }> = {
+  'finra-trf': {
+    url: 'https://www.finra.org/filing-reporting/trade-reporting-facility-trf',
+    label: 'FINRA Trade Reporting Facility (TRF)',
+  },
+  'finra-ats': {
+    url: 'https://www.finra.org/filing-reporting/otc-transparency',
+    label: 'FINRA OTC (ATS) Transparency',
+  },
+  'finra-notices': {
+    url: 'https://www.finra.org/rules-guidance/notices',
+    label: 'FINRA Rules & Guidance Notices',
+  },
+};
+
+/** Translate an enrichment failure into a response a panel can render. */
+function sendEnrichmentError(res: Response, err: unknown): void {
+  if (err instanceof EnrichmentUnavailable) {
+    res.status(err.httpStatus).json({
+      error: 'enrichment_unavailable',
+      reason: err.reason,
+      code: err.code,
+    });
+    return;
+  }
+  res.status(500).json({
+    error: 'enrichment_failed',
+    reason: err instanceof Error ? err.message : String(err),
+  });
+}
+
+// GET /api/sentiment/context/status — is enrichment configured, and if not, why
+router.get('/context/status', (_req: Request, res: Response) => {
+  res.json({
+    ...getEnrichmentStatus(),
+    context_only: true,
+    disclaimer: CONTEXT_ONLY_DISCLAIMER,
+    regulatorySources: Object.entries(REGULATORY_SOURCES).map(([slug, s]) => ({
+      slug, label: s.label, url: s.url,
+    })),
+  });
+});
+
+// GET /api/sentiment/context?q=<query>&limit=<n> — news context for a theme
+router.get('/context', async (req: Request, res: Response) => {
+  const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+  if (!q) {
+    res.status(400).json({ error: 'q is required', example: '/api/sentiment/context?q=SPY' });
+    return;
+  }
+  if (q.length > 200) {
+    res.status(400).json({ error: 'q is too long (max 200 characters)' });
+    return;
+  }
+
+  const requested = Number(req.query.limit);
+  const limit = Number.isFinite(requested)
+    ? Math.min(Math.max(Math.trunc(requested), 1), MAX_CONTEXT_ITEMS)
+    : 5;
+
+  try {
+    res.json(await fetchNewsContext(q, limit));
+  } catch (err) {
+    sendEnrichmentError(res, err);
+  }
+});
+
+// GET /api/sentiment/regulatory/:slug — an allowlisted regulatory page as markdown
+router.get('/regulatory/:slug', async (req: Request, res: Response) => {
+  const entry = REGULATORY_SOURCES[req.params.slug];
+  if (!entry) {
+    res.status(404).json({
+      error: 'unknown regulatory source',
+      available: Object.keys(REGULATORY_SOURCES),
+    });
+    return;
+  }
+
+  // Lets a caller holding a prior hash skip a re-fetch it does not need.
+  const previousHash = typeof req.query.hash === 'string' ? req.query.hash : undefined;
+
+  try {
+    const result = await fetchRegulatoryNotice(entry.url, previousHash);
+    res.json({ slug: req.params.slug, label: entry.label, ...result });
+  } catch (err) {
+    sendEnrichmentError(res, err);
+  }
 });
 
 // GET /api/sentiment/:symbol
