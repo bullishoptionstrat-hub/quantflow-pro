@@ -55,6 +55,13 @@ export interface RawPrint {
   source: string;
   /** Simulated / replayed data — surfaces as `synthetic` on the wire. */
   synthetic?: boolean;
+  /**
+   * Set by connectors replaying history. Suppresses the wall-clock receipt
+   * stamp, because "now" says nothing about when a 2024 print was knowable.
+   * Signals formed from such prints get an EVENT_TIME_ONLY decision basis and
+   * are kept out of the track record's rates.
+   */
+  replay?: boolean;
 }
 
 // ─── Output (matches frontend/lib/types.ts FlowEvent) ───────────────────────
@@ -151,6 +158,96 @@ const MAX_TRACKED_PRINTS = 20_000;
 let seq = 0;
 let lastPrintTs = 0;
 
+// ─── Signal observers ───────────────────────────────────────────────────────
+
+/**
+ * Called for every finalized signal, with the engine-native object and the
+ * provenance resolved from its forming prints.
+ *
+ * The wire event is a lossy projection built for the UI — it drops the cluster
+ * boundaries and receipt times that a durable record needs — so anything
+ * recording history subscribes here rather than reading the wire shape.
+ */
+export interface SignalOrigin {
+  /** The first-printing source. Used as the row's display provenance. */
+  source: string;
+  /**
+   * Every distinct source that contributed a print to this signal — usually
+   * one. A cluster can span sources, and when it does the rights decision must
+   * consider all of them, not just whichever printed first.
+   */
+  sources: string[];
+  /** True when ANY forming print was simulated. Pessimistic by design. */
+  synthetic: boolean;
+}
+
+export type SignalObserver = (
+  sig: ClassifiedSignal,
+  origin: SignalOrigin,
+) => void;
+
+const observers: SignalObserver[] = [];
+
+export function onSignal(fn: SignalObserver): void {
+  observers.push(fn);
+}
+
+/** Test seam. */
+export function __clearSignalObservers(): void {
+  observers.length = 0;
+}
+
+function notify(sigs: ClassifiedSignal[]): void {
+  if (observers.length === 0) return;
+  for (const sig of sigs) {
+    const origin = originOf(sig);
+    for (const fn of observers) {
+      try {
+        fn(sig, origin);
+      } catch (err) {
+        // An observer must never break the live feed. Recording is the thing
+        // that can be lost here; the tape is not.
+        console.error('[flowEngineAdapter] signal observer threw:', err);
+      }
+    }
+  }
+}
+
+/**
+ * Resolve a signal's provenance from the prints that formed it.
+ *
+ * Both aggregate fields are pessimistic on purpose. `synthetic` is OR-ed
+ * across origins — a cluster mixing a simulated print with a real one is not
+ * real. `sources` lists every contributor rather than just the first, because
+ * a rights decision taken on the first print alone would let one permitted
+ * print carry an entire cluster of unverified ones into the record.
+ */
+function originOf(sig: ClassifiedSignal): SignalOrigin {
+  const resolved = sig.printIds.map((id) => printSource.get(id));
+  const origins = resolved.filter(Boolean);
+  const sources = [...new Set(origins.map((o) => o!.source))];
+
+  // `printSource` is bounded and evicts its oldest quarter under load, so a
+  // long-lived burst can outlive the origins of some of its prints. When that
+  // happens the provenance is INCOMPLETE, and the dangerous case is subtle: if
+  // the evicted print was the simulated one and a real print survives, the
+  // signal would look real and attributable when it is neither.
+  //
+  // So an unresolved print id contributes 'unknown', which no dataset maps to
+  // and which the rights gate therefore refuses. Losing a row is the correct
+  // outcome; recording one whose origin we cannot vouch for is not.
+  const complete = resolved.every(Boolean) && sources.length > 0;
+  if (!complete) sources.push('unknown');
+
+  return {
+    source: sources[0] ?? 'unknown',
+    sources,
+    // Pessimistic on both axes: incomplete provenance cannot rule out that a
+    // simulated print formed part of this cluster.
+    synthetic: sig.synthetic || !complete || origins.some((o) => o?.synthetic === true),
+  };
+}
+
 // ─── Ingest ─────────────────────────────────────────────────────────────────
 
 /**
@@ -161,6 +258,11 @@ export function ingestPrint(print: RawPrint): WireFlowEvent[] {
   if (!print.symbol || !print.expiry || !(print.price > 0) || !(print.size > 0)) return [];
 
   const ts = print.ts ?? Date.now();
+  // Receipt time is stamped here, at the boundary — the earliest moment this
+  // process could possibly have known about the print. Distinct from `ts`,
+  // which is when it happened at the venue; the gap between them is the feed
+  // latency a forward measurement must be charged.
+  const receivedAt = print.replay ? undefined : Date.now();
   lastPrintTs = Math.max(lastPrintTs, ts);
   const symbol = occSymbol(print.symbol, print.expiry, print.right, print.strike);
 
@@ -218,10 +320,12 @@ export function ingestPrint(print: RawPrint): WireFlowEvent[] {
       exchange: venue,
       conditions: print.conditions ?? [],
       iso: print.iso,
+      receivedAt,
     };
     out.push(...engine.onTrade(trade));
   });
 
+  notify(out);
   return out.map(toWireEvent);
 }
 
@@ -233,7 +337,9 @@ export function ingestPrint(print: RawPrint): WireFlowEvent[] {
  */
 export function drainIdle(quietMs = 500): WireFlowEvent[] {
   if (lastPrintTs === 0 || Date.now() - lastPrintTs < quietMs) return [];
-  return engine.flush().map(toWireEvent);
+  const flushed = engine.flush();
+  notify(flushed);
+  return flushed.map(toWireEvent);
 }
 
 /**
@@ -258,7 +364,7 @@ function toWireEvent(sig: ClassifiedSignal): WireFlowEvent {
   const spot = stats?.underlyingPrice ?? 0;
 
   const origins = sig.printIds.map((id) => printSource.get(id)).filter(Boolean);
-  const source = origins[0]?.source ?? 'unknown';
+  const { source, synthetic } = originOf(sig);
   const iv = origins.find((o) => o?.iv !== undefined)?.iv ?? 0;
   const delta = origins.find((o) => o?.delta !== undefined)?.delta ?? 0;
 
@@ -305,7 +411,7 @@ function toWireEvent(sig: ClassifiedSignal): WireFlowEvent {
       : undefined,
     spread_guess: sig.spreadGuess,
     print_ids: sig.printIds,
-    synthetic: sig.synthetic || origins.some((o) => o?.synthetic === true),
+    synthetic,
   };
 }
 
