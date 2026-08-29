@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
+import { DEMO_COOKIE, isDemoModeEnabled } from '@/lib/demo'
 
 export async function middleware(req: NextRequest) {
   const res = NextResponse.next()
@@ -25,12 +26,17 @@ export async function middleware(req: NextRequest) {
 
   const isAuthRoute = req.nextUrl.pathname.startsWith('/login') || req.nextUrl.pathname.startsWith('/register')
 
+  // A demo session is not a user. It is admitted to the app shell only, and only
+  // when this deployment opted in — the cookie alone proves nothing if the build
+  // has demo mode off, so both are required.
+  const isDemo = isDemoModeEnabled() && req.cookies.get(DEMO_COOKIE)?.value === '1'
+
   // Everything the matcher lets through is either an auth route or protected.
-  if (!user && !isAuthRoute) {
+  if (!user && !isDemo && !isAuthRoute) {
     return NextResponse.redirect(new URL('/login', req.url))
   }
 
-  if (user && isAuthRoute) {
+  if ((user || isDemo) && isAuthRoute) {
     return NextResponse.redirect(new URL('/flow', req.url))
   }
 

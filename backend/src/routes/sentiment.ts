@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { getRedditSentiment, getSymbolSentiment } from '../ingestion/connectors/reddit';
 import { getNewsHeadlines } from '../ingestion/connectors/newsApi';
 import { getFMPNews, getEarnings, getInsiderTrades } from '../ingestion/connectors/fmp';
+import { requireAuth } from '../middleware/auth';
 import {
   fetchNewsContext,
   fetchRegulatoryNotice,
@@ -118,7 +119,7 @@ function sendEnrichmentError(res: Response, err: unknown): void {
 }
 
 // GET /api/sentiment/context/status — is enrichment configured, and if not, why
-router.get('/context/status', (_req: Request, res: Response) => {
+router.get('/context/status', requireAuth, (_req: Request, res: Response) => {
   res.json({
     ...getEnrichmentStatus(),
     context_only: true,
@@ -130,7 +131,7 @@ router.get('/context/status', (_req: Request, res: Response) => {
 });
 
 // GET /api/sentiment/context?q=<query>&limit=<n> — news context for a theme
-router.get('/context', async (req: Request, res: Response) => {
+router.get('/context', requireAuth, async (req: Request, res: Response) => {
   const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
   if (!q) {
     res.status(400).json({ error: 'q is required', example: '/api/sentiment/context?q=SPY' });
@@ -154,7 +155,7 @@ router.get('/context', async (req: Request, res: Response) => {
 });
 
 // GET /api/sentiment/regulatory/:slug — an allowlisted regulatory page as markdown
-router.get('/regulatory/:slug', async (req: Request, res: Response) => {
+router.get('/regulatory/:slug', requireAuth, async (req: Request, res: Response) => {
   const entry = REGULATORY_SOURCES[req.params.slug];
   if (!entry) {
     res.status(404).json({
