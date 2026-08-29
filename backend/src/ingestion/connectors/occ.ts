@@ -29,6 +29,8 @@
 import axios from 'axios';
 import { num, ratio } from '../parseNumeric';
 import { type Provenance, upstreamProvenance } from '../../config/provenance';
+import { currentEtDate, previousTradingDay } from '../../domain/marketTime';
+import { OCC_CLEARING_LAG, etTimeOnDate } from '../../domain/pointInTime';
 
 /**
  * `null` means "not retrieved", never "zero". Consumers MUST branch on null
@@ -51,20 +53,46 @@ export interface OccVolume {
   vsMonthlyAverage: number | null;
   fetchedAt: string;
   source: 'occ';
+  /** The completed trading session this cleared volume describes. */
+  effectiveDate: string;
+  /** When the OCC made it retrievable. The point-in-time filter key. */
+  availableAt: string;
   provenance: Provenance;
 }
 
 /**
- * Conservative floor for the clearing delay: one calendar day.
+ * Model the clearing cycle from the trading calendar rather than asserting a
+ * flat constant.
  *
- * DELIBERATELY NOT MEASURED, AND THAT IS A LIMITATION, NOT A FACT. The payload
- * this connector parses carries no effective/trade date that we read, so real
- * staleness cannot be computed — over a weekend or holiday the true lag is
- * closer to 72 hours. Guessing at a date field name would be exactly the kind
- * of invention this file exists to remove, so the constant is declared as a
- * floor and recorded in KNOWN_LIMITATIONS.md instead.
+ * This previously declared `86_400` (one calendar day) with a note that it was
+ * a floor, not a measurement, and was therefore WRONG over weekends and
+ * holidays — on a Monday the real lag is ~72 hours, and the flat value
+ * understated it by two thirds. That is the number a reader would use to
+ * decide whether the data is current enough to act on.
+ *
+ * `@quantflow/domain` already models both halves of this, so neither is
+ * invented here: `previousTradingDay` walks the real holiday calendar (bounded,
+ * so a bad table throws instead of looping), and `OCC_CLEARING_LAG` encodes the
+ * OCC's next-business-day 09:00 ET publication. DST is handled by resolving
+ * through the IANA zone, not a hardcoded offset.
  */
-const CLEARING_DELAY_SECONDS = 86_400;
+export function occClearingWindow(now: Date = new Date()): {
+  effectiveDate: string;
+  availableAt: string;
+  delaySeconds: number;
+} {
+  // Cleared volume published now describes the previous completed session.
+  const effectiveDate = previousTradingDay(currentEtDate(now));
+  const availableAt = OCC_CLEARING_LAG.availableAtFor(effectiveDate);
+  // Age is measured from that session's 16:00 ET close — the moment the
+  // activity being reported actually finished.
+  const sessionClose = Date.parse(etTimeOnDate(effectiveDate, 16, 0));
+  return {
+    effectiveDate,
+    availableAt,
+    delaySeconds: Math.max(0, Math.round((now.getTime() - sessionClose) / 1000)),
+  };
+}
 
 let latest: OccVolume | null = null;
 
@@ -85,6 +113,7 @@ export async function fetchOccVolume(): Promise<OccVolume | null> {
   if (optionsVolume === null) return null;
 
   const monthlyDailyAverage = num(e.monthlyDailyAverage);
+  const window = occClearingWindow();
 
   latest = {
     totalVolume: num(e.totalVolume),
@@ -97,13 +126,17 @@ export async function fetchOccVolume(): Promise<OccVolume | null> {
     vsMonthlyAverage: ratio(optionsVolume, monthlyDailyAverage),
     fetchedAt: new Date().toISOString(),
     source: 'occ',
+    effectiveDate: window.effectiveDate,
+    availableAt: window.availableAt,
     provenance: upstreamProvenance({
       source: 'occ',
       // The OCC is the clearing house, not a reseller — this is first-party
       // cleared data, which is why it is worth carrying despite the delay.
       source_type: 'exchange',
       is_delayed: true,
-      estimated_delay_seconds: CLEARING_DELAY_SECONDS,
+      // Derived from the trading calendar, so a Monday correctly reports ~72h
+      // rather than the flat 24h this used to assert.
+      estimated_delay_seconds: window.delaySeconds,
     }),
   };
   return latest;

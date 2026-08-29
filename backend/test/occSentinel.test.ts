@@ -15,6 +15,7 @@ import { describe, it } from 'node:test';
 
 import { num, ratio } from '../src/ingestion/parseNumeric';
 import { validateProvenance, upstreamProvenance } from '../src/config/provenance';
+import { occClearingWindow } from '../src/ingestion/connectors/occ';
 
 describe('ratio() refuses to invent a multiple', () => {
   it('is null when the denominator is unknown — NOT 0', () => {
@@ -83,5 +84,63 @@ describe('OCC declares its next-business-day clearing delay', () => {
 
   it('is never presentable as live data', () => {
     assert.notEqual(provenance.is_delayed, undefined);
+  });
+});
+
+describe('the clearing delay is derived from the trading calendar, not asserted', () => {
+  /**
+   * The flat `86_400` this replaced was not merely imprecise — it was wrong in
+   * a specific, predictable way. Cleared volume read on a Monday describes
+   * FRIDAY's session, so the real lag is ~72h. Understating it by two thirds
+   * matters because that number is what a reader uses to decide whether the
+   * data is current enough to act on.
+   */
+  const HOURS = 3600;
+
+  it('a mid-week read reports roughly one day', () => {
+    // Wed 2026-08-26 10:00 ET (14:00Z) -> previous session is Tue 2026-08-25.
+    const w = occClearingWindow(new Date('2026-08-26T14:00:00Z'));
+    assert.equal(w.effectiveDate, '2026-08-25');
+    assert.ok(w.delaySeconds > 17 * HOURS && w.delaySeconds < 24 * HOURS,
+      `expected ~18h since Tuesday's close, got ${w.delaySeconds / HOURS}h`);
+  });
+
+  it('MONDAY correctly reports ~3 days — the case the flat constant got wrong', () => {
+    // Mon 2026-08-31 10:00 ET -> previous session is Fri 2026-08-28.
+    const w = occClearingWindow(new Date('2026-08-31T14:00:00Z'));
+    assert.equal(w.effectiveDate, '2026-08-28', 'must skip the weekend');
+    assert.ok(w.delaySeconds > 60 * HOURS,
+      `expected >60h since Friday's close, got ${w.delaySeconds / HOURS}h`);
+    // The old flat value would have claimed 24h here.
+    assert.ok(w.delaySeconds > 86_400 * 2,
+      'the flat 86400 understated this by more than half');
+  });
+
+  it('skips a market holiday, not just weekends', () => {
+    // Fri 2026-07-03 is the observed Independence Day holiday; the session
+    // before it is Thu 2026-07-02.
+    const w = occClearingWindow(new Date('2026-07-06T14:00:00Z')); // Monday
+    assert.equal(w.effectiveDate, '2026-07-02',
+      'must skip both the holiday and the weekend');
+  });
+
+  it('availableAt is the OCC publication instant, not the fetch time', () => {
+    const w = occClearingWindow(new Date('2026-08-26T14:00:00Z'));
+    // 09:00 ET the business day after the 2026-08-25 session. August is EDT
+    // (UTC-4), so 09:00 ET is 13:00Z.
+    assert.equal(w.availableAt, '2026-08-26T13:00:00.000Z');
+  });
+
+  it('handles the EST/EDT boundary through the IANA zone, not a fixed offset', () => {
+    // January is EST (UTC-5), so 09:00 ET is 14:00Z rather than 13:00Z.
+    const w = occClearingWindow(new Date('2026-01-16T14:00:00Z')); // Fri
+    assert.ok(w.availableAt.endsWith('T14:00:00.000Z'),
+      `winter publication must be 14:00Z, got ${w.availableAt}`);
+  });
+
+  it('never reports a negative delay', () => {
+    for (const iso of ['2026-08-26T14:00:00Z', '2026-01-02T14:00:00Z', '2026-12-28T14:00:00Z']) {
+      assert.ok(occClearingWindow(new Date(iso)).delaySeconds >= 0);
+    }
   });
 });

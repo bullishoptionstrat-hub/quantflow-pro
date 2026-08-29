@@ -61,7 +61,19 @@ do with a caveat a user must see. Never let UI copy contradict this file.
     runtime-verified here. Waves 4-7 are validated against deterministic fixtures only.
 15. Cannot push to GitHub (read-only App install); work is delivered as git bundles.
 
-## OCC cleared volume: delay is declared, not measured
+## ~~OCC cleared volume: delay is declared, not measured~~ — RESOLVED 2026-08-29
+
+Superseded. `occClearingWindow()` now derives the effective session, the OCC
+publication instant and the delay from `@quantflow/domain`'s trading calendar
+and `OCC_CLEARING_LAG`. A Monday read correctly reports ~72h instead of the
+flat 24h, holidays are skipped, and DST is handled through the IANA zone.
+`OccVolume` also carries `effectiveDate` and `availableAt` — the point-in-time
+filter key — so this source can enter a backtest without publication-lag
+lookahead. Six tests in `backend/test/occSentinel.test.ts`.
+
+Original entry, kept for the record:
+
+### OCC cleared volume: delay is declared, not measured
 
 `backend/src/ingestion/connectors/occ.ts` reports `is_delayed: true` with
 `estimated_delay_seconds: 86400` (one calendar day). That number is a

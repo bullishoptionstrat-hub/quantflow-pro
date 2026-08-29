@@ -6,8 +6,9 @@
   "scripts": {
     "build": "node scripts/build-root-placeholder.mjs",
     "install:all": "npm --prefix backend install && npm --prefix frontend install && npm --prefix quantflow-modules/flow-engine install && npm --prefix quantflow-modules/firecrawl install && npm --prefix packages/domain install",
+    "sync:vendor": "node scripts/sync-vendored.mjs",
     "audit:all": "npm --prefix backend audit --audit-level=high; npm --prefix frontend audit --audit-level=high",
-    "verify": "npm run verify:domain && npm run verify:backend && npm run verify:modules && npm run verify:frontend",
+    "verify": "npm run verify:vendor && npm run verify:domain && npm run verify:backend && npm run verify:modules && npm run verify:frontend",
     "verify:backend": "npm run verify:backend:types && npm run verify:backend:test && npm run verify:backend:build",
     "verify:backend:build": "npm --prefix backend run build",
     "verify:backend:test": "npm --prefix backend test",
@@ -25,6 +26,7 @@
     "verify:modules": "npm run verify:flow-engine && npm run verify:firecrawl",
     "verify:rls": "./scripts/verify-rls.sh",
     "verify:secrets": "./scripts/secret-scan.sh",
-    "verify:security": "npm run verify:secrets"
+    "verify:security": "npm run verify:secrets",
+    "verify:vendor": "node scripts/sync-vendored.mjs --check"
   }
 }
