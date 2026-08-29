@@ -158,3 +158,69 @@ describe('END TO END — an unauthenticated client receives no broadcast', () =>
     assert.ok(err.data?.refusal, 'client must be able to tell "sign in" from "degraded"');
   });
 });
+
+/**
+ * MERGE-INTEGRATION REGRESSION — demo mode over the socket.
+ *
+ * Demo mode (added on main) admits unauthenticated HTTP requests to the free
+ * and simulated routes. The handshake guard (added here) fails closed on any
+ * connection without a verified session. Each is correct alone; together, a
+ * demo visitor got pages that rendered once from REST and then never updated,
+ * because the live feed IS the product and the handshake refused it.
+ *
+ * The gate is the same two independent conditions the HTTP path uses, so the
+ * socket policy matches `requireAuthOrDemo` rather than widening it: every
+ * broadcast event (flow/macro/sentiment/news/cboe/spot/crypto/stooq) is a feed
+ * that middleware already admits. `/api/chain` and the enrichment endpoints are
+ * not broadcast at all.
+ */
+describe('demo handshakes, gated exactly as the HTTP path is', () => {
+  const realDemo = process.env.DEMO_MODE;
+  const restore = () => {
+    if (realDemo === undefined) delete process.env.DEMO_MODE;
+    else process.env.DEMO_MODE = realDemo;
+  };
+
+  it('is refused when the client asks but the deployment has not opted in', async () => {
+    delete process.env.DEMO_MODE;
+    const r = await authenticateHandshake({ auth: { demo: '1' } });
+    assert.equal(r.allowed, false, 'a stray client flag must not open the stream');
+    assert.equal(r.refusal, 'no_token');
+    restore();
+  });
+
+  it('is refused when the deployment opts in but the client does not ask', async () => {
+    process.env.DEMO_MODE = '1';
+    const r = await authenticateHandshake({ auth: {} });
+    assert.equal(r.allowed, false, 'DEMO_MODE alone must not open the stream');
+    assert.equal(r.refusal, 'no_token');
+    restore();
+  });
+
+  it('is admitted only when BOTH conditions hold, and is marked demo', async () => {
+    process.env.DEMO_MODE = '1';
+    const r = await authenticateHandshake({ auth: { demo: '1' } });
+    assert.equal(r.allowed, true);
+    assert.equal(r.demo, true);
+    assert.equal(r.user, undefined, 'a demo socket has no identity to attach');
+    restore();
+  });
+
+  it('does NOT launder a non-verifying token into a demo session', async () => {
+    // The important boundary. A token that did not verify is not the same as
+    // having none: downgrading it would hide a broken login behind a feed that
+    // looks like it is working, and would let the demo flag bypass a real
+    // refusal. Only `no_token` is demo-admissible.
+    //
+    // Scope note: this suite deletes SUPABASE_URL/SERVICE_KEY (see `before`),
+    // so verification here resolves `unavailable` rather than `rejected`. This
+    // therefore pins the outage case specifically. `rejected` takes a separate
+    // branch in `authenticateHandshake` that is likewise not demo-admissible,
+    // but proving that needs a reachable verifier and is not asserted here.
+    process.env.DEMO_MODE = '1';
+    const r = await authenticateHandshake({ auth: { demo: '1', token: 'not-a-real-token' } });
+    assert.equal(r.allowed, false, 'a non-verifying token must not fall through to demo');
+    assert.equal(r.refusal, 'verification_unavailable');
+    restore();
+  });
+});

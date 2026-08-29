@@ -22,6 +22,7 @@
  */
 import type { Server, Socket } from 'socket.io';
 import { verifyToken } from './verifyToken';
+import { isDemoModeEnabled } from './auth';
 
 /** Why a handshake was refused. Closed union — no freeform strings. */
 export type HandshakeRefusal =
@@ -34,6 +35,20 @@ export interface SocketAuthResult {
   refusal?: HandshakeRefusal;
   reason?: string;
   user?: { id: string; email?: string; role?: string };
+  /** True when admitted by demo mode rather than a verified session. */
+  demo?: boolean;
+}
+
+/**
+ * Whether this handshake is asking for a demo session, under the same two
+ * independent conditions `requireAuthOrDemo` applies to HTTP: the deployment
+ * must opt in via `DEMO_MODE=1` AND the client must ask. Neither a stray env
+ * var nor a stray handshake field opens the stream alone.
+ */
+function wantsDemo(handshake: { auth?: Record<string, unknown> }): boolean {
+  if (!isDemoModeEnabled()) return false;
+  const flag = handshake.auth?.demo;
+  return flag === '1' || flag === true;
 }
 
 /** Read the token a client supplies. Accepts the two idiomatic placements. */
@@ -67,10 +82,21 @@ export async function authenticateHandshake(handshake: {
 
   switch (result.status) {
     case 'authenticated':
-      return { allowed: true, user: result.user };
+      return { allowed: true, user: result.user, demo: false };
     case 'no_token':
+      // A demo session has no token by definition, so this is the only branch
+      // it can be admitted from. Every socket event is one of the free or
+      // simulated feeds `requireAuthOrDemo` already admits over HTTP
+      // (flow/macro/sentiment/news/cboe/spot/crypto/stooq) — the chain and
+      // enrichment endpoints are not broadcast, so this matches the HTTP
+      // policy rather than widening it.
+      if (wantsDemo(handshake)) return { allowed: true, demo: true };
       return { allowed: false, refusal: 'no_token', reason: 'no authentication token supplied' };
     case 'rejected':
+      // NOT demo-admissible. A token that failed verification is a different
+      // situation from having none: silently downgrading a rejected credential
+      // to a demo session would hide an expired login behind working-looking
+      // data, and would let the demo flag launder a bad token.
       return { allowed: false, refusal: 'invalid_token', reason: result.reason };
     case 'unavailable':
       // Deliberately still a refusal. An unverifiable connection must not
@@ -82,6 +108,8 @@ export async function authenticateHandshake(handshake: {
 /** Socket carrying the authenticated identity, once the guard has run. */
 export interface AuthenticatedSocket extends Socket {
   user?: { id: string; email?: string; role?: string };
+  /** True when this socket was admitted by demo mode; `user` is then absent. */
+  demo?: boolean;
 }
 
 /**
@@ -94,6 +122,7 @@ export function installSocketAuth(io: Server): void {
 
     if (result.allowed) {
       (socket as AuthenticatedSocket).user = result.user;
+      (socket as AuthenticatedSocket).demo = result.demo === true;
       return next();
     }
 

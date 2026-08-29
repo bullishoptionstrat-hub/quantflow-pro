@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { isDemoModeEnabled } from '@/lib/demo'
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
@@ -89,14 +90,29 @@ export default function LoginPage() {
             </Link>
           </div>
 
-          <div className="mt-4 pt-4 border-t border-white/5">
-            <button
-              onClick={() => router.push('/flow')}
-              className="w-full bg-white/5 hover:bg-white/10 text-zinc-300 font-mono text-xs rounded-lg py-2 transition-colors"
-            >
-              Continue as Guest (Demo Mode)
-            </button>
-          </div>
+          {/*
+            A real form POST, not a router.push. The demo cookie has to be set
+            server-side before middleware.ts sees the next navigation; the old
+            button only pushed to /flow and was bounced straight back to /login.
+            Hidden entirely unless this deployment opted into demo mode.
+          */}
+          {isDemoModeEnabled() && (
+            <div className="mt-4 pt-4 border-t border-white/5">
+              {/* Trailing slash matches next.config.js trailingSlash:true — without it
+                    the POST takes a 308 hop first and the form submit is lost. */}
+              <form action="/demo/enter/" method="POST">
+                <button
+                  type="submit"
+                  className="w-full bg-white/5 hover:bg-white/10 text-zinc-300 font-mono text-xs rounded-lg py-2 transition-colors"
+                >
+                  Continue as Guest (Demo Mode)
+                </button>
+              </form>
+              <p className="mt-2 text-center text-zinc-600 text-[10px] font-mono">
+                Simulated data · no live market feed
+              </p>
+            </div>
+          )}
         </div>
 
         <p className="text-center text-zinc-600 text-xs mt-6 font-mono">

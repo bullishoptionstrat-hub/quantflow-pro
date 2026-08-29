@@ -14,7 +14,7 @@ import healthRouter from './routes/health';
 import macroRouter from './routes/macro';
 import sentimentRouter from './routes/sentiment';
 import { rateLimiter } from './middleware/rateLimiter';
-import { requireAuth } from './middleware/auth';
+import { requireAuth, requireAuthOrDemo, isDemoModeEnabled, DEMO_HEADER } from './middleware/auth';
 import { installSocketAuth } from './middleware/socketAuth';
 import { assertEnvOrExit } from './config/env';
 import { resolveDataMode } from './config/dataMode';
@@ -58,13 +58,33 @@ app.use(express.json({ limit: '1mb' }));
 app.use(rateLimiter(200, 60_000));
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
-// Authenticated: these serve paid upstream data (Tradier / Polygon / MarketData).
-app.use('/api/flow', requireAuth, flowRouter);
-app.use('/api/darkpool', requireAuth, darkpoolRouter);
-app.use('/api/gex', requireAuth, gexRouter);
+//
+// Two tiers. `requireAuthOrDemo` additionally admits the read-only demo session
+// when the deployment sets DEMO_MODE=1; `requireAuth` never does.
+//
+// The split is "does this call cost money or return entitled vendor data".
+// /api/chain reads paid options chains, and the enrichment endpoints inside the
+// sentiment router spend metered Firecrawl credits per call — those stay on
+// requireAuth (the enrichment ones re-apply it individually inside the router,
+// since their parent is on the demo-capable tier).
+const demoRateLimit = rateLimiter(40, 60_000, 'demo');
+
+/** Tighter bucket for unauthenticated demo traffic; authenticated calls skip it. */
+function limitDemoTraffic(req: any, res: any, next: any) {
+  if (req.headers[DEMO_HEADER] === '1' && isDemoModeEnabled()) {
+    return demoRateLimit(req, res, next);
+  }
+  next();
+}
+
+app.use('/api/flow', limitDemoTraffic, requireAuthOrDemo, flowRouter);
+app.use('/api/darkpool', limitDemoTraffic, requireAuthOrDemo, darkpoolRouter);
+app.use('/api/gex', limitDemoTraffic, requireAuthOrDemo, gexRouter);
+app.use('/api/macro', limitDemoTraffic, requireAuthOrDemo, macroRouter);
+app.use('/api/sentiment', limitDemoTraffic, requireAuthOrDemo, sentimentRouter);
+
+// Never demo-accessible: paid chain data.
 app.use('/api/chain', requireAuth, chainRouter);
-app.use('/api/macro', requireAuth, macroRouter);
-app.use('/api/sentiment', requireAuth, sentimentRouter);
 
 // Unauthenticated by design — render.yaml sets healthCheckPath: /api/health.
 app.use('/api/health', healthRouter);

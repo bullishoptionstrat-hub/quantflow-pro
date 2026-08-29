@@ -22,6 +22,18 @@ async function currentAccessToken(): Promise<string | undefined> {
   }
 }
 
+/**
+ * Demo mode has no Supabase session, so without this flag the handshake is
+ * refused and a demo visitor sees pages that render once from REST and then
+ * never update — the live feed is the product.
+ *
+ * This is only half of the gate. The backend independently requires
+ * `DEMO_MODE=1`, so setting this on the client alone opens nothing.
+ */
+function demoRequested(): boolean {
+  return process.env.NEXT_PUBLIC_DEMO_MODE === '1'
+}
+
 export function getSocket(): Socket {
   if (!socket) {
     const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'http://localhost:3001'
@@ -36,7 +48,13 @@ export function getSocket(): Socket {
       // socket.io calls this before every connection AND every reconnection,
       // so the token is always current.
       auth: (cb) => {
-        void currentAccessToken().then((token) => cb({ token }))
+        void currentAccessToken().then((token) => {
+          // The demo flag is sent alongside rather than instead of the token.
+          // A real session still authenticates normally — the server only
+          // falls back to demo when there is no token at all, so a signed-in
+          // user in a demo-enabled deployment is not downgraded.
+          cb(demoRequested() ? { token, demo: '1' } : { token })
+        })
       },
     })
 

@@ -16,12 +16,18 @@ function getKey(req: Request): string {
   );
 }
 
+/**
+ * @param keyPrefix Namespaces the counter. Two limiters without distinct
+ *   prefixes share one bucket per IP, so a request passing through both would
+ *   be counted twice and the tighter limit would throttle the looser one.
+ */
 export function rateLimiter(
   maxRequests: number = 120,
-  windowMs: number = 60_000
+  windowMs: number = 60_000,
+  keyPrefix = ''
 ) {
   return (req: Request, res: Response, next: NextFunction): void => {
-    const key = getKey(req);
+    const key = keyPrefix ? `${keyPrefix}:${getKey(req)}` : getKey(req);
     const now = Date.now();
     const entry = store.get(key);
 
