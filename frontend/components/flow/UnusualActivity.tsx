@@ -14,7 +14,10 @@ interface UnusualContract {
   iv: number
   notional: number
   delayedMinutes: number
-  asOf: string
+  /** null when the payload carried no timestamp — see tradeDateInferred. */
+  asOf: string | null
+  /** True when asOf could not be established; the panel must not imply currency. */
+  tradeDateInferred?: boolean
 }
 
 const fmtNotional = (n: number) =>
@@ -24,7 +27,8 @@ const mono = "'JetBrains Mono', monospace"
 
 export function UnusualActivity() {
   const [rows, setRows] = useState<UnusualContract[]>([])
-  const [asOf, setAsOf] = useState<string>('')
+  const [asOf, setAsOf] = useState<string | null>(null)
+  const [dateInferred, setDateInferred] = useState(false)
   const [loading, setLoading] = useState(true)
   const [failed, setFailed] = useState(false)
 
@@ -37,7 +41,8 @@ export function UnusualActivity() {
         const j = await res.json()
         if (!alive) return
         setRows(Array.isArray(j.contracts) ? j.contracts : [])
-        setAsOf(j.contracts?.[0]?.asOf ?? '')
+        setAsOf(j.contracts?.[0]?.asOf ?? null)
+        setDateInferred(Boolean(j.contracts?.[0]?.tradeDateInferred))
         setFailed(false)
       } catch {
         // Show nothing rather than stale or invented rows.
@@ -66,9 +71,12 @@ export function UnusualActivity() {
         {/* Provenance stated on the panel itself: this is a delayed daily
             aggregate, and must never read as the live tape beside it. */}
         <div style={{ fontSize: 10, color: '#fbbf24', fontFamily: mono, textAlign: 'right' }}>
-          CBOE · ~15 MIN DELAYED
+          CBOE · {dateInferred || !asOf ? 'AGE UNKNOWN' : '~15 MIN DELAYED'}
           <div style={{ color: 'var(--text-muted)', marginTop: 2 }}>
-            daily volume aggregate, not a tape{asOf ? ` · as of ${asOf.slice(11, 16)}` : ''}
+            daily volume aggregate, not a tape
+            {asOf && !dateInferred
+              ? ` · as of ${asOf.slice(11, 16)}`
+              : ' · source gave no timestamp, age not established'}
           </div>
         </div>
       </div>

@@ -278,7 +278,14 @@ export function getUnusualActivity(symbol?: string) {
   const syms = symbol ? [symbol.toUpperCase()] : getCboeSymbols();
   const out = syms.flatMap((sy) => {
     const snap = getCboeSnapshot(sy);
-    return snap ? snap.unusual.map((u) => ({ ...u, asOf: snap.asOf, delayedMinutes: snap.delayedMinutes })) : [];
+    return snap
+      ? snap.unusual.map((u) => ({
+          ...u,
+          asOf: snap.asOf,
+          tradeDateInferred: snap.tradeDateInferred,
+          delayedMinutes: snap.delayedMinutes,
+        }))
+      : [];
   });
   return out.sort((a, b) => b.notional - a.notional);
 }
