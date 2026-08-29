@@ -4,6 +4,7 @@ import { Sidebar } from '@/components/layout/Sidebar'
 import { TopBar } from '@/components/layout/TopBar'
 import { MobileNav } from '@/components/layout/MobileNav'
 import { PowerAlertBanner } from '@/components/alerts/PowerAlertBanner'
+import { DemoBanner } from '@/components/layout/DemoBanner'
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -18,6 +19,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <div className="main-layout">
           <Sidebar />
           <div className="main-content">
+            <DemoBanner />
             <TopBar />
             <PowerAlertBanner />
             <div className="page-content">
