@@ -45,6 +45,18 @@ function withoutHeader(source: string): string {
     : source;
 }
 
+/**
+ * Drop a leading `/** ... *\/` block comment. The hand-vendored copies mark
+ * their provenance with a docstring rather than the generated `// AUTO-`
+ * header, and that note is the one sanctioned difference from the canonical
+ * file — so it is removed before comparing, and nothing else is.
+ */
+function withoutLeadingDocblock(source: string): string {
+  if (!source.startsWith('/**')) return source;
+  const end = source.indexOf('*/');
+  return end === -1 ? source : source.slice(end + 2).replace(/^\n+/, '');
+}
+
 describe('@quantflow/domain vendored copy matches its canonical source', () => {
   const canonicalDir = join(REPO, 'packages', 'domain', 'src');
   const vendoredDir = join(REPO, 'backend', 'src', 'domain');
@@ -136,5 +148,48 @@ describe('flow-engine vendored copy matches its canonical module', () => {
     // the allowance describes reality rather than permitting anything.
     const vendored = readFileSync(join(vendoredDir, 'engine.ts'), 'utf8');
     assert.ok(vendored.includes(SANCTIONED_ADDITION), 'resetDaily() addition is missing');
+  });
+});
+
+describe('firecrawl enrichment vendored copy matches its canonical module', () => {
+  /**
+   * The third vendored tree, added when main integrated the enrichment seam.
+   * CLAUDE.md makes the same promise for it as for the other two — "change one,
+   * mirror it to the other" — and, until this suite, nothing enforced that.
+   *
+   * Left unguarded, the failure mode is specific rather than abstract: the
+   * enrichment service is what decides that `AUTH` and `INSUFFICIENT_CREDITS`
+   * latch the client off instead of retrying. If the vendored copy lost that
+   * rule while the module kept it, the module's behavior would still read
+   * correctly while the deployed backend hammered a dead key.
+   */
+  const canonicalDir = join(REPO, 'quantflow-modules', 'firecrawl', 'src', 'services', 'firecrawl');
+  const vendoredDir = join(REPO, 'backend', 'src', 'enrichment', 'firecrawl');
+
+  it('vendors every canonical file — none silently omitted', () => {
+    assert.deepEqual(walkTs(vendoredDir), walkTs(canonicalDir));
+  });
+
+  it('every vendored file is byte-identical apart from extension stripping', () => {
+    for (const rel of walkTs(canonicalDir)) {
+      const canonical = stripJsExtensions(readFileSync(join(canonicalDir, rel), 'utf8'));
+      const vendored = readFileSync(join(vendoredDir, rel), 'utf8');
+      if (vendored === canonical) continue;
+      // Only reached when the copy genuinely differs. Most canonical files
+      // open with their own docblock, so stripping unconditionally would
+      // corrupt the comparison for files that already match exactly.
+      assert.equal(withoutLeadingDocblock(vendored), canonical,
+        `${rel} has drifted from quantflow-modules/firecrawl. ` +
+        'CLAUDE.md: change one, mirror it to the other.');
+    }
+  });
+
+  it('the copy records that it is vendored — the docblock allowance is not vacuous', () => {
+    // withoutLeadingDocblock() strips any leading block comment, so this
+    // asserts the stripped text is actually the vendoring note and not some
+    // unrelated comment quietly absorbing a real difference.
+    const text = readFileSync(join(vendoredDir, 'index.ts'), 'utf8');
+    assert.ok(text.startsWith('/**'), 'index.ts must carry the vendoring note');
+    assert.ok(text.includes('Vendored from'), 'the leading docblock must be the vendoring note');
   });
 });
