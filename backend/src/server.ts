@@ -14,6 +14,7 @@ import macroRouter from './routes/macro';
 import sentimentRouter from './routes/sentiment';
 import { rateLimiter } from './middleware/rateLimiter';
 import { requireAuth } from './middleware/auth';
+import { installSocketAuth } from './middleware/socketAuth';
 import { assertEnvOrExit } from './config/env';
 import { resolveDataMode } from './config/dataMode';
 
@@ -28,19 +29,29 @@ export const httpServer = createServer(app);
 
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
+// Same allowlist the HTTP layer uses. Unlike HTTP, browser socket traffic goes
+// direct (there is no rewrite proxy for a WebSocket), so this one is load
+// bearing rather than a development convenience.
+const CORS_ORIGINS = [FRONTEND_URL, 'http://localhost:3000'];
+
 export const io = new Server(httpServer, {
-  cors: { origin: '*', methods: ['GET', 'POST'], credentials: true },
+  // Was `origin: '*'` with `credentials: true` — see docs/FORENSIC_AUDIT.md #29.
+  cors: { origin: CORS_ORIGINS, methods: ['GET', 'POST'], credentials: true },
   pingTimeout: 60000,
   pingInterval: 25000,
   transports: ['websocket', 'polling'],
 });
+
+// Handshake auth. Installed here, immediately after the server is constructed
+// and before any connection handler, because `io.use` only guards handshakes
+// that happen after it is registered.
+installSocketAuth(io);
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 app.use(helmet({ contentSecurityPolicy: false }));
 // HTTP traffic now arrives via the frontend's /api/* rewrite proxy, which is
 // server-to-server and sends no Origin — so this only has to cover a browser
 // talking to the backend directly, i.e. local development.
-const CORS_ORIGINS = [FRONTEND_URL, 'http://localhost:3000'];
 app.use(cors({ origin: CORS_ORIGINS, credentials: true }));
 app.use(express.json({ limit: '1mb' }));
 app.use(rateLimiter(200, 60_000));
