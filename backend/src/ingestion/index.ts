@@ -16,9 +16,14 @@ import { fetchCboeChain, getCboeSnapshot, getCboeSymbols } from './connectors/cb
 import { fetchOccVolume, getOccVolume } from './connectors/occ';
 import { describeHttpError } from './httpError';
 import {
-  ingestPrint, drainIdle, resetDaily,
+  ingestPrint, drainIdle, resetDaily, onSignal,
   type RawPrint, type WireFlowEvent,
 } from './flowEngineAdapter';
+import {
+  initPersistence, describePersistence, SignalGrader,
+  type SignalRecord,
+} from '../persistence';
+import { rightsSnapshot } from '../provenance/rights';
 
 // ─── 13 New Connectors ───────────────────────────────────────────────────────
 import { startFlashAlpha, getFlashGEX } from './connectors/flashAlpha';
@@ -229,6 +234,8 @@ export function getUnusualActivity(symbol?: string) {
 export function startIngestion(io: any): void {
   ioInstance = io;
   ingestionActive = true;
+
+  startSignalHistory();
 
   // Seed with realistic data immediately
   seedInitialData();
@@ -849,6 +856,61 @@ let batchTimer: ReturnType<typeof setTimeout> | null = null;
  * remain joinable for future targeted streams; the feed itself is filtered
  * client-side.
  */
+// ─── Durable signal history ─────────────────────────────────────────────────
+
+let grader: SignalGrader | undefined;
+
+/**
+ * Subscribe the recorder and grader to the engine's output.
+ *
+ * This is the difference between a terminal that shows flow and a system that
+ * remembers it. Without it, every signal this process classifies is discarded
+ * within 500 events, the ring buffer dies with the process, and no track
+ * record can ever accumulate no matter how long the service runs.
+ */
+function startSignalHistory(): void {
+  const { store, recorder } = initPersistence();
+
+  // Underlying marks come from TwelveData's spot cache. Yahoo is deliberately
+  // NOT consulted as a fallback: its terms prohibit automated access for any
+  // purpose, so it is refused in the rights registry, and reaching for it here
+  // would route around that refusal.
+  grader = new SignalGrader(store, (underlying) => {
+    const px = getSpotPrice(underlying);
+    return px > 0 ? px : undefined;
+  });
+
+  onSignal((sig, origin) => {
+    // Fire-and-forget: recording must never add latency to the live tape or
+    // take it down on a database hiccup. Failures are counted in the
+    // recorder's stats and surfaced on /api/health.
+    void recorder.record(sig, origin).then(async (res) => {
+      if (res.status !== 'RECORDED' || !res.signalKey) return;
+      const rec: SignalRecord | undefined = await store.getSignal(res.signalKey);
+      if (rec) grader?.register(rec);
+    }).catch(() => { /* counted in recorder stats */ });
+  });
+
+  // Grade due checkpoints once a minute. The shortest horizon is 15 minutes,
+  // so a 60s tick is well inside the lateness tolerance.
+  setInterval(() => {
+    void grader?.tick().catch(() => { /* counted in grader stats */ });
+  }, 60_000);
+
+  const p = describePersistence();
+  console.log(`[history] store=${p.store} durable=${p.durable} mode=${p.businessMode}`);
+  if (!p.durable) console.warn(`[history] ${p.reason}`);
+}
+
+/** Rendered into /api/health so the collection state is visible, not assumed. */
+export function getSignalHistoryStatus() {
+  return {
+    ...describePersistence(),
+    grader: grader?.getStats() ?? null,
+    rights: rightsSnapshot(),
+  };
+}
+
 function emitSignals(events: FlowEvent[]): void {
   if (events.length === 0) return;
 

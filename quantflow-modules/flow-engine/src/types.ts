@@ -37,6 +37,14 @@ export interface OptionTradeEvent {
   conditions: number[];      // raw provider condition codes
   /** True when provider marks an Intermarket Sweep Order condition. */
   iso?: boolean;
+  /**
+   * Wall clock (epoch ms) when this print reached us — distinct from `ts`,
+   * which is when it happened at the venue. The gap between them is feed
+   * latency, and it is the difference between a signal being *formed* and a
+   * signal being *knowable*. Omitted by replay adapters, where wall clock
+   * carries no information about the historical moment.
+   */
+  receivedAt?: number;
 }
 
 export interface OptionQuoteEvent {
@@ -74,7 +82,26 @@ export interface SignalLeg {
 export interface ClassifiedSignal {
   id: string;
   kind: SignalKind;
-  ts: number;                       // ts of first print in the cluster
+  /**
+   * ts of the FIRST print in the cluster.
+   *
+   * DEPRECATED for research windows. A signal assembled from a 500 ms burst
+   * was not actionable at the burst's first tick; measuring from here grants
+   * a backtest that 500 ms of free information and makes every excursion look
+   * better than it was. Kept because the wire contract and the UI use it as a
+   * display timestamp.
+   */
+  ts: number;
+  /** ts of the LAST print in the cluster — when the cluster was complete. */
+  lastTs: number;
+  /**
+   * Max wall-clock receipt time across the forming prints, when every print
+   * carried one. `undefined` when any print lacked it (replay), which is a
+   * different fact from "arrived instantly" and is preserved as such.
+   */
+  receivedAt?: number;
+  /** Wall clock at the moment the engine finalized this signal. */
+  emittedAt: number;
   underlying: string;
   side: InferredSide;               // dominant side (legs may differ)
   legs: SignalLeg[];                // 1 leg unless MULTI_LEG

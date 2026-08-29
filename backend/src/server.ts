@@ -11,6 +11,7 @@ import darkpoolRouter from './routes/darkpool';
 import gexRouter from './routes/gex';
 import chainRouter from './routes/chain';
 import healthRouter from './routes/health';
+import trackRecordRouter from './routes/trackRecord';
 import macroRouter from './routes/macro';
 import sentimentRouter from './routes/sentiment';
 import { rateLimiter } from './middleware/rateLimiter';
@@ -65,6 +66,9 @@ app.use('/api/darkpool', limitDemoTraffic, requireAuthOrDemo, darkpoolRouter);
 app.use('/api/gex', limitDemoTraffic, requireAuthOrDemo, gexRouter);
 app.use('/api/macro', limitDemoTraffic, requireAuthOrDemo, macroRouter);
 app.use('/api/sentiment', limitDemoTraffic, requireAuthOrDemo, sentimentRouter);
+// Costs nothing per call and returns only aggregates that are already
+// sample-gated, so it is safe on the demo tier.
+app.use('/api/track-record', limitDemoTraffic, requireAuthOrDemo, trackRecordRouter);
 
 // Never demo-accessible: paid chain data.
 app.use('/api/chain', requireAuth, chainRouter);

@@ -13,6 +13,10 @@ services:
         value: production
       - key: FRONTEND_URL
         sync: false  # set in Render dashboard
+      # Fails closed to PRIVATE_RESEARCH when unset; an unrecognised value
+      # throws at startup rather than being guessed. See provenance/rights.ts.
+      - key: BUSINESS_MODE
+        value: PRIVATE_RESEARCH
       - key: TRADIER_TOKEN
         sync: false
       - key: POLYGON_API_KEY
