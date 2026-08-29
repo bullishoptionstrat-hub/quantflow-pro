@@ -22,6 +22,7 @@
  * fuller DataResult<T> treatment this follows.
  */
 import axios from 'axios';
+import { num } from '../parseNumeric';
 
 /**
  * `null` means "not retrieved", never "zero". Consumers MUST branch on null
@@ -53,25 +54,7 @@ export interface CBOEData {
   };
 }
 
-/**
- * Parse to a finite number, or null. Never 0-on-failure.
- *
- * Deliberately STRICT rather than using `parseFloat` directly: parseFloat is a
- * prefix parser, so `parseFloat('403 Forbidden')` is 403 and
- * `parseFloat('1.2 (est)')` is 1.2. A partially-numeric string becoming a
- * confident reading is the same class of defect as `?? 0` — it manufactures a
- * plausible number out of something that was not one.
- */
-export function num(v: unknown): number | null {
-  if (v === null || v === undefined || v === '') return null;
-  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
-  if (typeof v !== 'string') return null;
-  const t = v.trim();
-  // Must be numeric in its entirety — no trailing units, notes or status text.
-  if (!/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(t)) return null;
-  const n = Number(t);
-  return Number.isFinite(n) ? n : null;
-}
+
 
 let cboeData: CBOEData | null = null;
 let onCBOEUpdate: ((d: CBOEData) => void) | null = null;
@@ -222,3 +205,11 @@ export async function startCBOE(): Promise<void> {
   setInterval(fetchAll, 5 * 60_000); // every 5 min
   console.log('[cboe] Started — VIX + put/call ratios (no key required)');
 }
+
+/**
+ * Re-exported so `backend/test/cboeSentinel.test.ts` keeps testing the real
+ * helper. The implementation moved to `ingestion/parseNumeric.ts` when occ.ts
+ * needed the same rule (finding #27) — a second copy would have been a third
+ * place for the sentinel to come back.
+ */
+export { num };

@@ -60,3 +60,24 @@ do with a caveat a user must see. Never let UI copy contradict this file.
 14. No network access to any market-data provider and no API keys, so no connector can be
     runtime-verified here. Waves 4-7 are validated against deterministic fixtures only.
 15. Cannot push to GitHub (read-only App install); work is delivered as git bundles.
+
+## OCC cleared volume: delay is declared, not measured
+
+`backend/src/ingestion/connectors/occ.ts` reports `is_delayed: true` with
+`estimated_delay_seconds: 86400` (one calendar day). That number is a
+**conservative floor, not a measurement.**
+
+OCC publishes *cleared* volume on a next-business-day cycle, so over a weekend
+or a holiday the true lag is closer to 72 hours. The payload this connector
+parses carries no effective/trade date that we read, so actual staleness cannot
+be computed. Guessing at a date field name to fix this would be the same class
+of invention the connector was just cleaned of, so the constant is declared
+honestly and the gap recorded here instead.
+
+To close it: confirm against a real payload whether OCC returns an activity
+date, and if so parse it and derive the delay from it. That requires egress to
+`marketdata.theocc.com`, which this environment does not have.
+
+Related: `docs/FORENSIC_AUDIT.md` #27. The same file's zero-sentinels are fixed;
+this is the residue.
+
