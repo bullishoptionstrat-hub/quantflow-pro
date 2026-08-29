@@ -12,10 +12,23 @@
 \set ON_ERROR_STOP off
 \timing off
 
+-- Reset. The append-only trigger refuses DELETE on graded outcomes — which is
+-- the whole point of gate G3c — so this script cannot clean up after itself
+-- with a plain DELETE. It disables the trigger for the reset and re-enables it
+-- immediately, BEFORE any gate runs, so nothing below is proven against a
+-- disarmed table. (Without this the script is not re-runnable: the second run
+-- fails its own cleanup and then proves gates against stale rows.)
+alter table public.signal_outcomes disable trigger trg_outcome_immutability;
 delete from public.signal_outcomes;
+alter table public.signal_outcomes enable trigger trg_outcome_immutability;
+
 delete from public.signal_write_incidents;
 delete from public.collection_gaps;
 delete from public.signal_history;
+
+\echo '--- reset complete; immutability trigger is re-armed for every gate below'
+select tgenabled = 'O' as immutability_trigger_armed
+  from pg_trigger where tgname = 'trg_outcome_immutability';
 
 \echo ''
 \echo '=== G1  decision time ordering ==================================='
