@@ -3,65 +3,55 @@
 Concrete next steps so a new session resumes without re-deriving context.
 Read `PROJECT_STATE.md` first, then this.
 
-**State:** Wave 0 v2 (post-merge audit) complete at head `47fa8c0`. 355 tests, 0 failures.
-Stopped at Wave 0 per the master prompt's START HERE instruction.
+**State:** findings #26-#29 from the Wave 0 v2 audit are all FIXED with
+regression coverage. 385 tests, 0 failures. Head is pushed on
+`claude/quantflow-forensic-audit-64z608`; PR #5 open (draft).
 
-## 1. Fix finding #29 — the WebSocket bypasses route auth (HIGH, do this first)
+## 1. Wire `@quantflow/domain` into the backend build
 
-The six REST routes are behind `requireAuth`; Socket.IO has **no auth handshake at all** and
-`cors: { origin: '*', credentials: true }`, while broadcasting the same payloads
-(`flow_batch`, `macro_update`, `sentiment_update`, `news_update`, `cboe_update`,
-`spot_update`). Route auth currently provides the appearance of protection without the
-substance — the cheapest path to the data is the unguarded one.
+The highest-value remaining structural step, and it is now clearly motivated:
+three separate fixes (#23, #26, #27) each hand-rolled a piece of what the
+vendored kernel already implements properly.
 
-- Add `io.use()` verifying the Supabase JWT from `socket.handshake.auth.token`, rejecting
-  the connection when absent/invalid.
-- Narrow the socket CORS to the same allowlist the HTTP layer uses (`server.ts:43`).
-- Frontend `lib/socket.ts` must then pass the session token when connecting.
-- Regression test: an unauthenticated socket connection receives no `flow_batch`.
+- `DataResult<T>` (result.ts) replaces the ad-hoc `number | null` + `fetchStatus`
+  pattern now duplicated across `cboe.ts` and `occ.ts`.
+- `validatePayload()` / `FreshnessContract` (freshness.ts) replaces the
+  hand-rolled `ageMinutesFrom` + `tradeDateInferred` in `cboeOptions.ts`, and
+  brings the STALE/PARTIAL/DEGRADED taxonomy with it.
+- `asOf()` (pointInTime.ts) is needed before any backtest is trustworthy, and
+  nothing in `backend/` can reach it today.
 
-## 2. Fix finding #27 — `occ.ts` zero-sentinel + undeclared next-day delay (HIGH)
+Deferred so far because it adds cross-package build ordering that affects the
+Render deploy, which cannot be exercised from this environment. Do it where the
+Render build can actually be run.
 
-Highest severity of the three new findings, and the pattern is already solved: apply the
-same treatment `cboe.ts` received in `b547428`.
+## 2. Measure OCC's delay instead of declaring a floor
 
-- `Number(x) || 0` -> `number | null` via the strict `num()` helper (export it from a shared
-  module rather than copying it a third time).
-- `vsMonthlyAverage` must be `null` when `monthlyDailyAverage` is unknown, not `0`.
-- Verify the `fiftytwo_week_high` key against a real payload — it is snake_case among
-  camelCase siblings and the sentinel would hide a permanent 0.
-- Attach `upstreamProvenance({ source:'occ', is_delayed:true, estimated_delay_seconds:... })`.
-  `packages/domain/src/pointInTime.ts` already models this as `OCC_CLEARING_LAG` (09:00 ET
-  next business day) — use it rather than inventing a number.
+`KNOWN_LIMITATIONS.md` records this. `estimated_delay_seconds: 86400` is a
+conservative floor; over a weekend the true lag is ~72h. Confirm against a real
+payload whether the OCC endpoint returns an activity date, and derive from it.
+Needs egress to `marketdata.theocc.com`.
 
-## 3. Fix finding #26 — CBOE chain `asOf` falls back to `now()` (MEDIUM)
+## 3. Audit the remaining connectors for the same two defect classes
 
-`cboeOptions.ts:197`. Leave `asOf` null when the source carries no timestamp and flag
-`TRADE_DATE_INFERRED`; derive `delayedMinutes` from `asOf` instead of asserting a constant.
-`packages/domain/src/freshness.ts` `validatePayload()` already implements the verdict logic.
+`cboe.ts`, `occ.ts` and `cboeOptions.ts` each turned out to carry a zero
+sentinel; two of the three also mis-stated freshness. That is 3 for 3 on the
+files examined closely, so treat the other ~13 connectors as unaudited rather
+than clean. Grep starting points:
 
-## 4. Fix finding #28 — auth conflates outage with bad credentials (MEDIUM)
+    grep -rn '|| 0\|?? 0' backend/src/ingestion/connectors/
+    grep -rn 'new Date().toISOString()' backend/src/ingestion/connectors/
 
-`middleware/auth.ts`. Log the swallowed cause with source; have `requireAuth` distinguish
-"token rejected" (401) from "could not verify" (503).
+## 4. Standing human actions (no code change resolves these)
 
-## 5. Wire `@quantflow/domain` into the backend build
-
-The package is vendored, typechecked and tested (45 tests) but nothing in `backend/` imports
-it, so `DataResult<T>`, `asOf()` and the freshness contracts are not yet load-bearing. This
-was deliberately deferred: it adds cross-package build ordering that affects the Render
-deploy, which cannot be tested from this environment. Do it on a machine that can run the
-Render build, and it makes actions 1-3 substantially cleaner.
-
-## 6. Standing human actions (no code change resolves these)
-
-- **Rotate the credentials** in `quantflow.zip` and `qf-firecrawl (1).zip` (finding #7).
-  They are in git history; deleting the files does not undo the exposure.
-- Supply a Tradier token + egress allowance for `api.tradier.com` / `ws.tradier.com` if the
-  live-data-dependent gates (W5 real chains, W7 scheduler, W8 training) are to be closed.
+- **Rotate the credentials** in `quantflow.zip` and `qf-firecrawl (1).zip`
+  (finding #7). They are in git history; deleting the files does not undo it.
+- Supply a Tradier token + egress allowance for `api.tradier.com` /
+  `ws.tradier.com` to close the live-data gates (W5 real chains, W7 scheduler,
+  W8 training).
 
 ## Do NOT re-run Waves 1-10 from scratch
 
-They were executed against the pre-merge tree and their work is in the branch. Where the
-merge invalidated a conclusion, `REPO_AUDIT.md` -> "Corrections to rows above" says so
-explicitly. Re-running blind would duplicate work and risk reverting main's improvements.
+They were executed against the pre-merge tree and their work is in the branch.
+Where the merge invalidated a conclusion, `REPO_AUDIT.md` -> "Corrections to
+rows above" says so explicitly.

@@ -10,7 +10,8 @@ Read this first on any new/compacted session, then `NEXT_ACTIONS.md`.
   flow-engine integration, keyless CBOE/OCC connectors, route auth and a narrowed CORS
   allowlist. Both sides were kept: main's real-data pipeline AND this branch's Truth Firewall
   (main had dropped the simulation live-mode gate and bypassed the `addFlowEvent` emit guard).
-- **Regression gate:** `npm run verify` — green (exit 0). 355 tests, 0 failures.
+- **Regression gate:** `npm run verify` — green (exit 0). **385 tests, 0 failures**
+  (297 backend + 45 domain + 14 flow-engine + 29 frontend).
 
 ## Wave status
 
