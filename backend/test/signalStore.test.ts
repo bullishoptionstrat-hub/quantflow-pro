@@ -250,3 +250,22 @@ test('listUngraded skips synthetic signals', async () => {
   const open = await s.listUngraded(10);
   assert.deepEqual(open.map((r) => r.signalKey), ['real']);
 });
+
+test('a multi-horizon report warns that its rows share signals', async () => {
+  // 30 graded M15 and 30 graded H1 outcomes from the SAME 30 signals are two
+  // readings of one sample, not two independent samples. A reader who treats
+  // agreement across horizons as corroboration is double-counting.
+  const s = new InMemorySignalStore();
+  for (let i = 0; i < MIN_PUBLISHABLE_SAMPLE; i++) {
+    const key = `multi-${i}`;
+    await s.writeSignal(rec({ signalKey: key, contentHash: key }));
+    for (const horizon of ['M15', 'H1'] as const) {
+      await s.writeOutcome(outcome({ signalKey: key, horizon, label: 'POSITIVE' }));
+    }
+  }
+
+  const r = await s.trackRecord();
+  assert.equal(r.rows.length, 2);
+  assert.match(r.notes.join(' '), /three readings of the SAME signals/);
+  assert.match(r.notes.join(' '), /not.*independent samples/);
+});

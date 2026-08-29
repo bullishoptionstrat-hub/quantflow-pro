@@ -250,6 +250,14 @@ export class InMemorySignalStore implements SignalStore {
         'not affirmatively permitted for persistence under the active business mode.',
       );
     }
+    if (rows.length > 1) {
+      notes.push(
+        'Rows are grouped by (kind, horizon), and each signal is graded at every ' +
+        'horizon — so the M15, H1 and D1 rows for one kind are three readings of ' +
+        'the SAME signals, not three independent samples. Do not multiply them ' +
+        'together or treat agreement across horizons as corroboration.',
+      );
+    }
     if (this.evicted > 0) {
       notes.push(
         `${this.evicted} oldest signal(s) have been evicted from this in-memory store ` +

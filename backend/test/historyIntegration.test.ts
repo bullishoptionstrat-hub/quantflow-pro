@@ -191,3 +191,66 @@ test('a replayed print yields EVENT_TIME_ONLY and is kept out of published rates
   assert.equal(report.rows.length, 0);
   assert.ok(report.excluded.eventTimeOnlyBasis > 0);
 });
+
+test('a signal whose print origins were evicted is refused, not recorded as real', async (t) => {
+  // `printSource` is bounded at 20k entries and drops its oldest quarter under
+  // load. Most bursts close within milliseconds, so they are never at risk —
+  // but SPLIT holds its prints for a five-minute window, and on a busy tape
+  // 20k prints can easily arrive inside five minutes. When a SPLIT finally
+  // fires, its earliest prints' origins may be gone.
+  //
+  // The dangerous case is quiet: were an evicted print the simulated one and a
+  // real print left standing, the signal would look real and attributable when
+  // it is neither. Incomplete provenance must fail closed.
+  __clearSignalObservers();
+  t.after(() => __clearSignalObservers());
+
+  const store = new InMemorySignalStore();
+  const recorder = new SignalRecorder(store, 'PRIVATE_RESEARCH');
+  const splits: Array<{ sig: ClassifiedSignal; origin: SignalOrigin }> = [];
+  onSignal((sig, origin) => {
+    if (sig.underlying === 'SPLITX' && sig.kind === 'SPLIT') splits.push({ sig, origin });
+  });
+
+  const base = Date.now();
+  // Small prints: $10k each — under minSignalPremium (25k), blockMinSize (100)
+  // and blockMinPremium (100k), and single-venue, so each falls through to the
+  // SPLIT detector rather than being classified on its own.
+  const small = (i: number) => print({
+    symbol: 'SPLITX', id: `s-${i}`, ts: base + i * 500,
+    strike: 500, price: 5, size: 20,
+    exchanges: ['CBOE'], bid: 4.9, ask: 5.1, source: 'tradier',
+  });
+
+  ingestPrint(small(0));
+
+  // Flood the origin map past its 20k cap while the SPLIT window is still open.
+  for (let i = 0; i < 26_000; i++) {
+    ingestPrint(print({
+      symbol: 'FLOOD', id: `f-${i}`, ts: base + 1 + (i % 400),
+      strike: 400 + (i % 60), price: 25.1, source: 'tradier',
+    }));
+  }
+
+  // Now close the SPLIT: 5 more prints clears splitMinPrints and, at $10k each,
+  // the $50k splitMinPremium.
+  for (let i = 1; i <= 5; i++) ingestPrint(small(i));
+  drainIdle(0);
+
+  assert.ok(splits.length > 0, 'a SPLIT fired — otherwise this test proves nothing');
+
+  const orphaned = splits.filter((s) => s.origin.sources.includes('unknown'));
+  assert.ok(
+    orphaned.length > 0,
+    'the early prints\' origins were evicted — otherwise this test proves nothing',
+  );
+
+  for (const { sig, origin } of orphaned) {
+    // Pessimistic on both axes when provenance is incomplete.
+    assert.equal(origin.synthetic, true, 'cannot rule out a simulated print');
+    const res = await recorder.record(sig, origin);
+    assert.equal(res.status, 'REFUSED_RIGHTS', 'unattributable provenance is refused');
+  }
+
+  assert.equal((await store.countSignals()).total, 0, 'nothing unattributable was stored');
+});

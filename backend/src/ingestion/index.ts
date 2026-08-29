@@ -902,11 +902,35 @@ function startSignalHistory(): void {
   if (!p.durable) console.warn(`[history] ${p.reason}`);
 }
 
-/** Rendered into /api/health so the collection state is visible, not assumed. */
+/**
+ * Rendered into /api/health so the collection state is visible, not assumed.
+ *
+ * /api/health is served UNAUTHENTICATED, so every string here is public. The
+ * recorder's and grader's `lastError` are raw messages from the Supabase
+ * client and can carry the project URL or other connection detail, so they are
+ * stripped here and served only from /api/track-record, which sits behind
+ * auth. Counters stay — they are the operationally useful part and they leak
+ * nothing. (Same reasoning as `sourceErrors`/`describeHttpError` elsewhere in
+ * this file.)
+ */
 export function getSignalHistoryStatus() {
+  const p = describePersistence();
+  const graderStats = grader?.getStats();
+
+  /** Strip `lastError`, keep every counter. */
+  const scrub = <T extends { lastError?: string }>(s: T | null | undefined) => {
+    if (!s) return null;
+    const { lastError: _dropped, ...counters } = s;
+    return counters;
+  };
+
   return {
-    ...describePersistence(),
-    grader: grader?.getStats() ?? null,
+    ...p,
+    recorder: scrub(p.recorder),
+    grader: scrub(graderStats),
+    // Flags that something failed without saying what. The detail is one
+    // authenticated call away, at /api/track-record.
+    errorsSuppressed: Boolean(p.recorder?.lastError || graderStats?.lastError),
     rights: rightsSnapshot(),
   };
 }

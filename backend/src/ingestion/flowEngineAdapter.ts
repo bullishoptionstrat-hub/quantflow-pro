@@ -223,12 +223,28 @@ function notify(sigs: ClassifiedSignal[]): void {
  * print carry an entire cluster of unverified ones into the record.
  */
 function originOf(sig: ClassifiedSignal): SignalOrigin {
-  const origins = sig.printIds.map((id) => printSource.get(id)).filter(Boolean);
+  const resolved = sig.printIds.map((id) => printSource.get(id));
+  const origins = resolved.filter(Boolean);
   const sources = [...new Set(origins.map((o) => o!.source))];
+
+  // `printSource` is bounded and evicts its oldest quarter under load, so a
+  // long-lived burst can outlive the origins of some of its prints. When that
+  // happens the provenance is INCOMPLETE, and the dangerous case is subtle: if
+  // the evicted print was the simulated one and a real print survives, the
+  // signal would look real and attributable when it is neither.
+  //
+  // So an unresolved print id contributes 'unknown', which no dataset maps to
+  // and which the rights gate therefore refuses. Losing a row is the correct
+  // outcome; recording one whose origin we cannot vouch for is not.
+  const complete = resolved.every(Boolean) && sources.length > 0;
+  if (!complete) sources.push('unknown');
+
   return {
     source: sources[0] ?? 'unknown',
-    sources: sources.length > 0 ? sources : ['unknown'],
-    synthetic: sig.synthetic || origins.some((o) => o?.synthetic === true),
+    sources,
+    // Pessimistic on both axes: incomplete provenance cannot rule out that a
+    // simulated print formed part of this cluster.
+    synthetic: sig.synthetic || !complete || origins.some((o) => o?.synthetic === true),
   };
 }
 
