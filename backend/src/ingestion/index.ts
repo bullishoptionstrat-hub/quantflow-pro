@@ -38,9 +38,14 @@ import { fetchCboeChain, getCboeSnapshot, getCboeSymbols } from './connectors/cb
 import { fetchOccVolume, getOccVolume } from './connectors/occ';
 import { describeHttpError } from './httpError';
 import {
-  ingestPrint, drainIdle, resetDaily,
+  ingestPrint, drainIdle, resetDaily, onSignal,
   type RawPrint, type WireFlowEvent,
 } from './flowEngineAdapter';
+import {
+  initPersistence, describePersistence, SignalGrader,
+  type SignalRecord,
+} from '../persistence';
+import { rightsSnapshot } from '../provenance/rights';
 
 // ─── 13 New Connectors ───────────────────────────────────────────────────────
 import { startFlashAlpha, getFlashGEX } from './connectors/flashAlpha';
@@ -304,7 +309,14 @@ export function startIngestion(io: any): void {
   // shows as 'never_reported' instead of being invisible.
   for (const s of ALL_KNOWN_SOURCES) registerSource(s);
 
+  startSignalHistory();
+
   // Seeding is generation, not ingestion. It runs in demo mode only.
+  //
+  // NOTE: main's side of this merge called seedInitialData() unconditionally.
+  // Restoring that would put the synthetic generator back into live mode,
+  // which is the exact defect the DATA_MODE firewall exists to prevent — so
+  // the gate is kept and startSignalHistory() is added alongside it.
   if (syntheticGeneratorsAllowed()) {
     seedInitialData();
   } else {
@@ -1036,6 +1048,85 @@ export function addFlowEvent(event: FlowEvent): void {
  * remain joinable for future targeted streams; the feed itself is filtered
  * client-side.
  */
+// ─── Durable signal history ─────────────────────────────────────────────────
+
+let grader: SignalGrader | undefined;
+
+/**
+ * Subscribe the recorder and grader to the engine's output.
+ *
+ * This is the difference between a terminal that shows flow and a system that
+ * remembers it. Without it, every signal this process classifies is discarded
+ * within 500 events, the ring buffer dies with the process, and no track
+ * record can ever accumulate no matter how long the service runs.
+ */
+function startSignalHistory(): void {
+  const { store, recorder } = initPersistence();
+
+  // Underlying marks come from TwelveData's spot cache. Yahoo is deliberately
+  // NOT consulted as a fallback: its terms prohibit automated access for any
+  // purpose, so it is refused in the rights registry, and reaching for it here
+  // would route around that refusal.
+  grader = new SignalGrader(store, (underlying) => {
+    const px = getSpotPrice(underlying);
+    return px > 0 ? px : undefined;
+  });
+
+  onSignal((sig, origin) => {
+    // Fire-and-forget: recording must never add latency to the live tape or
+    // take it down on a database hiccup. Failures are counted in the
+    // recorder's stats and surfaced on /api/health.
+    void recorder.record(sig, origin).then(async (res) => {
+      if (res.status !== 'RECORDED' || !res.signalKey) return;
+      const rec: SignalRecord | undefined = await store.getSignal(res.signalKey);
+      if (rec) grader?.register(rec);
+    }).catch(() => { /* counted in recorder stats */ });
+  });
+
+  // Grade due checkpoints once a minute. The shortest horizon is 15 minutes,
+  // so a 60s tick is well inside the lateness tolerance.
+  setInterval(() => {
+    void grader?.tick().catch(() => { /* counted in grader stats */ });
+  }, 60_000);
+
+  const p = describePersistence();
+  console.log(`[history] store=${p.store} durable=${p.durable} mode=${p.businessMode}`);
+  if (!p.durable) console.warn(`[history] ${p.reason}`);
+}
+
+/**
+ * Rendered into /api/health so the collection state is visible, not assumed.
+ *
+ * /api/health is served UNAUTHENTICATED, so every string here is public. The
+ * recorder's and grader's `lastError` are raw messages from the Supabase
+ * client and can carry the project URL or other connection detail, so they are
+ * stripped here and served only from /api/track-record, which sits behind
+ * auth. Counters stay — they are the operationally useful part and they leak
+ * nothing. (Same reasoning as `sourceErrors`/`describeHttpError` elsewhere in
+ * this file.)
+ */
+export function getSignalHistoryStatus() {
+  const p = describePersistence();
+  const graderStats = grader?.getStats();
+
+  /** Strip `lastError`, keep every counter. */
+  const scrub = <T extends { lastError?: string }>(s: T | null | undefined) => {
+    if (!s) return null;
+    const { lastError: _dropped, ...counters } = s;
+    return counters;
+  };
+
+  return {
+    ...p,
+    recorder: scrub(p.recorder),
+    grader: scrub(graderStats),
+    // Flags that something failed without saying what. The detail is one
+    // authenticated call away, at /api/track-record.
+    errorsSuppressed: Boolean(p.recorder?.lastError || graderStats?.lastError),
+    rights: rightsSnapshot(),
+  };
+}
+
 function emitSignals(events: FlowEvent[]): void {
   if (events.length === 0) return;
   for (const event of events) addFlowEvent(event);

@@ -6,7 +6,8 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "test": "tsx --test test/*.test.ts",
-    "typecheck": "tsc -p tsconfig.all.json"
+    "typecheck": "tsc -p tsconfig.all.json",
+    "verify": "npm run typecheck && npm test"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.43.1",

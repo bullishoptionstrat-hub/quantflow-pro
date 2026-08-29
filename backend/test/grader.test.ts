@@ -1,219 +1,202 @@
-/**
- * WAVE 7 — outcome grading, including a HAND-VERIFIED worked example.
- */
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { InMemorySignalStore } from '../src/persistence/memoryStore';
+import { HORIZON_OFFSETS_MS, SignalGrader } from '../src/persistence/grader';
+import type { SignalRecord } from '../src/persistence/types';
 
-import {
-  buildReport,
-  DEFAULT_FLAT_THRESHOLD,
-  firstMarkAtOrAfter,
-  gradeEvent,
-  GRADER_VERSION,
-  HORIZON_MS,
-  type GradeInput,
-  type PriceMark,
-} from '../src/outcomes/grader';
+const T0 = Date.parse('2026-08-29T14:30:00.000Z');
+const M15 = HORIZON_OFFSETS_MS.M15;
 
-const T0 = 1_700_000_000_000;
-const MIN = 60_000;
-
-function marks(...pairs: Array<[number, number]>): PriceMark[] {
-  return pairs.map(([minute, price]) => ({ time: T0 + minute * MIN, price }));
-}
-
-function input(over: Partial<GradeInput> = {}): GradeInput {
+function rec(over: Partial<SignalRecord> = {}): SignalRecord {
+  const key = over.signalKey ?? 'k1';
   return {
-    flowEventId: 'evt-1',
-    symbol: 'SPY',
-    signalAt: T0,
-    actionableAt: T0,
-    impliedDirection: 'LONG',
-    horizon: '15m',
-    marks: marks([0, 580], [15, 585]),
-    now: T0 + 60 * MIN,
+    signalKey: key, contentHash: key, engineId: 'sig_1_x',
+    kind: 'SWEEP', underlying: 'SPY', side: 'BUY',
+    totalPremium: 250_000, totalSize: 100, iso: true, score: 82,
+    scoreBreakdown: {},
+    legs: [{
+      contractSymbol: 'SPY260919C00550000', underlying: 'SPY',
+      right: 'C', strike: 550, expiry: '2026-09-19', side: 'BUY',
+      totalSize: 100, totalPremium: 250_000, vwap: 25, prints: 3,
+      exchanges: ['CBOE'],
+    }],
+    firstEventAt: T0, lastEventAt: T0 + 500, decisionAt: T0 + 530,
+    decisionBasis: 'OBSERVED', latencyMs: 30,
+    source: 'tradier', datasetId: 'TRADIER_STREAM', rightsClass: 'PERMITTED',
+    synthetic: false, recordedAt: T0 + 600,
     ...over,
   };
 }
 
-describe('HAND-VERIFIED WORKED EXAMPLE', () => {
-  /**
-   * Checked by hand:
-   *   entry  = first mark at/after actionable (T+0)  = 580.00
-   *   exit   = first mark at/after T+15m            = 585.80
-   *   return = (585.80 − 580.00) / 580.00 = 5.80 / 580.00 = 0.01 exactly
-   *   LONG   ⇒ directed return = +0.01 = +1.00%  ⇒ WIN (|0.01| > 0.001)
-   */
-  const result = gradeEvent(input({
-    marks: marks([-5, 575], [0, 580], [7, 583], [15, 585.8], [30, 590]),
-    horizon: '15m',
+/** A clock and a spot feed the test drives directly. */
+function harness(prices: number[]) {
+  const store = new InMemorySignalStore();
+  let now = T0 + 600;
+  let idx = 0;
+  const g = new SignalGrader(
+    store,
+    () => prices[Math.min(idx, prices.length - 1)],
+    {},
+    () => now,
+  );
+  return {
+    store, grader: g,
+    advanceTo(ms: number) { now = ms; },
+    setPriceIndex(i: number) { idx = i; },
+  };
+}
+
+test('nothing is graded before the checkpoint falls due', async () => {
+  const h = harness([500]);
+  h.grader.register(rec());
+  h.advanceTo(T0 + 530 + M15 - 1);
+  assert.equal(await h.grader.tick(), 0);
+});
+
+test('a move in the implied direction beyond the dead band is POSITIVE', async () => {
+  const h = harness([500, 505]); // +1% on a bullish signal
+  h.grader.register(rec());
+  h.setPriceIndex(1);
+  h.advanceTo(T0 + 530 + M15);
+
+  assert.equal(await h.grader.tick(), 1);
+  const [o] = await h.store.listOutcomes('k1');
+  assert.equal(o!.label, 'POSITIVE');
+  assert.ok(Math.abs(o!.excursion! - 0.01) < 1e-9);
+  assert.equal(o!.entryMark, 500);
+  assert.equal(o!.exitMark, 505);
+});
+
+test('direction is applied with the right sign: a bearish signal scores on a fall', async () => {
+  // Buying puts is bearish, so a falling underlying is a positive excursion.
+  const h = harness([500, 495]);
+  h.grader.register(rec({
+    legs: [{ ...rec().legs[0]!, right: 'P', side: 'BUY' }],
   }));
+  h.setPriceIndex(1);
+  h.advanceTo(T0 + 530 + M15);
 
-  it('picks the correct entry and exit marks', () => {
-    assert.equal(result.entryMark, 580);
-    assert.equal(result.exitMark, 585.8);
-  });
-
-  it('computes the return exactly as hand-calculated', () => {
-    assert.ok(Math.abs(result.underlyingReturn! - 0.01) < 1e-12,
-      `expected +0.010000, got ${result.underlyingReturn}`);
-  });
-
-  it('labels it WIN and records the basis and version', () => {
-    assert.equal(result.label, 'WIN');
-    assert.equal(result.ungradedReason, null);
-    assert.equal(result.returnBasis, 'underlying');
-    assert.equal(result.calculationVersion, GRADER_VERSION);
-  });
-
-  it('the mirrored SHORT on the same data is a LOSS of the same magnitude', () => {
-    const short = gradeEvent(input({
-      marks: marks([-5, 575], [0, 580], [7, 583], [15, 585.8], [30, 590]),
-      impliedDirection: 'SHORT',
-    }));
-    assert.equal(short.label, 'LOSS');
-    assert.ok(Math.abs(short.underlyingReturn! + 0.01) < 1e-12);
-  });
+  await h.grader.tick();
+  const [o] = await h.store.listOutcomes('k1');
+  assert.equal(o!.label, 'POSITIVE');
+  assert.ok(o!.excursion! > 0, 'a fall is a win for a bearish signal');
 });
 
-describe('CAUSALITY — no mark from before actionable_at is ever used', () => {
-  it('ignores marks before actionable_at when choosing entry', () => {
-    const r = gradeEvent(input({
-      actionableAt: T0 + 10 * MIN,
-      // A very attractive earlier price that must NOT be used as entry.
-      marks: marks([0, 500], [10, 580], [25, 585.8]),
-      horizon: '15m',
-    }));
-    assert.equal(r.entryMark, 580, 'entry must come from at/after actionable_at');
-  });
+test('a move against the signal is NEGATIVE', async () => {
+  const h = harness([500, 490]);
+  h.grader.register(rec());
+  h.setPriceIndex(1);
+  h.advanceTo(T0 + 530 + M15);
 
-  it('firstMarkAtOrAfter never returns an earlier mark', () => {
-    const m = marks([0, 100], [5, 110], [10, 120]);
-    assert.equal(firstMarkAtOrAfter(m, T0 + 5 * MIN)?.price, 110);
-    assert.equal(firstMarkAtOrAfter(m, T0 + 6 * MIN)?.price, 120);
-    assert.equal(firstMarkAtOrAfter(m, T0 + 11 * MIN), null);
-  });
-
-  it('is order-independent — shuffled marks give the same grade', () => {
-    const ordered = marks([0, 580], [15, 585.8], [30, 590]);
-    const shuffled = [...ordered].reverse();
-    assert.deepEqual(
-      gradeEvent(input({ marks: ordered })),
-      gradeEvent(input({ marks: shuffled })),
-    );
-  });
-
-  it('exit is taken at the horizon, not at the best price in the window', () => {
-    // 600 at T+7 would be a much better exit — using it would be lookahead.
-    const r = gradeEvent(input({
-      marks: marks([0, 580], [7, 600], [15, 585.8]),
-      horizon: '15m',
-    }));
-    assert.equal(r.exitMark, 585.8);
-  });
+  await h.grader.tick();
+  assert.equal((await h.store.listOutcomes('k1'))[0]!.label, 'NEGATIVE');
 });
 
-describe('UNGRADED is first-class — never coerced to make tables look complete', () => {
-  it('ambiguous direction ⇒ UNGRADED, never a coin flip', () => {
-    const r = gradeEvent(input({ impliedDirection: null }));
-    assert.equal(r.label, 'UNGRADED');
-    assert.equal(r.ungradedReason, 'ambiguous_direction');
-    assert.equal(r.underlyingReturn, null);
-  });
+test('a move inside the dead band is FLAT, not a coin-flip win', async () => {
+  // Without a dead band, fourth-decimal noise is scored as a hit about half
+  // the time and the rate converges on 50% for reasons unrelated to the signal.
+  const h = harness([500, 500.02]); // +0.004%, inside the 0.1% band
+  h.grader.register(rec());
+  h.setPriceIndex(1);
+  h.advanceTo(T0 + 530 + M15);
 
-  it('missing entry mark ⇒ UNGRADED', () => {
-    const r = gradeEvent(input({ marks: marks([-10, 570]) }));
-    assert.equal(r.ungradedReason, 'no_entry_mark');
-  });
-
-  it('missing exit mark ⇒ UNGRADED', () => {
-    const r = gradeEvent(input({ marks: marks([0, 580]) }));
-    assert.equal(r.ungradedReason, 'no_exit_mark');
-  });
-
-  it('horizon not yet elapsed ⇒ UNGRADED with no evaluatedAt', () => {
-    const r = gradeEvent(input({ now: T0 + 5 * MIN, horizon: '15m' }));
-    assert.equal(r.ungradedReason, 'horizon_not_elapsed');
-    assert.equal(r.evaluatedAt, null);
-  });
-
-  it('a zero entry price ⇒ UNGRADED rather than Infinity', () => {
-    const r = gradeEvent(input({ marks: marks([0, 0], [15, 100]) }));
-    assert.equal(r.ungradedReason, 'zero_entry_price');
-    assert.equal(r.underlyingReturn, null);
-  });
+  await h.grader.tick();
+  assert.equal((await h.store.listOutcomes('k1'))[0]!.label, 'FLAT');
 });
 
-describe('FLAT band', () => {
-  it('a move below the threshold is FLAT, not a marginal WIN', () => {
-    // +0.05% < 0.1% threshold
-    const r = gradeEvent(input({ marks: marks([0, 580], [15, 580.29]) }));
-    assert.equal(r.label, 'FLAT');
-    assert.ok(Math.abs(r.underlyingReturn!) < DEFAULT_FLAT_THRESHOLD);
-  });
+test('an AMBIGUOUS side is UNGRADED with a reason, never assigned a direction', async () => {
+  const h = harness([500, 520]);
+  h.grader.register(rec({ legs: [{ ...rec().legs[0]!, side: 'AMBIGUOUS' }] }));
+  h.setPriceIndex(1);
+  h.advanceTo(T0 + 530 + M15);
 
-  it('a move just above the threshold is a WIN', () => {
-    const r = gradeEvent(input({ marks: marks([0, 580], [15, 581.5]) }));
-    assert.equal(r.label, 'WIN');
-  });
+  await h.grader.tick();
+  const [o] = await h.store.listOutcomes('k1');
+  assert.equal(o!.label, 'UNGRADED');
+  assert.match(o!.ungradedReason!, /implies no direction/);
+  assert.equal(o!.excursion, undefined);
 });
 
-describe('horizons', () => {
-  it('uses the correct offset for each horizon', () => {
-    assert.equal(HORIZON_MS['15m'], 900_000);
-    assert.equal(HORIZON_MS['1h'], 3_600_000);
-    assert.equal(HORIZON_MS['1d'], 86_400_000);
-  });
+test('a missing entry mark is UNGRADED rather than interpolated', async () => {
+  const store = new InMemorySignalStore();
+  let now = T0 + 600;
+  const g = new SignalGrader(store, () => undefined, {}, () => now);
+  g.register(rec());
+  now = T0 + 530 + M15;
 
-  it('grades the same event differently at different horizons', () => {
-    const m = marks([0, 580], [15, 575], [60, 590]);
-    const at15 = gradeEvent(input({ marks: m, horizon: '15m', now: T0 + 2 * 86_400_000 }));
-    const at1h = gradeEvent(input({ marks: m, horizon: '1h', now: T0 + 2 * 86_400_000 }));
-    assert.equal(at15.label, 'LOSS');
-    assert.equal(at1h.label, 'WIN');
-  });
+  await g.tick();
+  const [o] = await store.listOutcomes('k1');
+  assert.equal(o!.label, 'UNGRADED');
+  assert.match(o!.ungradedReason!, /No usable entry mark/);
 });
 
-describe('synthetic input can only produce a demo-flagged outcome', () => {
-  it('propagates isSynthetic into isDemo', () => {
-    const r = gradeEvent(input({ isSynthetic: true }));
-    assert.equal(r.isSynthetic, true);
-    assert.equal(r.isDemo, true);
-  });
+test('a checkpoint observed far too late is UNGRADED rather than graded against a stale move', async () => {
+  // The free tier sleeps. Waking six hours late and grading M15 against a
+  // six-hour move would be a fabricated measurement.
+  const h = harness([500, 550]);
+  h.grader.register(rec());
+  h.setPriceIndex(1);
+  h.advanceTo(T0 + 530 + M15 + 6 * 60 * 60_000);
 
-  it('real input is neither', () => {
-    const r = gradeEvent(input());
-    assert.equal(r.isSynthetic, false);
-    assert.equal(r.isDemo, false);
-  });
+  await h.grader.tick();
+  const [o] = await h.store.listOutcomes('k1');
+  assert.equal(o!.label, 'UNGRADED');
+  assert.match(o!.ungradedReason!, /came due .* minutes ago/);
 });
 
-describe('report aggregates honestly', () => {
-  it('excludes UNGRADED from the hit rate but COUNTS it', () => {
-    const results = [
-      gradeEvent(input({ flowEventId: 'a', marks: marks([0, 580], [15, 590]) })),          // WIN
-      gradeEvent(input({ flowEventId: 'b', marks: marks([0, 580], [15, 570]) })),          // LOSS
-      gradeEvent(input({ flowEventId: 'c', impliedDirection: null })),                      // UNGRADED
-      gradeEvent(input({ flowEventId: 'd', impliedDirection: null })),                      // UNGRADED
-    ];
-    const rep = buildReport(results);
-    assert.equal(rep.total, 4);
-    assert.equal(rep.graded, 2);
-    assert.equal(rep.ungraded, 2);
-    assert.equal(rep.hitRate, 0.5, 'hit rate must be over GRADED only');
-    assert.equal(rep.ungradedByReason['ambiguous_direction'], 2);
-  });
+test('synthetic signals are not tracked at all', async () => {
+  const h = harness([500, 550]);
+  h.grader.register(rec({ synthetic: true }));
+  h.setPriceIndex(1);
+  h.advanceTo(T0 + 530 + M15);
 
-  it('reports hitRate null rather than 0% when nothing is graded', () => {
-    const rep = buildReport([gradeEvent(input({ impliedDirection: null }))]);
-    assert.equal(rep.hitRate, null, '0/0 must not be presented as 0%');
-    assert.equal(rep.averageReturn, null);
-  });
+  assert.equal(await h.grader.tick(), 0);
+  assert.equal(h.grader.getStats().tracked, 0);
+});
 
-  it('always states the underlying-only basis', () => {
-    const rep = buildReport([]);
-    assert.equal(rep.returnBasis, 'underlying');
-    assert.match(rep.note, /option-level P&L/i);
-    assert.match(rep.note, /theta/i);
-  });
+test('each horizon is graded once, and the signal is dropped when all are done', async () => {
+  const h = harness([500, 505]);
+  h.grader.register(rec());
+  h.setPriceIndex(1);
+
+  h.advanceTo(T0 + 530 + HORIZON_OFFSETS_MS.M15);
+  assert.equal(await h.grader.tick(), 1);
+  assert.equal(await h.grader.tick(), 0, 'M15 is not graded twice');
+
+  h.advanceTo(T0 + 530 + HORIZON_OFFSETS_MS.H1);
+  assert.equal(await h.grader.tick(), 1);
+  h.advanceTo(T0 + 530 + HORIZON_OFFSETS_MS.D1);
+  assert.equal(await h.grader.tick(), 1);
+
+  assert.equal(h.grader.getStats().tracked, 0);
+  const horizons = (await h.store.listOutcomes('k1')).map((o) => o.horizon).sort();
+  assert.deepEqual(horizons, ['D1', 'H1', 'M15']);
+});
+
+test('grading is scheduled from decisionAt, not from the first print', async () => {
+  // A signal whose burst began well before its decision instant must not have
+  // its checkpoint pulled forward by the burst duration.
+  const h = harness([500, 505]);
+  h.grader.register(rec({ firstEventAt: T0 - 600_000, decisionAt: T0 + 530 }));
+  h.setPriceIndex(1);
+
+  h.advanceTo(T0 - 600_000 + M15 + 1);
+  assert.equal(await h.grader.tick(), 0, 'not due yet — the first print does not start the clock');
+
+  h.advanceTo(T0 + 530 + M15);
+  assert.equal(await h.grader.tick(), 1);
+});
+
+test('stats tally graded, ungraded and label counts', async () => {
+  const h = harness([500, 505]);
+  h.grader.register(rec({ signalKey: 'a' }));
+  h.grader.register(rec({ signalKey: 'b', legs: [{ ...rec().legs[0]!, side: 'AMBIGUOUS' }] }));
+  h.setPriceIndex(1);
+  h.advanceTo(T0 + 530 + M15);
+
+  await h.grader.tick();
+  const s = h.grader.getStats();
+  assert.equal(s.graded, 1);
+  assert.equal(s.positive, 1);
+  assert.equal(s.ungraded, 1);
 });

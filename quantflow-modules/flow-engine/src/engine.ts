@@ -56,6 +56,8 @@ export class FlowEngine {
   constructor(
     config: Partial<FlowEngineConfig> = {},
     private readonly statsLookup: StatsLookup = () => undefined,
+    /** Injectable wall clock — stamps `emittedAt`. Overridden in tests. */
+    private readonly now: () => number = () => Date.now(),
   ) {
     this.cfg = { ...DEFAULT_CONFIG, ...config };
   }
@@ -248,6 +250,14 @@ export class FlowEngine {
     const totalSize = legs.reduce((s, l) => s + l.totalSize, 0);
     const allTrades = legTradeGroups.flat();
     const ts = Math.min(...allTrades.map((t) => t.ts));
+    const lastTs = Math.max(...allTrades.map((t) => t.ts));
+    // Only meaningful when EVERY forming print carried a receipt time. One
+    // print without it means the max is not the cluster's true receipt time,
+    // and reporting a max over a subset would understate it.
+    const receipts = allTrades.map((t) => t.receivedAt);
+    const receivedAt = receipts.every((r): r is number => typeof r === 'number')
+      ? Math.max(...receipts)
+      : undefined;
     const iso = allTrades.some((t) => t.iso === true);
 
     const dominant = [...legs].sort((a, b) => b.totalPremium - a.totalPremium)[0];
@@ -278,6 +288,9 @@ export class FlowEngine {
       id: `sig_${++this.seq}_${ts}`,
       kind,
       ts,
+      lastTs,
+      receivedAt,
+      emittedAt: this.now(),
       underlying: dominant.contract.underlying,
       side,
       legs,
