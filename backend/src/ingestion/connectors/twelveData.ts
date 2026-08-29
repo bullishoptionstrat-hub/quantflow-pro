@@ -62,10 +62,14 @@ function startWebSocket(): void {
         onSpotUpdate?.(quote);
         wsCreditsUsed++;
       }
-    } catch {}
+    } catch (err: any) {
+      console.error(`[twelvedata] message handling failed: ${err?.message ?? err}`);
+    }
   });
 
-  ws.on('error', () => {});
+  ws.on('error', (err) => {
+    console.error(`[twelvedata] websocket error: ${err?.message ?? err}`);
+  });
   ws.on('close', () => { setTimeout(startWebSocket, 5000); });
 }
 

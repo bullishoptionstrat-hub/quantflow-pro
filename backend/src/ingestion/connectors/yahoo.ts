@@ -105,7 +105,11 @@ async function fetchOptionFlow(symbol: string): Promise<void> {
         bid, ask, iv: opt.impliedVolatility,
       } as FlowEvent);
     }
-  } catch {}
+  } catch (err: any) {
+    // Yahoo's v7/v8 endpoints now often require a crumb+cookie; a silent catch
+    // here is why this connector could fail permanently without anyone noticing.
+    console.error(`[yahoo] chain fetch failed: ${err?.response?.status ?? ''} ${err?.message ?? err}`.trim());
+  }
 }
 
 export async function startYahoo(): Promise<void> {

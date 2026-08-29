@@ -77,7 +77,10 @@ async function fetchQuote(stooqSym: string): Promise<void> {
 
     stooqCache.set(quote.symbol, quote);
     onStooqUpdate?.(quote);
-  } catch {}
+  } catch (err: any) {
+    // Never swallow: a silent catch is how a dead source keeps reporting healthy.
+    console.error(`[stooq] fetch failed: ${err?.response?.status ?? ''} ${err?.message ?? err}`.trim());
+  }
 }
 
 export async function startStooq(): Promise<void> {

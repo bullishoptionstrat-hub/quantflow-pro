@@ -108,13 +108,19 @@ function startWebSocket(): void {
         const d = msg.data[0];
         if (d.bidPrice && d.askPrice && Math.random() > 0.9) {
           const sym = d.symbol?.split(' ')[0] ?? d.symbol;
-          fetchOptionChain(sym).catch(() => {});
+          fetchOptionChain(sym).catch((err: any) =>
+            console.error(`[tastytrade] chain fetch failed for ${sym}: ${err?.message ?? err}`));
         }
       }
-    } catch {}
+    } catch (err: any) {
+      console.error(`[tastytrade] message handling failed: ${err?.message ?? err}`);
+    }
   });
 
-  ws.on('error', () => {});
+  ws.on('error', (err) => {
+    // A socket that errors repeatedly must not look healthy.
+    console.error(`[tastytrade] websocket error: ${err?.message ?? err}`);
+  });
   ws.on('close', () => { setTimeout(startWebSocket, 10000); });
 }
 
