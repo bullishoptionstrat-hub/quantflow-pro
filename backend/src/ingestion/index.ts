@@ -231,6 +231,79 @@ export function getUnusualActivity(symbol?: string) {
 
 // ─── Initializer ────────────────────────────────────────────────────────────
 
+// ─── Connector credentials ──────────────────────────────────────────────────
+
+/**
+ * What each connector needs in the environment before it can do any work.
+ *
+ * This exists because the connectors return early and *resolve* when their key
+ * is missing — so the `.then()` that marks them `connected` fired for a
+ * connector that had just decided to do nothing. Every keyless source
+ * therefore reported `connected` on /api/health while fetching nothing at all,
+ * which is precisely the kind of confident wrong answer `sourceErrors` and
+ * `describeHttpError` were introduced to stop.
+ *
+ * An empty list means the source genuinely needs no credentials: CoinGecko has
+ * a public endpoint, and CBOE / OCC / Stooq / Yahoo are unauthenticated fetches.
+ *
+ * Variable NAMES are safe to publish — /api/health is unauthenticated, but the
+ * names are already documented in `.env.example`. Values never appear here.
+ */
+export const CONNECTOR_CREDENTIALS: Readonly<Record<string, readonly string[]>> = {
+  flashalpha: ['FLASHALPHA_API_KEY'],
+  marketdata: ['MARKETDATA_TOKEN'],
+  schwab: ['SCHWAB_APP_KEY', 'SCHWAB_APP_SECRET', 'SCHWAB_REFRESH_TOKEN'],
+  tastytrade: ['TASTYTRADE_USER', 'TASTYTRADE_PASS'],
+  twelvedata: ['TWELVE_DATA_API_KEY'],
+  fmp: ['FMP_API_KEY'],
+  newsapi: ['NEWS_API_KEY'],
+  fred: ['FRED_API_KEY'],
+  reddit: ['REDDIT_CLIENT_ID', 'REDDIT_CLIENT_SECRET'],
+  // Keyless by design.
+  coingecko: [],
+  cboe: [],
+  yahoo: [],
+  stooq: [],
+};
+
+/** Which of a connector's required variables are unset or blank. */
+export function missingCredentials(
+  name: string, env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  return (CONNECTOR_CREDENTIALS[name] ?? []).filter(
+    (k) => !(env[k] ?? '').trim(),
+  );
+}
+
+/**
+ * Start one connector and report what actually happened.
+ *
+ * A resolved promise is NOT evidence the connector is running — it resolves
+ * just as happily after returning early for a missing key. So the credentials
+ * are checked directly, and a connector with none is reported `disabled` with
+ * the variable names needed to enable it.
+ */
+function startConnector(name: string, start: () => Promise<unknown>): Promise<void> {
+  return start()
+    .then(() => {
+      const missing = missingCredentials(name);
+      if (missing.length > 0) {
+        sources[name] = 'disabled';
+        sourceErrors[name] =
+          `No credentials — ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} ` +
+          `not set. The connector started and returned immediately without fetching ` +
+          `anything; it is not contributing data.`;
+      } else {
+        sources[name] = 'connected';
+        delete sourceErrors[name];
+      }
+    })
+    .catch((err) => {
+      sources[name] = 'disabled';
+      sourceErrors[name] = describeHttpError(err);
+    });
+}
+
 export function startIngestion(io: any): void {
   ioInstance = io;
   ingestionActive = true;
@@ -291,35 +364,30 @@ export function startIngestion(io: any): void {
 
   // Start all 13 connectors (each handles missing env vars gracefully)
   Promise.allSettled([
-    startFlashAlpha().then(() => { sources['flashalpha'] = 'connected'; })
-      .catch(() => { sources['flashalpha'] = 'disabled'; }),
-    startMarketData().then(() => { sources['marketdata'] = 'connected'; })
-      .catch(() => { sources['marketdata'] = 'disabled'; }),
-    startSchwab().then(() => { sources['schwab'] = 'connected'; })
-      .catch(() => { sources['schwab'] = 'disabled'; }),
-    startTastytrade().then(() => { sources['tastytrade'] = 'connected'; })
-      .catch(() => { sources['tastytrade'] = 'disabled'; }),
-    startTwelveData().then(() => { sources['twelvedata'] = 'connected'; })
-      .catch(() => { sources['twelvedata'] = 'disabled'; }),
-    startFMP().then(() => { sources['fmp'] = 'connected'; })
-      .catch(() => { sources['fmp'] = 'disabled'; }),
-    startCoinGecko().then(() => { sources['coingecko'] = 'connected'; })
-      .catch(() => { sources['coingecko'] = 'disabled'; }),
-    startFRED().then(() => { sources['fred'] = 'connected'; })
-      .catch(() => { sources['fred'] = 'disabled'; }),
-    startReddit().then(() => { sources['reddit'] = 'connected'; })
-      .catch(() => { sources['reddit'] = 'disabled'; }),
-    startNewsAPI().then(() => { sources['newsapi'] = 'connected'; })
-      .catch(() => { sources['newsapi'] = 'disabled'; }),
-    startCBOE().then(() => { sources['cboe'] = 'connected'; })
-      .catch(() => { sources['cboe'] = 'disabled'; }),
-    startYahoo().then(() => { sources['yahoo'] = 'connected'; })
-      .catch(() => { sources['yahoo'] = 'disabled'; }),
-    startStooq().then(() => { sources['stooq'] = 'connected'; })
-      .catch(() => { sources['stooq'] = 'disabled'; }),
-  ]).then((results) => {
-    const connected = results.filter((r) => r.status === 'fulfilled').length;
-    console.log(`[ingestion] ${connected}/13 new connectors started`);
+    startConnector('flashalpha', startFlashAlpha),
+    startConnector('marketdata', startMarketData),
+    startConnector('schwab', startSchwab),
+    startConnector('tastytrade', startTastytrade),
+    startConnector('twelvedata', startTwelveData),
+    startConnector('fmp', startFMP),
+    startConnector('coingecko', startCoinGecko),
+    startConnector('fred', startFRED),
+    startConnector('reddit', startReddit),
+    startConnector('newsapi', startNewsAPI),
+    startConnector('cboe', startCBOE),
+    startConnector('yahoo', startYahoo),
+    startConnector('stooq', startStooq),
+  ]).then(() => {
+    // Count what is actually contributing. The old tally counted resolved
+    // promises, which included every connector that had returned early for a
+    // missing key — so it always read 13/13.
+    const names = Object.keys(CONNECTOR_CREDENTIALS);
+    const live = names.filter((n) => sources[n] === 'connected');
+    const keyless = names.filter((n) => missingCredentials(n).length > 0);
+    console.log(`[ingestion] ${live.length}/${names.length} connectors contributing`);
+    if (keyless.length > 0) {
+      console.log(`[ingestion] no credentials for: ${keyless.join(', ')}`);
+    }
   });
 
   // Drain bursts the engine is holding once the feed goes quiet — it finalizes
