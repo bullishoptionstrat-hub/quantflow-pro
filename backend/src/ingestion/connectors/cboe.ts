@@ -4,6 +4,7 @@
  * Docs: https://www.cboe.com/us/options/market_statistics/
  */
 import axios from 'axios';
+import { describeHttpError } from '../httpError';
 
 export interface CBOEData {
   vix: number;
@@ -13,14 +14,27 @@ export interface CBOEData {
   vix1y: number;
   /** Nasdaq-100 volatility. Cboe publishes it; the Yahoo path never fetched it. */
   vxn: number;
-  putCallRatioEquity: number;
-  putCallRatioIndex: number;
-  putCallRatioTotal: number;
-  equityCallVolume: number;
-  equityPutVolume: number;
-  indexCallVolume: number;
-  indexPutVolume: number;
-  totalOptionsVolume: number;
+  /**
+   * Put/call ratios and volumes, or `null` when the statistics endpoint did
+   * not answer.
+   *
+   * Nullable rather than 0. Cboe's `options_volume.json` now returns HTTP 403,
+   * `fetchPutCallRatios` swallowed it in a bare `catch` and returned `{}`, and
+   * `fetchAll` filled every field with `?? 0` — so the terminal displayed an
+   * equity put/call ratio of 0.00, coloured green for "bullish", sourced from
+   * a request that was denied. A ratio of zero is a reading; absence is not,
+   * and the two have to be tellable apart on the wire.
+   */
+  putCallRatioEquity: number | null;
+  putCallRatioIndex: number | null;
+  putCallRatioTotal: number | null;
+  equityCallVolume: number | null;
+  equityPutVolume: number | null;
+  indexCallVolume: number | null;
+  indexPutVolume: number | null;
+  totalOptionsVolume: number | null;
+  /** Why the put/call block is null. Absent when it is populated. */
+  putCallUnavailable?: string;
   updatedAt: string;
   source: 'cboe';
 }
@@ -92,7 +106,23 @@ async function fetchVixTerms(): Promise<VixTerms> {
   return Object.fromEntries(settled) as VixTerms;
 }
 
-async function fetchPutCallRatios(): Promise<Partial<CBOEData>> {
+interface PutCallValues {
+  putCallRatioEquity: number;
+  putCallRatioIndex: number;
+  putCallRatioTotal: number;
+  equityCallVolume: number;
+  equityPutVolume: number;
+  indexCallVolume: number;
+  indexPutVolume: number;
+  totalOptionsVolume: number;
+}
+
+/** Either the block or the reason there isn't one. Never a silent `{}`. */
+type PutCallBlock =
+  | { ok: true; values: PutCallValues }
+  | { ok: false; reason: string };
+
+async function fetchPutCallRatios(): Promise<PutCallBlock> {
   try {
     const { data } = await axios.get(PCR_URL, {
       headers: { 'User-Agent': 'Mozilla/5.0' },
@@ -100,9 +130,11 @@ async function fetchPutCallRatios(): Promise<Partial<CBOEData>> {
     });
 
     const today = data?.data?.[0];
-    if (!today) return {};
+    if (!today) {
+      return { ok: false, reason: 'options_volume.json returned no rows.' };
+    }
 
-    return {
+    return { ok: true, values: {
       putCallRatioEquity: parseFloat(today.equity_put_call_ratio ?? 0),
       putCallRatioIndex: parseFloat(today.index_put_call_ratio ?? 0),
       putCallRatioTotal: parseFloat(today.total_put_call_ratio ?? 0),
@@ -111,9 +143,11 @@ async function fetchPutCallRatios(): Promise<Partial<CBOEData>> {
       indexCallVolume: parseInt(today.index_call_volume ?? 0),
       indexPutVolume: parseInt(today.index_put_volume ?? 0),
       totalOptionsVolume: parseInt(today.total_volume ?? 0),
-    };
-  } catch {
-    return {};
+    } };
+  } catch (err: any) {
+    // Reported, not swallowed. This is currently a 403, and for a long time it
+    // was rendered as a put/call ratio of 0.00.
+    return { ok: false, reason: describeHttpError(err) };
   }
 }
 
@@ -131,20 +165,25 @@ async function fetchAll(): Promise<void> {
       vix6m: vixData.vix6m,
       vix1y: vixData.vix1y,
       vxn: vixData.vxn,
-      putCallRatioEquity: pcr.putCallRatioEquity ?? 0,
-      putCallRatioIndex: pcr.putCallRatioIndex ?? 0,
-      putCallRatioTotal: pcr.putCallRatioTotal ?? 0,
-      equityCallVolume: pcr.equityCallVolume ?? 0,
-      equityPutVolume: pcr.equityPutVolume ?? 0,
-      indexCallVolume: pcr.indexCallVolume ?? 0,
-      indexPutVolume: pcr.indexPutVolume ?? 0,
-      totalOptionsVolume: pcr.totalOptionsVolume ?? 0,
+      ...(pcr.ok
+        ? pcr.values
+        : {
+            putCallRatioEquity: null, putCallRatioIndex: null, putCallRatioTotal: null,
+            equityCallVolume: null, equityPutVolume: null, indexCallVolume: null,
+            indexPutVolume: null, totalOptionsVolume: null,
+            putCallUnavailable: pcr.reason,
+          }),
       updatedAt: new Date().toISOString(),
       source: 'cboe',
     };
 
     onCBOEUpdate?.(cboeData);
-    console.log(`[cboe] Updated — VIX: ${cboeData.vix.toFixed(2)} | P/C Ratio: ${cboeData.putCallRatioTotal.toFixed(2)}`);
+    console.log(
+      `[cboe] Updated — VIX: ${cboeData.vix.toFixed(2)} | P/C Ratio: ` +
+      (cboeData.putCallRatioTotal != null
+        ? cboeData.putCallRatioTotal.toFixed(2)
+        : `unavailable (${cboeData.putCallUnavailable})`),
+    );
   } catch (err: any) {
     console.error('[cboe] fetch error:', err.message);
   }
@@ -152,6 +191,7 @@ async function fetchAll(): Promise<void> {
 
 export async function startCBOE(): Promise<void> {
   await fetchAll();
-  setInterval(fetchAll, 5 * 60_000); // every 5 min
+  // See the note in stooq.ts: the listener keeps the server alive, not this.
+  setInterval(fetchAll, 5 * 60_000).unref(); // every 5 min
   console.log('[cboe] Started — VIX + put/call ratios (no key required)');
 }

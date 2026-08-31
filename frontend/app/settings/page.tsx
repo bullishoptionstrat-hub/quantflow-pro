@@ -46,7 +46,7 @@ const API_KEY_GROUPS = [
     keys: [
       { id: 'cboe_note',     label: 'CBOE VIX / PCR Data',       placeholder: 'Auto-enabled · CBOE_ENABLED=true in backend env',    link: 'https://www.cboe.com/tradable_products/vix/' },
       { id: 'yahoo_note',    label: 'Yahoo Finance',              placeholder: 'Not started — Yahoo\'s terms prohibit automated access, including for private use. YAHOO_ENABLED has no effect.', link: 'https://legal.yahoo.com/us/en/yahoo/terms/otos/index.html' },
-      { id: 'stooq_note',    label: 'Stooq Futures & Yields',     placeholder: 'Auto-enabled · STOOQ_ENABLED=true in backend env',   link: 'https://stooq.com' },
+      { id: 'stooq_note',    label: 'Stooq Futures & Yields',     placeholder: 'Unavailable — Stooq now answers with a browser-verification page instead of its CSV. Nothing is cached; /api/health carries the detail.', link: 'https://stooq.com' },
     ],
   },
 ]
@@ -66,6 +66,16 @@ const FREE_KEYS = ['cboe_note', 'stooq_note']
  * and is bigger than this file.
  */
 const REFUSED_KEYS = ['yahoo_note']
+
+/**
+ * Sources that are simply not answering. A third state, and deliberately not
+ * folded into either of the other two: unlike a refused source there is no
+ * decision behind it, and unlike a keyless one there is no key that fixes it.
+ * Stooq is serving a JavaScript browser-verification challenge in place of its
+ * CSV, which the backend now detects and reports rather than parsing into
+ * quotes priced at zero.
+ */
+const UNAVAILABLE_KEYS = ['stooq_note']
 
 const ENV_VARS = [
   'NEXT_PUBLIC_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_ANON_KEY',
@@ -118,20 +128,26 @@ export default function SettingsPage() {
                 {group.keys.map(k => {
                   const isFree = FREE_KEYS.includes(k.id)
                   const isRefused = REFUSED_KEYS.includes(k.id)
+                  const isDown = UNAVAILABLE_KEYS.includes(k.id)
                   return (
                     <div key={k.id} style={{ marginBottom: 14 }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
                         <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', letterSpacing: '0.04em' }}>
                           {k.label}
-                          {isFree && <span style={{ marginLeft: 6, fontSize: 9, background: 'rgba(34,197,94,0.15)', color: '#86efac', borderRadius: 3, padding: '1px 5px', fontFamily: "'JetBrains Mono', monospace" }}>AUTO</span>}
+                          {isFree && !isDown && <span style={{ marginLeft: 6, fontSize: 9, background: 'rgba(34,197,94,0.15)', color: '#86efac', borderRadius: 3, padding: '1px 5px', fontFamily: "'JetBrains Mono', monospace" }}>AUTO</span>}
+                          {isDown && <span style={{ marginLeft: 6, fontSize: 9, background: 'rgba(251,191,36,0.15)', color: '#fde68a', borderRadius: 3, padding: '1px 5px', fontFamily: "'JetBrains Mono', monospace" }}>UNAVAILABLE</span>}
                           {isRefused && <span style={{ marginLeft: 6, fontSize: 9, background: 'rgba(248,113,113,0.15)', color: '#fca5a5', borderRadius: 3, padding: '1px 5px', fontFamily: "'JetBrains Mono', monospace" }}>REFUSED</span>}
                         </label>
                         <a href={k.link} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, color: '#a78bfa', textDecoration: 'none' }}>
-                          {isRefused ? '↗ Read the terms' : '↗ Get Key'}
+                          {isRefused ? '↗ Read the terms' : isDown ? '↗ Source' : '↗ Get Key'}
                         </a>
                       </div>
                       {isRefused ? (
                         <div style={{ ...inputStyle, color: '#fca5a5', cursor: 'default', opacity: 0.85, lineHeight: 1.5 }}>
+                          {k.placeholder}
+                        </div>
+                      ) : isDown ? (
+                        <div style={{ ...inputStyle, color: '#fde68a', cursor: 'default', opacity: 0.85, lineHeight: 1.5 }}>
                           {k.placeholder}
                         </div>
                       ) : isFree ? (
@@ -183,7 +199,7 @@ export default function SettingsPage() {
               {[
                 { label: 'CBOE', status: 'auto', note: 'VIX, PCR — no key' },
                 { label: 'Yahoo Finance', status: 'refused', note: 'Not started — terms prohibit automated access' },
-                { label: 'Stooq', status: 'auto', note: 'Futures, yields' },
+                { label: 'Stooq', status: 'down', note: 'Serving a verification page, not CSV' },
                 { label: 'FRED', status: 'key', note: 'CPI, FFR, M2, PCE' },
                 { label: 'CoinGecko', status: 'key', note: 'Crypto prices + global' },
                 { label: 'NewsAPI', status: 'key', note: 'Financial headlines' },
@@ -209,8 +225,13 @@ export default function SettingsPage() {
                       : item.status === 'refused' ? '#fca5a5'
                       : '#fde68a',
                   }}>
-                    {/* A key will not turn this one on. */}
-                    {item.status === 'auto' ? '✓ AUTO' : item.status === 'refused' ? '⛔ REFUSED' : 'NEEDS KEY'}
+                    {/* No key turns on either of the two non-green states, and
+                        they are not the same thing: one is a decision, one is
+                        an outage. */}
+                    {item.status === 'auto' ? '✓ AUTO'
+                      : item.status === 'refused' ? '⛔ REFUSED'
+                      : item.status === 'down' ? '⚠ UNAVAILABLE'
+                      : 'NEEDS KEY'}
                   </span>
                 </div>
               ))}

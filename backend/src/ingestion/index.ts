@@ -62,7 +62,7 @@ import {
   startYahoo, onYahooFlow, onYahooQuote, getYahooQuotes,
 } from './connectors/yahoo';
 import {
-  startStooq, onStooqQuote, getStooqQuotes,
+  startStooq, onStooqQuote, onStooqHealth, getStooqQuotes,
 } from './connectors/stooq';
 
 // ─── Re-export all sub-connector getters for route handlers ─────────────────
@@ -358,6 +358,13 @@ function startConnector(name: string, start: () => Promise<unknown>): Promise<vo
           `No credentials — ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} ` +
           `not set. The connector started and returned immediately without fetching ` +
           `anything; it is not contributing data.`;
+      } else if (sources[name] === 'error') {
+        // The connector reported its own failure while `start()` was still
+        // running — Stooq's first fetch cycle completes before `startStooq`
+        // resolves — and that report is the better evidence. "start() returned
+        // without throwing" is the coarsest possible health signal, and
+        // overwriting a specific failure with it is how a source that had just
+        // said it was broken came back as `connected`.
       } else {
         sources[name] = 'connected';
         delete sourceErrors[name];
@@ -419,6 +426,19 @@ export function startIngestion(io: any): void {
   }
   onStooqQuote((q) => {
     if (ioInstance) ioInstance.emit('stooq_update', q);
+  });
+  // Stooq reports on every cycle, not just the first. `startConnector` records
+  // what `start()` returned and never looks again, so a source that starts
+  // clean and dies an hour later keeps reporting `connected` — and Stooq is
+  // now serving a browser-verification challenge in place of its CSV.
+  onStooqHealth((h) => {
+    if (h.ok) {
+      sources['stooq'] = 'connected';
+      delete sourceErrors['stooq'];
+    } else {
+      sources['stooq'] = 'error';
+      sourceErrors['stooq'] = h.reason ?? 'Stooq fetch failed.';
+    }
   });
 
   // Wire macro/sentiment events to broadcast
