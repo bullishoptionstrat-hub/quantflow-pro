@@ -446,3 +446,138 @@ export function rightsSnapshot(mode: BusinessMode = resolveBusinessMode()) {
     })),
   };
 }
+
+// ─── The connector gate ─────────────────────────────────────────────────────
+
+/**
+ * Whether a connector may run at all.
+ *
+ * This is the DISPLAY axis finally being enforced somewhere. Until now the
+ * registry classified every dataset for DISPLAY and nothing ever asked: the
+ * only call sites were `recorder.ts` (PERSIST) and the /api/health snapshot.
+ * So `YAHOO_QUOTES` could be marked PROHIBITED for DISPLAY in both modes, and
+ * `startIngestion` would start the Yahoo connector anyway and publish its
+ * prints to every connected client — while a comment eleven hundred lines
+ * later in the same file explained that Yahoo is "refused in the rights
+ * registry, and reaching for it here would route around that refusal."
+ *
+ * **The rule here is deliberately narrower than `classify(id, 'DISPLAY')`.**
+ * A connector is refused only when its DISPLAY class is PROHIBITED — an
+ * established restriction, quoted from the publisher's own terms. UNVERIFIED
+ * does NOT stop a connector, and that asymmetry is the registry's own
+ * position, not a softening of it:
+ *
+ *   - The header states the fail-closed rule against the *persist* capability:
+ *     "Anything not affirmatively PERMITTED is refused for PERSIST."
+ *   - It gives the reason: "a source whose terms we have *not* verified is a
+ *     much worse basis for a permanent record than for an ephemeral panel."
+ *   - The Cboe entry says it is refused for PERSIST "anyway, because UNVERIFIED
+ *     is not a basis for a permanent record" — conceding that DISPLAY is not
+ *     refused on the same footing.
+ *
+ * If this gate refused UNVERIFIED too, DISPLAY and PERSIST would resolve
+ * identically for every dataset in the registry and the two-axis design would
+ * buy nothing. The distinction the header calls "the point" would be dead
+ * code. UNVERIFIED sources therefore keep running and keep being reported with
+ * their class and the quoted restriction, so the open question stays visible
+ * rather than being silently resolved in either direction.
+ *
+ * An unregistered source is NOT refused here either, for a different reason:
+ * this gate is scoped to sources the registry actually covers. The macro,
+ * news and sentiment connectors (FRED, CoinGecko, Reddit, NewsAPI, Stooq,
+ * TwelveData, FMP, FlashAlpha) emit no prints and have no dataset entry;
+ * refusing them here would take down half the app on a coverage gap rather
+ * than on a rights finding. `classify` still refuses them for PERSIST, which
+ * is where an unregistered source actually does damage.
+ *
+ * There is no override. A bypass flag over an established, quoted prohibition
+ * would be worse than having no gate, because it would let the refusal be
+ * turned off by whoever is least likely to have read the terms.
+ */
+export interface ConnectorGateDecision {
+  /** The connector `source` string as ingestion knows it. */
+  source: string;
+  allowed: boolean;
+  /** Absent when the source has no registry entry. */
+  datasetId?: string;
+  /** The DISPLAY class that produced this decision. */
+  rightsClass: RightsClass | 'UNREGISTERED';
+  mode: BusinessMode;
+  /** Operator-facing, and public: this string reaches /api/health. */
+  reason: string;
+}
+
+export function mayOperateConnector(
+  source: string,
+  mode: BusinessMode = resolveBusinessMode(),
+): ConnectorGateDecision {
+  const id = datasetIdForSource(source);
+  if (!id) {
+    return {
+      source,
+      allowed: true,
+      rightsClass: 'UNREGISTERED',
+      mode,
+      reason:
+        `Connector "${source}" has no entry in SOURCE_TO_DATASET, so no DISPLAY ` +
+        `restriction is established for it and it is not stopped here. It is still ` +
+        `refused for PERSIST as an unregistered source. Map it in ` +
+        `provenance/rights.ts if it can reach the tape.`,
+    };
+  }
+
+  const ds = BY_ID.get(id)!;
+  const cls = ds.display[mode];
+
+  if (cls === 'PROHIBITED') {
+    return {
+      source,
+      allowed: false,
+      datasetId: id,
+      rightsClass: cls,
+      mode,
+      reason:
+        `Refused on data rights, not a fault: ${ds.label} prohibits DISPLAY in ` +
+        `${mode}, so the connector is never started. Publisher's terms state: ` +
+        `"${ds.quotedRestriction ?? '(no quote recorded)'}" — ${ds.termsUrl} ` +
+        `(read ${ds.termsReadAt}). ${ds.basis}`,
+    };
+  }
+
+  if (cls === 'UNVERIFIED') {
+    return {
+      source,
+      allowed: true,
+      datasetId: id,
+      rightsClass: cls,
+      mode,
+      reason:
+        `${ds.label}: DISPLAY rights in ${mode} are UNVERIFIED. The connector runs — ` +
+        `an unresolved question is not an established prohibition — but nothing it ` +
+        `produces is persisted, and the open question stands. ` +
+        `Terms: ${ds.termsUrl} (read ${ds.termsReadAt}). ${ds.basis}`,
+    };
+  }
+
+  return {
+    source,
+    allowed: true,
+    datasetId: id,
+    rightsClass: cls,
+    mode,
+    reason: `${ds.label}: DISPLAY permitted in ${mode}. ${ds.basis}`,
+  };
+}
+
+/**
+ * Every connector the gate refuses in the given mode. Rendered into
+ * /api/health so a source that is off for a rights reason is distinguishable
+ * from one that is off for a missing key or a vendor outage.
+ */
+export function refusedConnectors(
+  mode: BusinessMode = resolveBusinessMode(),
+): ConnectorGateDecision[] {
+  return Object.keys(SOURCE_TO_DATASET)
+    .map((s) => mayOperateConnector(s, mode))
+    .filter((d) => !d.allowed);
+}
