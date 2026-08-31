@@ -45,7 +45,7 @@ import {
   getCryptoQuotes, getCryptoGlobal,
 } from './connectors/coinGecko';
 import {
-  startFRED, onFREDUpdate,
+  startFRED, onFREDUpdate, onFREDHealth,
   getMacroData, getMacroValue,
 } from './connectors/fred';
 import {
@@ -447,6 +447,17 @@ export function startIngestion(io: any): void {
   });
   onFREDUpdate((s) => {
     if (ioInstance) ioInstance.emit('macro_update', s);
+  });
+  // Same reason as Stooq below: a key FRED rejects would otherwise leave the
+  // connector reporting `connected` with nothing behind it.
+  onFREDHealth((h) => {
+    if (h.ok) {
+      sources['fred'] = 'connected';
+      delete sourceErrors['fred'];
+    } else {
+      sources['fred'] = 'error';
+      sourceErrors['fred'] = h.reason ?? 'FRED fetch failed.';
+    }
   });
   onRedditSentiment((s) => {
     if (ioInstance) ioInstance.emit('sentiment_update', s);

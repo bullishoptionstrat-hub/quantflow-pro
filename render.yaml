@@ -27,6 +27,10 @@ services:
         sync: false
       - key: FINNHUB_API_KEY
         sync: false
+      # Free, unlimited: https://fred.stlouisfed.org/docs/api/api_key.html
+      # Without it the macro page's FRED panel is empty and says so.
+      - key: FRED_API_KEY
+        sync: false
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_KEY
