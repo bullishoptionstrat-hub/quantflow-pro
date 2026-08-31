@@ -23,7 +23,10 @@ import {
   initPersistence, describePersistence, SignalGrader,
   type SignalRecord,
 } from '../persistence';
-import { rightsSnapshot } from '../provenance/rights';
+import {
+  rightsSnapshot, mayOperateConnector, refusedConnectors,
+  type ConnectorGateDecision,
+} from '../provenance/rights';
 
 // ─── 13 New Connectors ───────────────────────────────────────────────────────
 import { startFlashAlpha, getFlashGEX } from './connectors/flashAlpha';
@@ -142,11 +145,47 @@ let gexCache: Record<string, { levels: GEXLevel[]; fetchedAt: number }> = {};
 
 let ioInstance: any = null;
 let ingestionActive = false;
-let sources: Record<string, 'connected' | 'error' | 'disabled'> = {};
+// `refused` is not a failure state. It means the rights registry established a
+// prohibition on the source and the connector was never started — a decision,
+// not an outage. Kept distinct from `disabled` (no credentials) and `error`
+// (the vendor said no) so nobody tries to fix it by adding an API key.
+let sources: Record<string, 'connected' | 'error' | 'disabled' | 'refused'> = {};
 // Why a source is in 'error'. Surfaced via /api/health because the hosting
 // platform's logs aren't always reachable when diagnosing a live deploy.
 // Status codes and messages only — never credentials.
 let sourceErrors: Record<string, string> = {};
+
+// ─── Data-rights gate ───────────────────────────────────────────────────────
+
+/**
+ * Gate decisions, resolved once per source and memoized.
+ *
+ * `feedLegacy` consults the gate on every print, so this is a per-print call
+ * on the hot path — and `mayOperateConnector` calls `resolveBusinessMode()`,
+ * which throws on a malformed BUSINESS_MODE. That throw is meant to stop the
+ * process at boot, not to surface from inside a print handler where the
+ * surrounding `catch` would report it as a vendor error. Memoizing puts it on
+ * the first call, which is the connector-start path.
+ */
+const gateCache = new Map<string, ConnectorGateDecision>();
+
+function gateFor(source: string): ConnectorGateDecision {
+  let d = gateCache.get(source);
+  if (!d) {
+    d = mayOperateConnector(source);
+    gateCache.set(source, d);
+  }
+  return d;
+}
+
+/**
+ * Refuse a source and say so on /api/health. Idempotent — the print-level
+ * guard and the connector-level guard can both reach it for the same source.
+ */
+function markRefused(source: string, d: ConnectorGateDecision): void {
+  sources[source] = 'refused';
+  sourceErrors[source] = d.reason;
+}
 
 // ─── Public getters ─────────────────────────────────────────────────────────
 
@@ -211,7 +250,23 @@ export function getFlowStats() {
 }
 
 export function getIngestionStatus() {
-  return { active: ingestionActive, sources, sourceErrors, occ: getOccVolume() };
+  return {
+    active: ingestionActive,
+    sources,
+    sourceErrors,
+    // Listed even before the connector loop has run, so a refusal is visible
+    // on a cold /api/health rather than only after the first poll tick. Every
+    // string here is a quoted public restriction and a terms URL — nothing
+    // credential-shaped, same rule as `sourceErrors`.
+    rightsRefusals: refusedConnectors().map((d) => ({
+      source: d.source,
+      datasetId: d.datasetId,
+      rightsClass: d.rightsClass,
+      mode: d.mode,
+      reason: d.reason,
+    })),
+    occ: getOccVolume(),
+  };
 }
 
 /** Symbols with a real (non-synthetic) CBOE chain loaded. */
@@ -284,6 +339,16 @@ export function missingCredentials(
  * the variable names needed to enable it.
  */
 function startConnector(name: string, start: () => Promise<unknown>): Promise<void> {
+  // The rights gate runs before the connector does. A refused source must not
+  // be started and then filtered downstream: `start()` is what opens the
+  // socket or issues the fetch, and the request itself is the act the
+  // publisher's terms prohibit.
+  const gate = gateFor(name);
+  if (!gate.allowed) {
+    markRefused(name, gate);
+    return Promise.resolve();
+  }
+
   return start()
     .then(() => {
       const missing = missingCredentials(name);
@@ -326,6 +391,12 @@ export function startIngestion(io: any): void {
   // the legacy scorer; convert them to RawPrints so classification and scoring
   // happen in one place. (Their internal heat/type values are discarded.)
   const feedLegacy = (source: string) => (e: any) => {
+    // Second guard, generic across all four legacy feeds. `startConnector`
+    // already keeps a refused connector from running; this is what holds if a
+    // connector ever acquires another way to be started, or keeps a poll timer
+    // across a restart. A refused source must not reach the tape by any route.
+    const gate = gateFor(source);
+    if (!gate.allowed) { markRefused(source, gate); return; }
     const print = legacyEventToPrint(e, source);
     if (print) emitSignals(ingestPrint(print));
   };
@@ -338,9 +409,14 @@ export function startIngestion(io: any): void {
   onTwelveDataSpot((q) => {
     if (ioInstance) ioInstance.emit('spot_update', q);
   });
-  onYahooQuote((q) => {
-    if (ioInstance) ioInstance.emit('spot_update', q);
-  });
+  // Yahoo has a second publication path that is not a print: the spot quote
+  // goes straight out over the socket. Subscribing to it for a refused source
+  // would republish exactly the data the gate exists to stop.
+  if (gateFor('yahoo').allowed) {
+    onYahooQuote((q) => {
+      if (ioInstance) ioInstance.emit('spot_update', q);
+    });
+  }
   onStooqQuote((q) => {
     if (ioInstance) ioInstance.emit('stooq_update', q);
   });
@@ -383,10 +459,21 @@ export function startIngestion(io: any): void {
     // missing key — so it always read 13/13.
     const names = Object.keys(CONNECTOR_CREDENTIALS);
     const live = names.filter((n) => sources[n] === 'connected');
-    const keyless = names.filter((n) => missingCredentials(n).length > 0);
+    const refused = names.filter((n) => sources[n] === 'refused');
+    const keyless = names.filter(
+      (n) => sources[n] !== 'refused' && missingCredentials(n).length > 0,
+    );
     console.log(`[ingestion] ${live.length}/${names.length} connectors contributing`);
     if (keyless.length > 0) {
       console.log(`[ingestion] no credentials for: ${keyless.join(', ')}`);
+    }
+    // Reported separately from the missing-key list. A refused connector is not
+    // waiting on a key and will not start when one is supplied.
+    if (refused.length > 0) {
+      console.log(
+        `[ingestion] refused on data rights (not started): ${refused.join(', ')}`,
+      );
+      for (const n of refused) console.log(`[ingestion]   ${n}: ${sourceErrors[n]}`);
     }
   });
 
@@ -1145,6 +1232,9 @@ const CBOE_SYMBOLS = ['SPY', 'QQQ', 'NVDA', 'TSLA', 'AAPL', 'SPX'];
 let cboeIdx = 0;
 
 function startCboeOptions(): void {
+  const gate = gateFor('cboe_options');
+  if (!gate.allowed) { markRefused('cboe_options', gate); return; }
+
   async function tick() {
     const sym = CBOE_SYMBOLS[cboeIdx % CBOE_SYMBOLS.length]!;
     cboeIdx++;
@@ -1165,6 +1255,9 @@ function startCboeOptions(): void {
 
 // ─── OCC cleared volume ──────────────────────────────────────────────────────
 function startOcc(): void {
+  const gate = gateFor('occ');
+  if (!gate.allowed) { markRefused('occ', gate); return; }
+
   async function tick() {
     try {
       await fetchOccVolume();
