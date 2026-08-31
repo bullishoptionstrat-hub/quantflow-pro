@@ -11,6 +11,8 @@ export interface CBOEData {
   vix3m: number;
   vix6m: number;
   vix1y: number;
+  /** Nasdaq-100 volatility. Cboe publishes it; the Yahoo path never fetched it. */
+  vxn: number;
   putCallRatioEquity: number;
   putCallRatioIndex: number;
   putCallRatioTotal: number;
@@ -31,51 +33,63 @@ export function onCBOEData(handler: (d: CBOEData) => void): void {
 }
 export function getCBOEData(): CBOEData | null { return cboeData; }
 
-// CBOE JSON endpoints (no auth required)
-const VIX_URL = 'https://cdn.cboe.com/api/global/delayed_quotes/charts/historical/_VIX.json';
+// CBOE JSON endpoints (no auth required), all on cdn.cboe.com.
+//
+// The delayed *quote* endpoint, not the historical chart. The chart JSON for
+// _VIX is ~1.1MB of daily bars back to 1990 and its most recent row is the
+// previous session's close; the quote is ~500 bytes and carries the current
+// delayed print. Six of them is about 3KB per poll, which matters on a 512MB
+// free-tier host.
+const QUOTE_URL = (symbol: string) =>
+  `https://cdn.cboe.com/api/global/delayed_quotes/quotes/${symbol}.json`;
 const PCR_URL = 'https://cdn.cboe.com/data/us/options/market_statistics/options_volume.json';
 
-async function fetchVIX(): Promise<number> {
-  try {
-    const { data } = await axios.get(VIX_URL, { timeout: 8000 });
-    const obs = data?.data;
-    if (Array.isArray(obs) && obs.length > 0) {
-      const latest = obs[obs.length - 1];
-      return parseFloat(latest?.[4] ?? latest?.[1] ?? 0); // close price
-    }
-    return 0;
-  } catch {
-    return 0;
-  }
-}
+/** Cboe index symbols, in the order the term structure is read. */
+const VIX_SYMBOLS = {
+  vix: '_VIX',
+  vix9d: '_VIX9D',
+  vix3m: '_VIX3M',
+  vix6m: '_VIX6M',
+  vix1y: '_VIX1Y',
+  vxn: '_VXN',
+} as const;
 
-// Alternative VIX from Yahoo Finance (no-auth fallback)
-async function fetchVIXYahoo(): Promise<{ vix: number; vix9d: number; vix3m: number; vix6m: number; vix1y: number }> {
-  const symbols = ['^VIX', '^VIX9D', '^VIX3M', '^VIX6M', '^VIX1Y'];
-  const results: Record<string, number> = {};
+type VixTerms = Record<keyof typeof VIX_SYMBOLS, number>;
 
-  for (const sym of symbols) {
+/**
+ * The VIX term structure, from Cboe.
+ *
+ * This used to be `fetchVIXYahoo`, and it fetched all five tenors from Yahoo's
+ * chart API — the one publisher the rights registry classifies PROHIBITED for
+ * display in *both* business modes, quoting Yahoo's own terms. The connector
+ * gate refuses `startYahoo`, but this path is inside `startCBOE` and reached
+ * Yahoo anyway, five requests every five minutes, under a dataset id that
+ * records `cdn.cboe.com` as its host. A gate keyed on connector names cannot
+ * see a connector that dials a prohibited host, which is why
+ * `test/prohibitedHosts.test.ts` now reads the hosts out of the registry and
+ * checks them against the code (comments stripped — a comment issues no
+ * requests, and the note you are reading has to be allowed to exist).
+ *
+ * Cboe publishes every one of these tenors itself, plus VXN, which the Yahoo
+ * path never fetched at all. There was nothing to trade away.
+ *
+ * A tenor that fails or returns a non-positive price stays 0 and is rendered
+ * as unavailable rather than as a reading of zero.
+ */
+async function fetchVixTerms(): Promise<VixTerms> {
+  const entries = Object.entries(VIX_SYMBOLS) as [keyof VixTerms, string][];
+
+  const settled = await Promise.all(entries.map(async ([key, symbol]) => {
     try {
-      const { data } = await axios.get(
-        `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}`,
-        {
-          params: { interval: '1d', range: '1d' },
-          headers: { 'User-Agent': 'Mozilla/5.0' },
-          timeout: 5000,
-        }
-      );
-      const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
-      if (price) results[sym] = parseFloat(price);
-    } catch {}
-  }
+      const { data } = await axios.get(QUOTE_URL(symbol), { timeout: 8000 });
+      const px = Number(data?.data?.current_price);
+      return [key, Number.isFinite(px) && px > 0 ? px : 0] as const;
+    } catch {
+      return [key, 0] as const;
+    }
+  }));
 
-  return {
-    vix: results['^VIX'] ?? 0,
-    vix9d: results['^VIX9D'] ?? 0,
-    vix3m: results['^VIX3M'] ?? 0,
-    vix6m: results['^VIX6M'] ?? 0,
-    vix1y: results['^VIX1Y'] ?? 0,
-  };
+  return Object.fromEntries(settled) as VixTerms;
 }
 
 async function fetchPutCallRatios(): Promise<Partial<CBOEData>> {
@@ -106,7 +120,7 @@ async function fetchPutCallRatios(): Promise<Partial<CBOEData>> {
 async function fetchAll(): Promise<void> {
   try {
     const [vixData, pcr] = await Promise.all([
-      fetchVIXYahoo(),
+      fetchVixTerms(),
       fetchPutCallRatios(),
     ]);
 
@@ -116,6 +130,7 @@ async function fetchAll(): Promise<void> {
       vix3m: vixData.vix3m,
       vix6m: vixData.vix6m,
       vix1y: vixData.vix1y,
+      vxn: vixData.vxn,
       putCallRatioEquity: pcr.putCallRatioEquity ?? 0,
       putCallRatioIndex: pcr.putCallRatioIndex ?? 0,
       putCallRatioTotal: pcr.putCallRatioTotal ?? 0,
