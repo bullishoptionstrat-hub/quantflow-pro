@@ -151,6 +151,29 @@ export function FlowFeed() {
                       </td>
                       <td className="col-symbol">
                         <span className="ticker-pill">{e.underlying}</span>
+                        {/*
+                          `synthetic` is an honesty contract the backend has
+                          maintained all along and the terminal never showed.
+                          It is set on simulated prints, on replayed history,
+                          and on chain-snapshot connectors (marketData, schwab,
+                          tastytrade, yahoo) that synthesize a print from
+                          aggregate volume — so in a fully credentialed
+                          deployment some rows are constructed and some are
+                          observed tape, and until now nothing distinguished
+                          them. The demo banner is all-or-nothing and cannot:
+                          this is per row, which is the case that matters.
+                        */}
+                        {e.synthetic && (
+                          <span
+                            title="Constructed from aggregate volume or generated — not an observed print"
+                            style={{
+                              marginLeft: 5, fontSize: 8, fontWeight: 700, letterSpacing: '0.06em',
+                              padding: '1px 4px', borderRadius: 3, verticalAlign: 'middle',
+                              fontFamily: "'JetBrains Mono', monospace",
+                              background: 'rgba(251,191,36,0.14)', color: '#fde68a',
+                            }}
+                          >SYN</span>
+                        )}
                       </td>
                       <td className="col-exp" style={{ color: 'var(--text-secondary)', fontSize: 11 }}>
                         {formatExpiry(e.expiry)}

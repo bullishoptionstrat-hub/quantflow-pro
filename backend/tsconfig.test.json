@@ -1,12 +1,15 @@
 {
-  // Typechecks the tests, which `tsconfig.json` deliberately excludes because
-  // they must not be emitted into dist/. Without this, a test can call a
-  // function with the wrong signature and only fail at run time — or, worse,
-  // pass for the wrong reason.
+  // Typechecks the tests and the dev tools, both of which `tsconfig.json`
+  // deliberately excludes because they must not be emitted into dist/.
+  // Without this, a test can call a function with the wrong signature and only
+  // fail at run time — or, worse, pass for the wrong reason. `tools/` has the
+  // same exposure and one extra reason to care: `tools/preview/serve.ts`
+  // imports `authenticateSocket` from src, so a change to that signature
+  // should break the preview here rather than at someone's next demo.
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": true,
     "rootDir": "."
   },
-  "include": ["src/**/*", "test/**/*"]
+  "include": ["src/**/*", "test/**/*", "tools/**/*"]
 }

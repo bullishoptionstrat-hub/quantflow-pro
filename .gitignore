@@ -19,3 +19,6 @@ quanntflow/
 !qf-firecrawl (1).zip
 !qf-flow-engine.zip
 !quantflow.zip
+
+# Preview captures — snapshots of a live backend, not source
+.preview/

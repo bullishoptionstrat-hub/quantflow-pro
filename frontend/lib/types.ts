@@ -65,6 +65,16 @@ export interface FlowEvent {
   synthetic?: boolean
 }
 
+/**
+ * `GET /api/darkpool` → `data[]`. The wire shape, not a convenient one.
+ *
+ * This declared `created_at`, `condition`, `is_block` and `repeat_count`, none
+ * of which the backend sends — it sends `timestamp` and `source`. The type was
+ * satisfied by `generateDarkPool()`, a client-side fabricator, so nothing ever
+ * compared it against the API. Wiring the fetch without fixing this would have
+ * rendered `undefined` down the whole table, the same way `StooqQuote` would
+ * have thrown on `q.price.toFixed(2)`.
+ */
 export interface DarkPoolPrint {
   id: string
   symbol: string
@@ -72,10 +82,17 @@ export interface DarkPoolPrint {
   size: number
   notional: number
   exchange: string
-  condition: string
-  created_at: string
-  is_block: boolean
-  repeat_count: number
+  timestamp: string
+  /** `'simulation'` when the print came from the backend's generator. */
+  source: string
+}
+
+/** `GET /api/darkpool` — the envelope, whose notices the page must render. */
+export interface DarkPoolResponse {
+  data: DarkPoolPrint[]
+  total: number
+  notice: string
+  disclaimer: string
 }
 
 export interface PowerAlert {
@@ -89,12 +106,45 @@ export interface PowerAlert {
   flow_event_id?: string
 }
 
+/**
+ * `GET /api/gex` → `levels[]`.
+ *
+ * `net_gex`/`call_gex`/`put_gex`/`level_type` were the old client-side shape.
+ * The backend sends `gex` plus the open interest and per-side gamma it was
+ * computed from, and it does not label a strike SUPPORT or RESISTANCE — the
+ * chart made that up with `Math.random() > 0.5`.
+ */
 export interface GEXLevel {
   strike: number
-  net_gex: number
-  call_gex: number
-  put_gex: number
-  level_type: 'SUPPORT' | 'RESISTANCE' | 'FLIP'
+  gex: number
+  callOI: number
+  putOI: number
+  callGamma: number
+  putGamma: number
+}
+
+/** `GET /api/gex` — the envelope. `realData` is the field that matters. */
+export interface GEXResponse {
+  symbol: string
+  levels: GEXLevel[]
+  flipStrike: number | null
+  keyLevels: {
+    maxGEXStrike: number | null
+    maxGEX: number | null
+    minGEXStrike: number | null
+    minGEX: number | null
+  }
+  updatedAt: string
+  /** `'cboe'` for a real delayed chain, `'synthetic'` for the fallback. */
+  source: 'cboe' | 'synthetic' | string
+  /**
+   * Whether these levels came from a real chain. The route's own comment:
+   * "The UI must be able to tell them apart — a fabricated gamma flip looks
+   * exactly like a real one."
+   */
+  realData: boolean
+  realtime: boolean
+  delayedMinutes: number | null
 }
 
 export interface FlowFilters {
