@@ -15,7 +15,10 @@ import trackRecordRouter from './routes/trackRecord';
 import macroRouter from './routes/macro';
 import sentimentRouter from './routes/sentiment';
 import { rateLimiter } from './middleware/rateLimiter';
-import { requireAuth, requireAuthOrDemo, isDemoModeEnabled, DEMO_HEADER } from './middleware/auth';
+import {
+  requireAuth, requireAuthOrDemo, isDemoModeEnabled, DEMO_HEADER,
+  authenticateSocket, socketAuthConfigured,
+} from './middleware/auth';
 
 config();
 
@@ -24,8 +27,14 @@ export const httpServer = createServer(app);
 
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
+// `NEXT_PUBLIC_WS_URL` points the browser straight at this server rather than
+// through the frontend's /api/* rewrite, so unlike the HTTP path below this is
+// a real browser-to-backend connection and the allowed origin actually does
+// something. It was `'*'` with `credentials: true`.
+const CORS_ORIGINS = [FRONTEND_URL, 'http://localhost:3000'];
+
 export const io = new Server(httpServer, {
-  cors: { origin: '*', methods: ['GET', 'POST'], credentials: true },
+  cors: { origin: CORS_ORIGINS, methods: ['GET', 'POST'], credentials: true },
   pingTimeout: 60000,
   pingInterval: 25000,
   transports: ['websocket', 'polling'],
@@ -35,8 +44,8 @@ export const io = new Server(httpServer, {
 app.use(helmet({ contentSecurityPolicy: false }));
 // HTTP traffic now arrives via the frontend's /api/* rewrite proxy, which is
 // server-to-server and sends no Origin — so this only has to cover a browser
-// talking to the backend directly, i.e. local development.
-const CORS_ORIGINS = [FRONTEND_URL, 'http://localhost:3000'];
+// talking to the backend directly, i.e. local development. (`CORS_ORIGINS` is
+// declared above, with the Socket.IO server that shares it.)
 app.use(cors({ origin: CORS_ORIGINS, credentials: true }));
 app.use(express.json({ limit: '1mb' }));
 app.use(rateLimiter(200, 60_000));
@@ -81,8 +90,31 @@ app.get('/health', (_req, res) => res.json({ ok: true, ts: new Date().toISOStrin
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 
 // ─── Socket.IO ────────────────────────────────────────────────────────────────
+/**
+ * The feed is gated at the handshake, on the same terms as `/api/flow`.
+ *
+ * `/api/flow` serves these signals behind `requireAuthOrDemo`; the socket
+ * broadcasts the same ones and used to admit anyone who connected. The
+ * decision lives in `middleware/auth.ts` beside the middleware it mirrors, so
+ * the two tiers cannot drift apart.
+ *
+ * A rejected handshake reaches the client as `connect_error`. The reason
+ * string is deliberately just "Unauthorized": it crosses to an
+ * unauthenticated caller and must not say which condition failed.
+ */
+io.use(async (socket, next) => {
+  const result = await authenticateSocket(socket.handshake.auth ?? {});
+  if (!result.ok) {
+    next(new Error(result.reason));
+    return;
+  }
+  socket.data.identity = result.identity;
+  next();
+});
+
 io.on('connection', (socket) => {
-  console.log(`[Socket] connected: ${socket.id}`);
+  const who = socket.data.identity?.demo ? 'demo' : socket.data.identity?.user?.id ?? 'unknown';
+  console.log(`[Socket] connected: ${socket.id} (${who})`);
   socket.on('subscribe_ticker', (ticker: string) => {
     if (typeof ticker === 'string' && ticker.length <= 10) socket.join(ticker.toUpperCase());
   });
@@ -109,6 +141,20 @@ httpServer.listen(PORT, '0.0.0.0', () => {
     console.error(
       '[Backend] FATAL CONFIG: SUPABASE_URL / SUPABASE_SERVICE_KEY are unset — ' +
       'every authenticated /api route will return 401. Set both in the Render dashboard.'
+    );
+  }
+
+  // The same condition now closes the socket, and that failure is quieter than
+  // the REST one: the frontend falls back to simulated prints when the feed is
+  // down, so the terminal keeps rendering and looks fine while receiving
+  // nothing real. Said separately, because "the pages still work" is exactly
+  // what would stop someone looking.
+  if (!socketAuthConfigured()) {
+    console.error(
+      '[Backend] FATAL CONFIG: the live feed will reject every socket — no ' +
+      'Supabase client to verify a token against, and DEMO_MODE is not 1. The ' +
+      'frontend will show simulated prints instead and will not look broken. ' +
+      'Set SUPABASE_URL / SUPABASE_SERVICE_KEY, or DEMO_MODE=1 for a read-only feed.'
     );
   }
 

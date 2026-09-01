@@ -60,7 +60,13 @@ const REGISTRY_FILE = join('provenance', 'rights.ts');
  * documentation, not a fetch.
  */
 function codeOnly(src: string): string {
-  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+  // Line comments first. A `//` comment mentioning a path like `/api/*`
+  // contains `/*`, so stripping block comments first opens a phantom comment
+  // that runs to the next `*` `/` and eats real code — and every check here
+  // asks whether a string is *absent*, so over-stripping fails open.
+  return src
+    .replace(/^[ \t]*\/\/.*$/gm, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
 }
 
 /** Hosts named in a literal in the code — not in comments. */
