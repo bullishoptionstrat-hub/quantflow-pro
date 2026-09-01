@@ -1,11 +1,34 @@
 'use client'
-import { useEffect, useCallback, useRef } from 'react'
+import { useEffect, useCallback } from 'react'
 import { useStore } from '@/store/useStore'
-import type { FlowEvent, PowerAlert } from '@/lib/types'
-import { generateSeedFlow } from '@/lib/utils'
+import type { FlowEvent } from '@/lib/types'
 
-// Seed with demo data immediately
-let seeded = false
+/**
+ * The live flow feed.
+ *
+ * This hook used to manufacture the tape. On mount it seeded the store with 50
+ * events from `generateSeedFlow` — random tickers, random premiums up to $15M,
+ * random heat scores, spot prices hardcoded at 2024 values — and then, while
+ * the socket was not connected, invented one more every eight seconds.
+ *
+ * The seeded fifty went in through `addFlowBatch`, so they only misinformed
+ * whoever was reading. The eight-second ones went through `handleEvent`, and
+ * that path does more than store an event: at `heat_score >= 75` it raises a
+ * power alert, above 80 it **speaks the trade aloud**, and above 85 it fires an
+ * **OS push notification**. `generateSeedFlow` drew heat uniformly from 40 to
+ * 100. So a terminal with no market data connection was announcing sweeps that
+ * had not happened, out loud and onto the desktop.
+ *
+ * None of it carried `synthetic`, either, so the per-row marker in `FlowFeed`
+ * did not cover it — flagging the generator would have left the speech and the
+ * notifications firing on invented trades regardless, since neither
+ * `speakAlert` nor `pushNotification` looks at that field.
+ *
+ * It is deleted rather than marked. The backend already simulates prints when
+ * no vendor keys are configured, and flags them `synthetic` on the wire where
+ * the UI can see it — so the client-side fabricator was redundant even in its
+ * honest form. With nothing arriving, the feed is empty and says why.
+ */
 
 function speakAlert(event: FlowEvent) {
   if (typeof window === 'undefined' || !window.speechSynthesis) return
@@ -31,8 +54,7 @@ function pushNotification(event: FlowEvent) {
 }
 
 export function useFlowFeed() {
-  const { filters, voiceEnabled, addFlowEvent, addFlowBatch, addPowerAlert, setConnected, flowEvents } = useStore()
-  const simulatorRef = useRef<NodeJS.Timeout | null>(null)
+  const { filters, voiceEnabled, addFlowEvent, addPowerAlert, setConnected, flowEvents } = useStore()
 
   const passesFilters = useCallback((e: FlowEvent) => {
     if (filters.ticker && !e.underlying.includes(filters.ticker.toUpperCase())) return false
@@ -67,48 +89,36 @@ export function useFlowFeed() {
   }, [passesFilters, voiceEnabled, addFlowEvent, addPowerAlert])
 
   useEffect(() => {
-    // Seed demo data immediately
-    if (!seeded) {
-      seeded = true
-      const seed = generateSeedFlow(50)
-      addFlowBatch(seed)
-    }
-
-    // Try to connect to real backend
     let socket: any = null
-    let socketLoaded = false
 
     const trySocket = async () => {
       try {
         const { getSocket } = await import('@/lib/socket')
         socket = getSocket()
-        socket.on('connect', () => { setConnected(true); socketLoaded = true })
+        socket.on('connect', () => setConnected(true))
         socket.on('disconnect', () => setConnected(false))
-        socket.on('flow_update', handleEvent)
+        // `flow_update` is not emitted by the backend — `emitSignals` sends a
+        // single global `flow_batch`. Kept off deliberately rather than left as
+        // a listener for an event that stopped existing before v3.
         socket.on('flow_batch', (batch: FlowEvent[]) => batch.forEach(handleEvent))
-      } catch (e) {
-        console.warn('Socket unavailable, using simulation mode')
+      } catch {
+        // Loading the client failed outright. `connected` stays false and the
+        // feed says so; there is nothing to substitute.
+        setConnected(false)
       }
     }
     trySocket()
 
-    // Simulate new events every 15s when not connected to real backend
-    const tickers = ['NVDA','SPX','SPY','QQQ','MSTR','MSFT','AAPL','META','TSLA','AMD']
-    simulatorRef.current = setInterval(() => {
-      if (socketLoaded) return
-      const [event] = generateSeedFlow(1)
-      const ticker = tickers[Math.floor(Math.random() * tickers.length)]
-      handleEvent({ ...event, underlying: ticker, created_at: new Date().toISOString(), id: `sim-${Date.now()}` })
-    }, 8000)
+    // The eight-second fabricator lived here. It is gone rather than gated:
+    // it fed `handleEvent`, which speaks a trade aloud above heat 80 and pushes
+    // an OS notification above 85, on events it had just invented.
 
     return () => {
-      if (simulatorRef.current) clearInterval(simulatorRef.current)
       if (socket) {
-        socket.off('flow_update', handleEvent)
         socket.off('flow_batch')
       }
     }
-  }, [handleEvent, addFlowBatch, setConnected])
+  }, [handleEvent, setConnected])
 
   return { events: flowEvents }
 }
