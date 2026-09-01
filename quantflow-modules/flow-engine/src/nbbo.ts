@@ -39,6 +39,13 @@ export class NbboBook {
   ): InferredSide {
     const nbbo = this.book.get(contractSymbol);
     if (!nbbo) return "AMBIGUOUS";
+    // A quote that did not exist yet is not evidence about this trade. The age
+    // check below is a subtraction, so a quote stamped AFTER the trade yields a
+    // negative age and sails through it — inferring the side of a print from an
+    // NBBO that may already reflect that very print. Nothing exercised this
+    // while the only quotes came stamped with their own trade's timestamp, but
+    // any independent quote feed drives straight into it.
+    if (nbbo.ts > tradeTs) return "AMBIGUOUS";
     if (tradeTs - nbbo.ts > maxAgeMs) return "AMBIGUOUS";
 
     const epsilon = 1e-9;
