@@ -187,6 +187,22 @@ function markRefused(source: string, d: ConnectorGateDecision): void {
   sourceErrors[source] = d.reason;
 }
 
+/**
+ * A connector that has no key, and which variable would give it one.
+ *
+ * `startConnector` says this for the thirteen free-tier connectors from
+ * `CONNECTOR_CREDENTIALS`. Tradier, Polygon and Finnhub start on their own
+ * paths and set `disabled` with no reason at all — so /api/health reported
+ * three sources as off and named nothing an operator could act on, which is
+ * the gap the credentials table was introduced to close everywhere else.
+ */
+function markNoCredentials(source: string, vars: string[]): void {
+  sources[source] = 'disabled';
+  sourceErrors[source] =
+    `No credentials — ${vars.join(', ')} ${vars.length === 1 ? 'is' : 'are'} not set. ` +
+    `The connector is not contributing data.`;
+}
+
 // ─── Public getters ─────────────────────────────────────────────────────────
 
 export function getRecentFlow(): FlowEvent[] {
@@ -643,7 +659,7 @@ function startTradierIngestion(): void {
 
   if (!TRADIER_TOKEN) {
     console.log('[tradier] No token — skipping WebSocket, using simulation');
-    sources['tradier'] = 'disabled';
+    markNoCredentials('tradier', ['TRADIER_TOKEN']);
     startSimulationFeed();
     return;
   }
@@ -796,7 +812,7 @@ const POLYGON_KEY = process.env.POLYGON_API_KEY || '';
 
 function startPolygonIngestion(): void {
   if (!POLYGON_KEY) {
-    sources['polygon'] = 'disabled';
+    markNoCredentials('polygon', ['POLYGON_API_KEY']);
     return;
   }
 
@@ -872,7 +888,7 @@ const FINNHUB_KEY = process.env.FINNHUB_API_KEY || '';
 
 function startFinnhubIngestion(): void {
   if (!FINNHUB_KEY) {
-    sources['finnhub'] = 'disabled';
+    markNoCredentials('finnhub', ['FINNHUB_API_KEY']);
     return;
   }
 

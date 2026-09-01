@@ -109,3 +109,48 @@ test('genuinely keyless sources need nothing', () => {
 test('an unknown connector name reports no requirements rather than throwing', () => {
   assert.deepEqual(missingCredentials('nope', {} as NodeJS.ProcessEnv), []);
 });
+
+
+// ─── The three that start on their own path ─────────────────────────────────
+
+/**
+ * Tradier, Polygon and Finnhub do not go through `startConnector`, so the
+ * credentials table never covered them: they set `sources[x] = 'disabled'` and
+ * no reason, and /api/health reported three sources as off while naming
+ * nothing an operator could act on. That is exactly the gap this table was
+ * introduced to close for the other thirteen.
+ */
+test('the legacy connectors name the variable that would enable them', () => {
+  const src = readFileSync(
+    join(__dirname, '..', 'src', 'ingestion', 'index.ts'), 'utf8',
+  );
+
+  const expected: Record<string, string> = {
+    tradier: 'TRADIER_TOKEN',
+    polygon: 'POLYGON_API_KEY',
+    finnhub: 'FINNHUB_API_KEY',
+  };
+
+  for (const [connector, variable] of Object.entries(expected)) {
+    assert.match(
+      src,
+      new RegExp(`markNoCredentials\\('${connector}', \\['${variable}'\\]\\)`),
+      `${connector} should report ${variable} when it has no key`,
+    );
+  }
+});
+
+test('no connector sets disabled without saying why', () => {
+  // `markNoCredentials` and `startConnector` both write a reason alongside the
+  // status. A bare assignment is how the three above went silent.
+  const src = readFileSync(join(__dirname, '..', 'src', 'ingestion', 'index.ts'), 'utf8')
+    .replace(/^[ \t]*\/\/.*$/gm, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+
+  const bare = [...src.matchAll(/sources\[['"](\w+)['"]\]\s*=\s*'disabled'/g)].map((m) => m[1]!);
+  assert.deepEqual(
+    bare, [],
+    `these set 'disabled' directly instead of via markNoCredentials, so ` +
+    `/api/health reports them off with no reason: ${bare.join(', ')}`,
+  );
+});
