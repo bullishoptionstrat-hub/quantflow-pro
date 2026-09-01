@@ -44,6 +44,17 @@ export interface RawPrint {
   exchanges?: string[];
   bid?: number;
   ask?: number;
+  /**
+   * When the NBBO above was quoted, epoch ms. Defaults to the print's own `ts`.
+   *
+   * Every source that carries a quote *with* the trade leaves this unset, and
+   * for those the quote and the trade are genuinely simultaneous. A source that
+   * fetches the NBBO separately must set it, because stamping a five-second-old
+   * quote with the trade's timestamp manufactures a freshness it does not have
+   * — and the engine's 2s staleness rule, the thing that decides whether a side
+   * can be inferred at all, would be deciding on a fabricated age.
+   */
+  quoteTs?: number;
   openInterest?: number;
   dayVolume?: number;
   avgDailyVolume?: number;
@@ -269,10 +280,17 @@ export function ingestPrint(print: RawPrint): WireFlowEvent[] {
   recordStats(symbol, print);
 
   // NBBO first: a trade with no fresh quote can only ever infer AMBIGUOUS.
+  //
+  // The quote is published under its OWN timestamp when the source supplies
+  // one. Publishing every quote under the trade's `ts` was correct while the
+  // only quotes arrived attached to their trade; for a separately-fetched NBBO
+  // it would assert that a quote from some seconds earlier was simultaneous
+  // with the print, which is exactly the input the staleness rule exists to
+  // judge. A quote from after the trade is refused outright by `inferSide`.
   const bid = print.bid;
   const ask = print.ask;
   if (bid !== undefined && ask !== undefined && ask > 0 && ask >= bid) {
-    engine.onQuote({ ts, contractSymbol: symbol, bid, ask });
+    engine.onQuote({ ts: print.quoteTs ?? ts, contractSymbol: symbol, bid, ask });
   }
 
   const venues = print.exchanges?.length

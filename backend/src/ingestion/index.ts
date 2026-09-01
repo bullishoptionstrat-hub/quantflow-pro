@@ -266,10 +266,18 @@ export function getFlowStats() {
 }
 
 export function getIngestionStatus() {
+  // A connected source can still be degraded. Polygon's trades feed working
+  // while its NBBO lookups are refused means prints arrive and every one of
+  // them is non-directional — visible nowhere if the only vocabulary is
+  // connected/error.
+  const notes: Record<string, string> = {};
+  if (polygonQuoteNote) notes['polygon'] = polygonQuoteNote;
+
   return {
     active: ingestionActive,
     sources,
     sourceErrors,
+    sourceNotes: notes,
     // Listed even before the connector loop has run, so a refusal is visible
     // on a cold /api/health rather than only after the first poll tick. Every
     // string here is a quoted public restriction and a terms URL — nothing
@@ -810,6 +818,70 @@ function processMarketTick(data: any, source: string): void {
 
 const POLYGON_KEY = process.env.POLYGON_API_KEY || '';
 
+/**
+ * How many NBBO lookups one poll cycle may spend.
+ *
+ * The trades poll returns up to 25 prints and each distinct contract costs one
+ * additional request, so an unbounded version would multiply this connector's
+ * request rate by 25 against a vendor whose free tier allows five calls a
+ * minute. Capped and deduped: the busiest contracts in a cycle get a side, the
+ * tail stays AMBIGUOUS, and nothing is invented for the ones that miss out.
+ */
+const POLYGON_QUOTE_BUDGET = 8;
+
+/** Polygon's contract ticker, e.g. `O:SPY260918C00500000`. Exported for tests. */
+export function polygonOptionTicker(
+  underlying: string, expiry: string, right: 'C' | 'P', strike: number,
+): string {
+  const yymmdd = expiry.split('-').join('').slice(2);
+  const strike8 = String(Math.round(strike * 1000)).padStart(8, '0');
+  return `O:${underlying.toUpperCase()}${yymmdd}${right}${strike8}`;
+}
+
+/** Why the NBBO half is not contributing, when it is not. Reported separately. */
+let polygonQuoteNote: string | undefined;
+
+/**
+ * The NBBO in force at the moment of a trade, from Polygon.
+ *
+ * `timestamp.lte` is the whole design. Asking for the *current* quote would be
+ * useless and dangerous at once: useless because `nbboMaxAgeMs` is 2 seconds
+ * and a quote fetched after a 10-second poll cycle is stale by definition, so
+ * every side would come out AMBIGUOUS anyway; dangerous because a quote from
+ * after the trade may already reflect that trade, and reading a direction off
+ * it is look-ahead. Bounding the query at or before the trade's own nanosecond
+ * timestamp makes the answer historically correct by construction, and leaves
+ * the staleness judgement where it belongs — with the engine.
+ *
+ * Returns undefined rather than throwing: a missing quote is a normal outcome
+ * that costs the print its direction, not an ingestion failure.
+ */
+export async function fetchPolygonNbbo(
+  ticker: string, tradeTsNs: number,
+): Promise<{ bid: number; ask: number; ts: number } | undefined> {
+  const { data } = await axios.get(
+    `https://api.polygon.io/v3/quotes/${encodeURIComponent(ticker)}`,
+    {
+      timeout: 5000,
+      headers: { Authorization: `Bearer ${POLYGON_KEY}` },
+      params: { 'timestamp.lte': String(tradeTsNs), order: 'desc', limit: 1 },
+    },
+  );
+
+  const q = data?.results?.[0];
+  if (!q) return undefined;
+
+  const bid = Number(q.bid_price);
+  const ask = Number(q.ask_price);
+  const ns = Number(q.sip_timestamp);
+  if (!Number.isFinite(bid) || !Number.isFinite(ask) || !Number.isFinite(ns)) return undefined;
+  // A zero or crossed book is not a quote. The engine drops these too, but
+  // sending them would still overwrite a good prior quote in the book.
+  if (!(ask > 0) || ask < bid || bid < 0) return undefined;
+
+  return { bid, ask, ts: Math.round(ns / 1_000_000) };
+}
+
 function startPolygonIngestion(): void {
   if (!POLYGON_KEY) {
     markNoCredentials('polygon', ['POLYGON_API_KEY']);
@@ -837,12 +909,62 @@ function startPolygonIngestion(): void {
       // this the source stayed 'error' forever after one bad poll.
       sources['polygon'] = 'connected';
       delete sourceErrors['polygon'];
+      polygonQuoteNote = undefined;
 
       if (data?.results) {
+        // One NBBO lookup per distinct contract per cycle, up to the budget.
+        // Two prints on the same contract in one batch share a quote request;
+        // the one asked for is the earliest trade's, so a later print in the
+        // same contract sees a quote at or before its own timestamp too.
+        const quotes = new Map<string, { bid: number; ask: number; ts: number }>();
+        let spent = 0;
+        let quoteFailure: string | undefined;
+
+        for (const t of data.results) {
+          if (spent >= POLYGON_QUOTE_BUDGET) break;
+          const d = t.details ?? {};
+          if (!t.sip_timestamp || !d.expiration_date || !d.strike_price) continue;
+
+          const ticker = polygonOptionTicker(
+            t.underlying_asset?.ticker ?? 'UNK',
+            d.expiration_date,
+            d.contract_type === 'call' ? 'C' : 'P',
+            d.strike_price,
+          );
+          if (quotes.has(ticker)) continue;
+
+          spent++;
+          try {
+            const nbbo = await fetchPolygonNbbo(ticker, Number(t.sip_timestamp));
+            if (nbbo) quotes.set(ticker, nbbo);
+          } catch (err: any) {
+            // Reported, not swallowed — but on its own line. The trades feed is
+            // working (we are inside its success path), and flipping the whole
+            // source to `error` because quotes are not entitled would say the
+            // feed is down when it is delivering prints.
+            quoteFailure = describeHttpError(err);
+            break;
+          }
+        }
+
+        polygonQuoteNote = quoteFailure
+          ? `Trades are flowing; NBBO lookups are failing, so every Polygon signal ` +
+            `stays AMBIGUOUS: ${quoteFailure}`
+          : undefined;
+
         for (const t of data.results) {
           if (!t.sip_timestamp || !t.price || !t.size) continue;
           const details = t.details ?? {};
           if (!details.expiration_date) continue;
+
+          const nbbo = details.strike_price !== undefined
+            ? quotes.get(polygonOptionTicker(
+                t.underlying_asset?.ticker ?? 'UNK',
+                details.expiration_date,
+                details.contract_type === 'call' ? 'C' : 'P',
+                details.strike_price,
+              ))
+            : undefined;
 
           emitSignals(ingestPrint({
             id: `poly-${t.sequence_number ?? `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`}`,
@@ -858,10 +980,16 @@ function startPolygonIngestion(): void {
             // Polygon condition 4 marks an Intermarket Sweep Order.
             iso: Array.isArray(t.conditions) ? t.conditions.includes(4) : undefined,
             source: 'polygon',
-            // No NBBO: the trades endpoint carries no quote, so side stays
-            // AMBIGUOUS here by design. Pre-v3 this path fabricated a ±1%
-            // bid/ask and inferred a side from it. Wiring the Polygon quotes
-            // feed is what makes this path directional.
+            // The trades endpoint carries no quote, so the NBBO is fetched
+            // separately, bounded at or before this trade's own timestamp.
+            // `quoteTs` is the quote's real time, not this trade's: the engine
+            // decides whether it is fresh enough to give a side, and a quote it
+            // judges stale leaves the print AMBIGUOUS — which is the correct
+            // outcome, not a failure. Pre-v3 this path fabricated a ±1%
+            // bid/ask and inferred a side from that.
+            bid: nbbo?.bid,
+            ask: nbbo?.ask,
+            quoteTs: nbbo?.ts,
           }));
         }
       }
