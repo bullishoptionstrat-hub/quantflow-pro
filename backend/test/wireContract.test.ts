@@ -170,3 +170,59 @@ test('the settings page reads fields /api/health actually sends', () => {
   const page = code(join(__dirname, '..', '..', 'frontend', 'app', 'settings', 'page.tsx'));
   assert.ok(!/enrichment\.status/.test(page), 'the page must not read enrichment.status');
 });
+
+
+// ─── Nothing is manufactured in the browser ─────────────────────────────────
+
+/**
+ * The terminal must not invent its own tape.
+ *
+ * `useFlowFeed` seeded the store with 50 events from `generateSeedFlow` on
+ * mount — random tickers, premiums to $15M, heat drawn uniformly from 40 to
+ * 100 — and produced one more every eight seconds while the socket was down.
+ * The seeded fifty went in through `addFlowBatch` and only misinformed the
+ * reader; the eight-second ones went through `handleEvent`, which raises a
+ * power alert at heat 75, **speaks the trade aloud** above 80, and fires an
+ * **OS push notification** above 85. A terminal with no market data connection
+ * was announcing sweeps that had not happened.
+ *
+ * The backend already simulates prints when no keys are configured and flags
+ * them `synthetic` on the wire, so the client-side generator was redundant
+ * even in an honest form — and flagging it would not have helped, because
+ * neither `speakAlert` nor `pushNotification` looks at that field.
+ */
+const FRONTEND = join(__dirname, '..', '..', 'frontend');
+
+test('the flow feed generates nothing locally', () => {
+  const hook = code(join(FRONTEND, 'hooks', 'useFlowFeed.ts'));
+  assert.ok(!/Math\.random/.test(hook), 'useFlowFeed must not manufacture events');
+  assert.ok(!/generateSeedFlow/.test(hook), 'the seed generator must not be called');
+  assert.ok(!/setInterval/.test(hook), 'no timer should be producing flow');
+});
+
+test('generateSeedFlow is gone, not merely unused', () => {
+  // Left in place it would be one import away from returning, and the next
+  // caller would not know what it feeds.
+  const utils = code(join(FRONTEND, 'lib', 'utils.ts'));
+  assert.ok(!/export function generateSeedFlow/.test(utils),
+    'the generator must be deleted from lib/utils.ts');
+});
+
+test('speech and notifications are still wired for real signals', () => {
+  // The fix is what was being fed to them, not the alerting itself. Removing
+  // these would be a different and unasked-for change.
+  const hook = code(join(FRONTEND, 'hooks', 'useFlowFeed.ts'));
+  assert.ok(/speakAlert\(event\)/.test(hook), 'real signals should still be speakable');
+  assert.ok(/pushNotification\(event\)/.test(hook), 'and still notifiable');
+});
+
+test('pages built from the store handle an empty store', () => {
+  // Every one of these was unreachable while the seed guaranteed 50 events.
+  for (const [file, marker] of [
+    [join(FRONTEND, 'components', 'flow', 'FlowFeed.tsx'), /sorted\.length === 0/],
+    [join(FRONTEND, 'app', 'heat-map', 'page.tsx'), /heatData\.length === 0/],
+    [join(FRONTEND, 'app', 'power-alerts', 'page.tsx'), /powerAlerts\.length === 0/],
+  ] as Array<[string, RegExp]>) {
+    assert.match(code(file), marker, `${file} needs an empty state`);
+  }
+});

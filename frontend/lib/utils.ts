@@ -67,44 +67,13 @@ export function sentimentBg(s: string): string {
 }
 
 // Generate realistic seed flow events for demo
-export function generateSeedFlow(count = 50): import('./types').FlowEvent[] {
-  const tickers = ['NVDA','SPX','SPY','QQQ','MSTR','MSFT','MU','MRVL','AAPL','TSLA','META','AMD','AMZN','GOOGL','SOXL','IWM','XLF','GLD','ARKK']
-  const sentiments: Array<'BULLISH'|'BEARISH'|'NEUTRAL'> = ['BULLISH','BULLISH','BULLISH','BEARISH','BEARISH','NEUTRAL']
-  const orderTypes: Array<'SWEEP'|'BLOCK'|'SPLIT'> = ['SWEEP','SWEEP','BLOCK','BLOCK','SPLIT']
-  const now = Date.now()
-  return Array.from({ length: count }, (_, i) => {
-    const ticker = tickers[Math.floor(Math.random() * tickers.length)]
-    const isCall = Math.random() > 0.4
-    const heat = Math.floor(Math.random() * 60 + 40)
-    const premium = Math.floor(Math.random() * 15_000_000 + 500_000)
-    const orderType = orderTypes[Math.floor(Math.random() * orderTypes.length)]
-    const sent = sentiments[Math.floor(Math.random() * sentiments.length)]
-    const spot = ticker === 'SPX' ? 5587 : ticker === 'NVDA' ? 942 : ticker === 'SPY' ? 557 : ticker === 'QQQ' ? 472 : Math.floor(Math.random() * 200 + 50)
-    const strike = Math.round(spot * (0.85 + Math.random() * 0.3) / 5) * 5
-    const daysOut = [8, 15, 22, 29, 45, 60][Math.floor(Math.random() * 6)]
-    const expiry = new Date(now + daysOut * 86400000).toISOString().slice(0, 10)
-    return {
-      id: `seed-${i}-${Date.now()}`,
-      underlying: ticker,
-      expiry,
-      strike,
-      option_type: isCall ? 'C' : 'P',
-      order_type: orderType,
-      total_size: Math.floor(Math.random() * 5000 + 200),
-      total_premium: premium,
-      heat_score: heat,
-      sentiment: sent,
-      is_unusual: heat >= 75 || orderType === 'SWEEP',
-      exchange_count: Math.floor(Math.random() * 5 + 1),
-      avg_price: parseFloat((premium / (Math.floor(Math.random() * 5000 + 200) * 100)).toFixed(2)),
-      iv: parseFloat((Math.random() * 60 + 15).toFixed(1)),
-      delta: parseFloat(((isCall ? 1 : -1) * (Math.random() * 0.5 + 0.2)).toFixed(3)),
-      open_interest: Math.floor(Math.random() * 80000 + 5000),
-      days_to_expiry: daysOut,
-      moneyness: Math.abs(strike - spot) / spot < 0.01 ? 'ATM' : strike > spot ? 'OTM' : 'ITM',
-      spot_price: spot,
-      created_at: new Date(now - i * 35000).toISOString(),
-      source: 'seed',
-    }
-  })
-}
+/**
+ * `generateSeedFlow` was here. It manufactured flow events — random tickers,
+ * premiums up to $15M, heat scores drawn uniformly from 40 to 100, spot prices
+ * hardcoded at 2024 values — and `useFlowFeed` seeded the store with fifty of
+ * them on mount and invented one more every eight seconds while the socket was
+ * down. The eight-second ones went through `handleEvent`, which speaks a trade
+ * aloud above heat 80 and raises an OS notification above 85. Deleted: the
+ * backend simulates prints when no keys are configured and flags them
+ * `synthetic` where the UI can see it, so this was redundant even when honest.
+ */

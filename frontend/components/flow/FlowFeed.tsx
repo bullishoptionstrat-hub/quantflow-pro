@@ -36,8 +36,8 @@ function SortHeader({ col, sort, onSort }: { col: string; sort: [string, 'asc'|'
 }
 
 export function FlowFeed() {
-  useFlowFeed() // activate feed + simulator
-  const { flowEvents, filters } = useStore()
+  useFlowFeed() // subscribes to the socket; nothing is generated locally
+  const { flowEvents, filters, connected } = useStore()
   const [sort, setSort] = useState<[string, 'asc'|'desc']>(['time', 'desc'])
   const [chartSymbol, setChartSymbol] = useState<string | null>(null)
   const [isLoading] = useState(false)
@@ -204,6 +204,31 @@ export function FlowFeed() {
               </tbody>
             )}
           </table>
+
+          {/*
+            An empty feed used to be impossible: the hook seeded fifty invented
+            events on mount and made one more every eight seconds. Now it can
+            be empty, and the three reasons are not the same thing — a refused
+            socket is a configuration answer, a disconnected one is an outage,
+            and a connected-but-quiet one is just a slow tape. Saying "no data"
+            for all three sends the reader after the wrong problem.
+          */}
+          {!isLoading && sorted.length === 0 && (
+            <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)' }}>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
+                {connected
+                  ? flowEvents.length === 0 ? 'No flow yet' : 'No flow matches these filters'
+                  : 'Not connected to the flow feed'}
+              </div>
+              <div style={{ fontSize: 11, lineHeight: 1.7, maxWidth: 520, margin: '0 auto' }}>
+                {connected
+                  ? flowEvents.length === 0
+                    ? 'The feed is connected and the tape is quiet. Signals appear here as the engine classifies them.'
+                    : `${flowEvents.length} signal(s) received; none pass the current filters.`
+                  : 'Either the backend is unreachable, or it refused the socket — the feed needs a signed-in session, or a deployment with DEMO_MODE=1. The browser console carries which. Nothing is shown in the meantime; this panel used to fill itself with generated prints.'}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
