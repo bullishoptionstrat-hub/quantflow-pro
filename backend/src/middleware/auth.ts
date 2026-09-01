@@ -115,3 +115,82 @@ export async function requireAuthOrDemo(
     res.status(401).json({ error: 'Unauthorized' });
   });
 }
+
+// ─── Socket.IO ──────────────────────────────────────────────────────────────
+
+/**
+ * The same decision as `requireAuthOrDemo`, for a websocket handshake.
+ *
+ * The live feed was the one door with no lock on it. Every REST route sits
+ * behind `requireAuth` or `requireAuthOrDemo`, and `/api/flow` — which serves
+ * exactly the signals the socket broadcasts — is on the demo-capable tier. But
+ * `io.on('connection')` admitted anyone who connected, with `cors.origin: '*'`,
+ * so any page on any origin could open a socket and receive `flow_batch`: the
+ * classified signal feed, in real time, ungated. The careful two-tier split on
+ * the HTTP side was being routed around by the transport that carries the same
+ * data.
+ *
+ * It is written here rather than in `server.ts` so it cannot drift from the
+ * middleware it mirrors. Same two independent conditions as the HTTP tier: a
+ * demo socket needs the deployment to have opted in via `DEMO_MODE=1` *and*
+ * the client to ask for it. Neither a stray flag nor a misread env var opens
+ * the feed on its own.
+ *
+ * The failure reason is deliberately coarse — "Unauthorized" — for the same
+ * purpose as the 401: a handshake error message crosses to an unauthenticated
+ * caller and must not describe which of the two conditions failed.
+ */
+export interface SocketIdentity {
+  user?: { id: string; email?: string; role?: string };
+  demo: boolean;
+}
+
+export type SocketAuthResult =
+  | { ok: true; identity: SocketIdentity }
+  | { ok: false; reason: string };
+
+/** What a client may put in `io(url, { auth })`. */
+export interface SocketHandshakeAuth {
+  /** Supabase access token, the same one the REST client sends as a Bearer. */
+  token?: unknown;
+  /** Asks for the demo tier. Honoured only when `DEMO_MODE=1`. */
+  demo?: unknown;
+}
+
+export async function authenticateSocket(
+  auth: SocketHandshakeAuth = {},
+): Promise<SocketAuthResult> {
+  const token = typeof auth.token === 'string' ? auth.token.trim() : '';
+
+  if (token && supabase) {
+    try {
+      const { data, error } = await supabase.auth.getUser(token);
+      if (!error && data?.user) {
+        return {
+          ok: true,
+          identity: {
+            user: { id: data.user.id, email: data.user.email, role: data.user.role },
+            demo: false,
+          },
+        };
+      }
+    } catch {
+      // Fall through to the demo check, then to refusal. A token that cannot be
+      // verified is not a token — including when Supabase itself is unreachable.
+    }
+  }
+
+  // `=== '1'` and `=== true` only: a truthy value like the string "false" must
+  // not read as consent.
+  const asksForDemo = auth.demo === true || auth.demo === '1' || auth.demo === 1;
+  if (isDemoModeEnabled() && asksForDemo) {
+    return { ok: true, identity: { demo: true } };
+  }
+
+  return { ok: false, reason: 'Unauthorized' };
+}
+
+/** Whether socket auth can succeed at all, for the boot-time warning. */
+export function socketAuthConfigured(): boolean {
+  return Boolean(supabase) || isDemoModeEnabled();
+}
