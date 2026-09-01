@@ -77,10 +77,13 @@ const REFUSED_KEYS = ['yahoo_note']
  */
 const UNAVAILABLE_KEYS = ['stooq_note']
 
+// The Upstash pair is gone from here for the same reason it is gone from
+// render.yaml: nothing reads it. The rate limiter is in-memory regardless, so
+// listing the variables told an operator to go get credentials that would have
+// no effect.
 const ENV_VARS = [
   'NEXT_PUBLIC_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_ANON_KEY',
-  'SUPABASE_SERVICE_KEY', 'NEXT_PUBLIC_WS_URL', 'UPSTASH_REDIS_REST_URL',
-  'UPSTASH_REDIS_REST_TOKEN', 'FRONTEND_URL', 'PORT',
+  'SUPABASE_SERVICE_KEY', 'NEXT_PUBLIC_WS_URL', 'FRONTEND_URL', 'PORT',
 ]
 
 const inputStyle: React.CSSProperties = {

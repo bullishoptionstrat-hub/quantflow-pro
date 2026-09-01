@@ -21,20 +21,81 @@ services:
         sync: false
       - key: POLYGON_API_KEY
         sync: false
-      - key: ALPACA_KEY
-        sync: false
-      - key: ALPACA_SECRET
-        sync: false
+      # ALPACA_KEY / ALPACA_SECRET were declared here and read by nothing —
+      # there is no Alpaca connector in `backend/src`. Removed rather than
+      # left as a slot an operator might fill.
       - key: FINNHUB_API_KEY
+        sync: false
+
+      # ── Free-tier connectors ────────────────────────────────────────────
+      # Every one of these was read by `src/ingestion/connectors/*` and
+      # declared nowhere, so a Blueprint deploy had no slot to put them in and
+      # each source reported `disabled — no credentials` in production with no
+      # way to fix it from the dashboard. `test/renderBlueprint.test.ts` now
+      # fails if a new connector arrives without an entry here.
+      #
+      # YAHOO_ENABLED is deliberately absent. The rights gate refuses that
+      # connector before `yahoo.ts` ever reads the variable, so declaring it
+      # would advertise a switch that does nothing.
+      - key: FRED_API_KEY            # free, unlimited: fred.stlouisfed.org/docs/api/api_key.html
+        sync: false
+      - key: FLASHALPHA_API_KEY
+        sync: false
+      - key: MARKETDATA_TOKEN
+        sync: false
+      - key: TWELVE_DATA_API_KEY
+        sync: false
+      - key: FMP_API_KEY
+        sync: false
+      - key: NEWS_API_KEY
+        sync: false
+      - key: COINGECKO_API_KEY       # optional — the public endpoint works without it
+        sync: false
+      - key: REDDIT_CLIENT_ID
+        sync: false
+      - key: REDDIT_CLIENT_SECRET
+        sync: false
+      - key: REDDIT_USER_AGENT       # not a secret; defaults to QuantFlowPro/1.0
+        sync: false
+      - key: SCHWAB_APP_KEY
+        sync: false
+      - key: SCHWAB_APP_SECRET
+        sync: false
+      - key: SCHWAB_REFRESH_TOKEN
+        sync: false
+      - key: TASTYTRADE_USER
+        sync: false
+      - key: TASTYTRADE_PASS
+        sync: false
+      # Stooq is currently serving a browser-verification page rather than its
+      # CSV; the connector reports that and caches nothing. Set to "false" to
+      # stop it polling at all.
+      - key: STOOQ_ENABLED
+        sync: false
+
+      # ── Web enrichment ──────────────────────────────────────────────────
+      # Metered Firecrawl credits. Absent, enrichment reports `disabled` and
+      # nothing else changes. See backend/src/enrichment.
+      - key: FIRECRAWL_API_KEY
+        sync: false
+
+      # ── Demo mode ───────────────────────────────────────────────────────
+      # Off unless set to exactly "1", and the frontend must set
+      # NEXT_PUBLIC_DEMO_MODE=1 independently. Declared so the switch is
+      # visible in the dashboard rather than folklore.
+      - key: DEMO_MODE
         sync: false
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_KEY
         sync: false
-      - key: UPSTASH_REDIS_REST_URL
-        sync: false
-      - key: UPSTASH_REDIS_REST_TOKEN
-        sync: false
+      # UPSTASH_REDIS_REST_URL / _TOKEN were declared here and read by nothing.
+      # `middleware/rateLimiter.ts` says "replace with Upstash Redis in
+      # production" and there is no redis client in package.json — so the
+      # rate limiter is in-memory whether or not these are set, and setting
+      # them bought an operator nothing. They belong here again when something
+      # reads them.
+
 
   - type: web
     name: quantflow-pro-ml
