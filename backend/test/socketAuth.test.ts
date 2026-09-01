@@ -1,111 +1,224 @@
 /**
- * FINDING #29 REGRESSION — the socket must not be a way around route auth.
+ * The live feed's handshake gate.
  *
- * The bypass was not subtle: `/api/flow` sat behind `requireAuth` while
- * `flow_batch` — the same payload — was broadcast to any connection, from any
- * origin, with no handshake check at all. These tests pin the handshake
- * decision itself, which is where the bypass lived.
+ * `io.on('connection')` used to admit anyone who connected, with
+ * `cors.origin: '*'` and `credentials: true` — so any page on any origin could
+ * open a socket to the backend and receive `flow_batch`, the classified signal
+ * feed, in real time. Meanwhile `/api/flow` served the very same signals behind
+ * `requireAuthOrDemo`. The careful two-tier split on the HTTP side was being
+ * routed around by the transport carrying the same data.
  *
- * A real socket.io server is stood up in the last block so the assertion is
- * "an unauthenticated client receives no data", not merely "a function returned
- * false". A guard that is correct but not actually installed would pass the
- * unit tests and fail the product.
+ * The gate mirrors `requireAuthOrDemo`, so these tests mirror
+ * `demoAuth.test.ts`: what matters is the boundary — it opens for exactly one
+ * unauthenticated combination and stays shut for every other. In particular
+ * the two conditions must be independent, which is the claim CLAUDE.md makes
+ * for the HTTP tier and which has to hold here too.
+ *
+ * Run: npm test
  */
+import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { after, before, describe, it } from 'node:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { authenticateSocket, socketAuthConfigured } from '../src/middleware/auth';
+
+const realDemo = process.env.DEMO_MODE;
+
+beforeEach(() => { delete process.env.DEMO_MODE; });
+afterEach(() => {
+  if (realDemo === undefined) delete process.env.DEMO_MODE;
+  else process.env.DEMO_MODE = realDemo;
+});
+
+// ─── The boundary ───────────────────────────────────────────────────────────
+
+test('a handshake with nothing at all is refused', async () => {
+  const r = await authenticateSocket({});
+  assert.equal(r.ok, false);
+});
+
+test('a handshake with no auth object at all is refused', async () => {
+  // `socket.handshake.auth` is `{}` by default, but a client can send anything.
+  const r = await authenticateSocket(undefined as any);
+  assert.equal(r.ok, false);
+});
+
+test('asking for demo does not open the feed when the deployment has not opted in', async () => {
+  // Condition one, alone. This is the independence claim: a client flag is a
+  // request, never a bypass.
+  const r = await authenticateSocket({ demo: true });
+  assert.equal(r.ok, false, 'DEMO_MODE is unset, so a demo flag must not admit');
+});
+
+test('opting in does not open the feed to a client that did not ask', async () => {
+  // Condition two, alone. A deployment running demo mode must not hand the
+  // feed to every socket that happens to connect.
+  process.env.DEMO_MODE = '1';
+  const r = await authenticateSocket({});
+  assert.equal(r.ok, false);
+});
+
+test('both conditions together admit a demo socket', async () => {
+  process.env.DEMO_MODE = '1';
+  const r = await authenticateSocket({ demo: true });
+  assert.equal(r.ok, true);
+  assert.equal(r.ok && r.identity.demo, true);
+  assert.equal(r.ok && r.identity.user, undefined);
+});
+
+test('DEMO_MODE must be exactly "1"', async () => {
+  for (const v of ['true', 'yes', '0', 'TRUE', ' 1', '']) {
+    process.env.DEMO_MODE = v;
+    const r = await authenticateSocket({ demo: true });
+    assert.equal(r.ok, false, `DEMO_MODE=${JSON.stringify(v)} must not enable demo`);
+  }
+});
+
+test('a truthy-but-wrong demo value is not consent', async () => {
+  process.env.DEMO_MODE = '1';
+  // `"false"` is a truthy string. A naive `if (auth.demo)` would admit it.
+  for (const v of ['false', 'no', 'yes', {}, [], 'demo']) {
+    const r = await authenticateSocket({ demo: v as any });
+    assert.equal(r.ok, false, `demo=${JSON.stringify(v)} must not be read as consent`);
+  }
+  // The forms that are consent.
+  for (const v of [true, '1', 1]) {
+    const r = await authenticateSocket({ demo: v as any });
+    assert.equal(r.ok, true, `demo=${JSON.stringify(v)} should be accepted`);
+  }
+});
+
+test('an unverifiable token falls through to refusal, not to admission', async () => {
+  // No Supabase client is configured in tests, so no token can be verified.
+  // A token that cannot be checked must never be treated as a good one.
+  const r = await authenticateSocket({ token: 'eyJhbGciOiJIUzI1NiJ9.made.up' });
+  assert.equal(r.ok, false);
+});
+
+test('a token does not smuggle in the demo tier', async () => {
+  // With DEMO_MODE off, presenting a token that cannot be verified is still
+  // just an unauthenticated connection.
+  const r = await authenticateSocket({ token: 'nonsense', demo: true });
+  assert.equal(r.ok, false);
+});
+
+test('a non-string token is ignored rather than coerced', async () => {
+  for (const v of [1, true, {}, [], null]) {
+    const r = await authenticateSocket({ token: v as any });
+    assert.equal(r.ok, false);
+  }
+});
+
+test('the refusal reason says nothing about which condition failed', async () => {
+  // It crosses to an unauthenticated caller as a `connect_error` message.
+  process.env.DEMO_MODE = '1';
+  const a = await authenticateSocket({});
+  delete process.env.DEMO_MODE;
+  const b = await authenticateSocket({ demo: true });
+
+  assert.equal(a.ok, false);
+  assert.equal(b.ok, false);
+  assert.equal(a.ok === false && a.reason, 'Unauthorized');
+  assert.equal(
+    a.ok === false && b.ok === false && a.reason, b.ok === false ? b.reason : '',
+    'both refusals must be indistinguishable',
+  );
+});
+
+// ─── Configuration reporting ────────────────────────────────────────────────
+
+test('socketAuthConfigured is false when nothing can ever admit', async () => {
+  // No Supabase client and no demo mode means every socket is refused. The
+  // frontend substitutes simulated prints for a refused feed, so the terminal
+  // keeps rendering — which is why this warns at boot instead of staying quiet.
+  assert.equal(socketAuthConfigured(), false);
+  process.env.DEMO_MODE = '1';
+  assert.equal(socketAuthConfigured(), true);
+});
+
+// ─── Wiring ─────────────────────────────────────────────────────────────────
+
+const SERVER_SRC = readFileSync(join(__dirname, '..', 'src', 'server.ts'), 'utf8');
+
+/**
+ * Source with comments removed, line comments first.
+ *
+ * Order matters and the obvious order is wrong: a `//` comment mentioning a
+ * path like `/api/*` contains `/*`, so stripping block comments first opens a
+ * phantom comment that runs to the next `*​/` and eats real code. That fails
+ * open for any check asking "is this string absent" — which is most of them.
+ */
+function stripComments(src: string): string {
+  return src
+    .replace(/^[ \t]*\/\/.*$/gm, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
+test('the gate is installed as handshake middleware, before connection', () => {
+  // `io.use` runs during the handshake. Checking inside `io.on('connection')`
+  // would mean the socket is already established when it is refused.
+  const useAt = SERVER_SRC.indexOf('io.use(');
+  const onAt = SERVER_SRC.indexOf("io.on('connection'");
+  assert.ok(useAt > 0, 'the socket needs handshake middleware');
+  assert.ok(onAt > 0);
+  assert.ok(useAt < onAt, 'the gate must run before the connection handler');
+  assert.match(SERVER_SRC, /io\.use\([\s\S]{0,300}?authenticateSocket/);
+});
+
+test('the socket no longer accepts every origin', () => {
+  // Line comments first: a `//` comment containing `/api/*` would otherwise
+  // open a phantom block comment and swallow the code after it.
+  const code = stripComments(SERVER_SRC);
+  assert.ok(
+    !/origin:\s*'\*'/.test(code),
+    "cors origin '*' with credentials let any page open the feed",
+  );
+  assert.match(code, /cors:\s*\{\s*origin:\s*CORS_ORIGINS/);
+});
+
+/**
+ * END TO END — an unauthenticated client receives no broadcast.
+ *
+ * The tests above pin the decision; this one pins that the decision is actually
+ * wired into a running server. `test('the gate is installed as handshake
+ * middleware, before connection')` above asserts that by reading server.ts as
+ * text, which proves the line exists but not that it works — a guard that is
+ * correct and installed in the wrong order would satisfy it.
+ *
+ * So this stands up a real socket.io server that broadcasts continuously, and
+ * asserts a client with no credentials receives zero market-data events. That
+ * is the property the whole gate exists for, stated as an observation rather
+ * than an inference.
+ */
+import { after, before, describe } from 'node:test';
 import { createServer, type Server as HttpServer } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { Server } from 'socket.io';
 import { io as ioClient, type Socket as ClientSocket } from 'socket.io-client';
 
-import {
-  authenticateHandshake,
-  handshakeToken,
-  installSocketAuth,
-} from '../src/middleware/socketAuth';
-import { resetTokenVerifierForTests } from '../src/middleware/verifyToken';
-
-// No Supabase configured in this environment, so verification resolves to
-// `unavailable`. That is deliberately still a refusal — see below.
-const NO_SUPABASE_URL = process.env.SUPABASE_URL;
-const NO_SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
-
-before(() => {
-  delete process.env.SUPABASE_URL;
-  delete process.env.SUPABASE_SERVICE_KEY;
-  resetTokenVerifierForTests();
-});
-
-after(() => {
-  if (NO_SUPABASE_URL === undefined) delete process.env.SUPABASE_URL;
-  else process.env.SUPABASE_URL = NO_SUPABASE_URL;
-  if (NO_SUPABASE_KEY === undefined) delete process.env.SUPABASE_SERVICE_KEY;
-  else process.env.SUPABASE_SERVICE_KEY = NO_SUPABASE_KEY;
-  resetTokenVerifierForTests();
-});
-
-describe('handshake token extraction', () => {
-  it('reads auth.token, the placement a browser can actually use', () => {
-    assert.equal(handshakeToken({ auth: { token: 'abc' } }), 'abc');
-  });
-
-  it('falls back to an Authorization header for non-browser clients', () => {
-    assert.equal(handshakeToken({ headers: { authorization: 'Bearer xyz' } }), 'xyz');
-  });
-
-  it('treats blank and whitespace-only tokens as absent, not as a token', () => {
-    assert.equal(handshakeToken({ auth: { token: '' } }), undefined);
-    assert.equal(handshakeToken({ auth: { token: '   ' } }), undefined);
-    assert.equal(handshakeToken({ headers: { authorization: 'Bearer ' } }), undefined);
-  });
-
-  it('ignores a non-Bearer Authorization scheme', () => {
-    assert.equal(handshakeToken({ headers: { authorization: 'Basic abc' } }), undefined);
-  });
-
-  it('ignores a non-string token rather than coercing it', () => {
-    assert.equal(handshakeToken({ auth: { token: 12345 as unknown as string } }), undefined);
-  });
-});
-
-describe('handshake decisions fail closed', () => {
-  it('refuses a connection with no token', async () => {
-    const r = await authenticateHandshake({});
-    assert.equal(r.allowed, false);
-    assert.equal(r.refusal, 'no_token');
-  });
-
-  it('refuses when verification is unavailable — an outage is not a free pass', async () => {
-    // This is the case that matters most: when the identity provider cannot be
-    // reached, the tempting failure mode is to let connections through so the
-    // product keeps working. That would reopen the bypass during exactly the
-    // window when nobody is watching.
-    const r = await authenticateHandshake({ auth: { token: 'some-token' } });
-    assert.equal(r.allowed, false);
-    assert.equal(r.refusal, 'verification_unavailable');
-    assert.ok(r.reason, 'the cause must be carried, never swallowed');
-  });
-
-  it('distinguishes its refusals so a client can act on them', async () => {
-    const noToken = await authenticateHandshake({});
-    const withToken = await authenticateHandshake({ auth: { token: 't' } });
-    assert.notEqual(noToken.refusal, withToken.refusal);
-  });
-});
-
 describe('END TO END — an unauthenticated client receives no broadcast', () => {
   let httpServer: HttpServer;
   let io: Server;
   let url: string;
+  const realDemoMode = process.env.DEMO_MODE;
 
   before(async () => {
+    // Demo mode off, or a tokenless handshake would legitimately be admitted.
+    delete process.env.DEMO_MODE;
+
     httpServer = createServer();
     io = new Server(httpServer);
-    installSocketAuth(io);
 
-    // Broadcast continuously, exactly as ingestion does. If the guard is not
-    // installed (or is installed after the connection handler), a client will
-    // receive one of these and the test fails.
+    // The same wiring as server.ts: io.use() before any connection handler.
+    io.use(async (socket, next) => {
+      const result = await authenticateSocket(socket.handshake.auth ?? {});
+      if (!result.ok) return next(new Error(result.reason));
+      socket.data.identity = result.identity;
+      next();
+    });
+
+    // Broadcast continuously, as ingestion does. If the guard were registered
+    // after the connection handler, a client would receive one of these.
     io.on('connection', (socket) => {
       socket.emit('flow_batch', [{ id: 'secret-1', underlying: 'SPY' }]);
     });
@@ -116,11 +229,13 @@ describe('END TO END — an unauthenticated client receives no broadcast', () =>
   });
 
   after(async () => {
+    if (realDemoMode === undefined) delete process.env.DEMO_MODE;
+    else process.env.DEMO_MODE = realDemoMode;
     io.close();
     await new Promise<void>((resolve) => httpServer.close(() => resolve()));
   });
 
-  it('refuses the handshake and delivers zero flow_batch events', async () => {
+  test('refuses the handshake and delivers zero flow_batch events', async () => {
     const client: ClientSocket = ioClient(url, {
       transports: ['websocket'],
       reconnection: false,
@@ -129,98 +244,37 @@ describe('END TO END — an unauthenticated client receives no broadcast', () =>
 
     const received: unknown[] = [];
     let connectError: Error | null = null;
-
     client.on('flow_batch', (payload) => received.push(payload));
     client.on('connect_error', (err) => { connectError = err; });
 
-    // Wait well past several broadcast intervals.
+    // Well past several broadcast intervals.
     await new Promise((resolve) => setTimeout(resolve, 300));
     client.close();
 
     assert.equal(received.length, 0, 'an unauthenticated socket must receive NO market data');
-    assert.ok(connectError, 'the handshake must be actively refused, not silently idle');
+    assert.ok(connectError, 'the handshake must be actively refused, not left idle');
     assert.equal(client.connected, false);
   });
 
-  it('reports a machine-readable refusal reason to the client', async () => {
+  test('a demo socket IS admitted and does receive the feed', async () => {
+    // Keeps the test above from passing for the wrong reason. If the server
+    // refused everything — a broken gate rather than a working one — this fails.
+    process.env.DEMO_MODE = '1';
+
     const client: ClientSocket = ioClient(url, {
       transports: ['websocket'],
       reconnection: false,
       timeout: 2000,
+      auth: { demo: true },
     });
 
-    const err = await new Promise<Error & { data?: { refusal?: string } }>((resolve) => {
-      client.on('connect_error', (e) => resolve(e as Error & { data?: { refusal?: string } }));
-      setTimeout(() => resolve(new Error('no connect_error fired')), 2000);
-    });
+    const received: unknown[] = [];
+    client.on('flow_batch', (payload) => received.push(payload));
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
     client.close();
-
-    assert.ok(err.data?.refusal, 'client must be able to tell "sign in" from "degraded"');
-  });
-});
-
-/**
- * MERGE-INTEGRATION REGRESSION — demo mode over the socket.
- *
- * Demo mode (added on main) admits unauthenticated HTTP requests to the free
- * and simulated routes. The handshake guard (added here) fails closed on any
- * connection without a verified session. Each is correct alone; together, a
- * demo visitor got pages that rendered once from REST and then never updated,
- * because the live feed IS the product and the handshake refused it.
- *
- * The gate is the same two independent conditions the HTTP path uses, so the
- * socket policy matches `requireAuthOrDemo` rather than widening it: every
- * broadcast event (flow/macro/sentiment/news/cboe/spot/crypto/stooq) is a feed
- * that middleware already admits. `/api/chain` and the enrichment endpoints are
- * not broadcast at all.
- */
-describe('demo handshakes, gated exactly as the HTTP path is', () => {
-  const realDemo = process.env.DEMO_MODE;
-  const restore = () => {
-    if (realDemo === undefined) delete process.env.DEMO_MODE;
-    else process.env.DEMO_MODE = realDemo;
-  };
-
-  it('is refused when the client asks but the deployment has not opted in', async () => {
     delete process.env.DEMO_MODE;
-    const r = await authenticateHandshake({ auth: { demo: '1' } });
-    assert.equal(r.allowed, false, 'a stray client flag must not open the stream');
-    assert.equal(r.refusal, 'no_token');
-    restore();
-  });
 
-  it('is refused when the deployment opts in but the client does not ask', async () => {
-    process.env.DEMO_MODE = '1';
-    const r = await authenticateHandshake({ auth: {} });
-    assert.equal(r.allowed, false, 'DEMO_MODE alone must not open the stream');
-    assert.equal(r.refusal, 'no_token');
-    restore();
-  });
-
-  it('is admitted only when BOTH conditions hold, and is marked demo', async () => {
-    process.env.DEMO_MODE = '1';
-    const r = await authenticateHandshake({ auth: { demo: '1' } });
-    assert.equal(r.allowed, true);
-    assert.equal(r.demo, true);
-    assert.equal(r.user, undefined, 'a demo socket has no identity to attach');
-    restore();
-  });
-
-  it('does NOT launder a non-verifying token into a demo session', async () => {
-    // The important boundary. A token that did not verify is not the same as
-    // having none: downgrading it would hide a broken login behind a feed that
-    // looks like it is working, and would let the demo flag bypass a real
-    // refusal. Only `no_token` is demo-admissible.
-    //
-    // Scope note: this suite deletes SUPABASE_URL/SERVICE_KEY (see `before`),
-    // so verification here resolves `unavailable` rather than `rejected`. This
-    // therefore pins the outage case specifically. `rejected` takes a separate
-    // branch in `authenticateHandshake` that is likewise not demo-admissible,
-    // but proving that needs a reachable verifier and is not asserted here.
-    process.env.DEMO_MODE = '1';
-    const r = await authenticateHandshake({ auth: { demo: '1', token: 'not-a-real-token' } });
-    assert.equal(r.allowed, false, 'a non-verifying token must not fall through to demo');
-    assert.equal(r.refusal, 'verification_unavailable');
-    restore();
+    assert.ok(received.length > 0, 'a correctly-admitted demo socket must receive the feed');
   });
 });

@@ -5,6 +5,7 @@
  * Docs: https://fred.stlouisfed.org/docs/api/fred/
  */
 import axios from 'axios';
+import { describeHttpError, redactSecrets } from '../httpError';
 
 const API_KEY = process.env.FRED_API_KEY || '';
 const BASE = 'https://api.stlouisfed.org/fred/series/observations';
@@ -38,8 +39,20 @@ const SERIES: Record<string, { name: string; units: string }> = {
 const macroCache = new Map<string, FREDSeries>();
 let onMacroUpdate: ((s: FREDSeries) => void) | null = null;
 
+/** Health of the last fetch cycle, reported to /api/health via `onFREDHealth`. */
+export interface FREDHealth {
+  ok: boolean;
+  /** Operator-facing, and public: this reaches the unauthenticated /api/health. */
+  reason?: string;
+}
+
+let onHealth: ((h: FREDHealth) => void) | null = null;
+
 export function onFREDUpdate(handler: (s: FREDSeries) => void): void {
   onMacroUpdate = handler;
+}
+export function onFREDHealth(handler: (h: FREDHealth) => void): void {
+  onHealth = handler;
 }
 export function getMacroData(): FREDSeries[] {
   return Array.from(macroCache.values());
@@ -62,7 +75,9 @@ async function fetchSeries(seriesId: string): Promise<void> {
     });
 
     const obs = data?.observations?.filter((o: any) => o.value !== '.') ?? [];
-    if (obs.length < 1) return;
+    if (obs.length < 1) {
+      throw new Error(`${seriesId}: no usable observations in the response.`);
+    }
 
     const latest = parseFloat(obs[0].value);
     const prev = obs.length > 1 ? parseFloat(obs[1].value) : latest;
@@ -84,18 +99,49 @@ async function fetchSeries(seriesId: string): Promise<void> {
     macroCache.set(seriesId, series);
     onMacroUpdate?.(series);
   } catch (err: any) {
-    if (err.response?.status !== 429) {
-      console.error(`[fred] ${seriesId} error:`, err.message);
-    }
+    // Re-thrown so the cycle can count it. It used to be logged and dropped,
+    // which meant a key FRED rejects produced ten 400s, an empty macro panel,
+    // and `connected` on /api/health — the same shape as the Stooq and Cboe
+    // failures: a source that is down presenting itself as fine.
+    //
+    // `describeHttpError` rather than `err.message`: this connector passes its
+    // key as a query parameter (FRED accepts it no other way), and FRED echoes
+    // the request URL in some error bodies. The scrubber is what keeps the key
+    // out of a public health response and out of the logs.
+    throw err?.response
+      ? new Error(`${seriesId}: ${describeHttpError(err)}`)
+      : new Error(redactSecrets(`${seriesId}: ${err?.message ?? 'fetch failed'}`));
   }
 }
 
 async function fetchAll(): Promise<void> {
   const seriesIds = Object.keys(SERIES);
+  const failures: string[] = [];
+
   for (let i = 0; i < seriesIds.length; i++) {
-    await fetchSeries(seriesIds[i]);
+    try {
+      await fetchSeries(seriesIds[i]!);
+    } catch (err: any) {
+      failures.push(err?.message ?? String(err));
+    }
     await new Promise(r => setTimeout(r, 500)); // 500ms between requests
   }
+
+  if (failures.length === 0) {
+    onHealth?.({ ok: true });
+    return;
+  }
+
+  // Every series failing is one cause, not ten — almost always a rejected key.
+  // A few failing is a per-series problem and the rest of the panel is fine.
+  const allFailed = failures.length === seriesIds.length;
+  onHealth?.({
+    ok: false,
+    reason:
+      `${failures.length}/${seriesIds.length} series failed. ${failures[0]}` +
+      (failures.length > 1 ? ` (+${failures.length - 1} more)` : '') +
+      (allFailed ? ' Every series failed, which usually means FRED_API_KEY is not accepted.' : ''),
+  });
 }
 
 export async function startFRED(): Promise<void> {
@@ -106,7 +152,9 @@ export async function startFRED(): Promise<void> {
 
   await fetchAll();
 
-  // FRED data updates daily — refresh every 4 hours
-  setInterval(fetchAll, 4 * 60 * 60_000);
+  // FRED data updates daily — refresh every 4 hours. `unref`'d so a poll timer
+  // is never the reason a process cannot exit; the server is held open by its
+  // HTTP listener.
+  setInterval(fetchAll, 4 * 60 * 60_000).unref();
   console.log('[fred] Started — VIX, yields, CPI, GDP, oil, gold loaded');
 }

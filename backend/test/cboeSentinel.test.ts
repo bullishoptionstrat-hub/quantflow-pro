@@ -19,7 +19,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { num, type CBOEData } from '../src/ingestion/connectors/cboe';
+import { type CBOEData } from '../src/ingestion/connectors/cboe';
+import { num } from '../src/ingestion/parseNumeric';
 import { classifyTermStructure as classify } from '../src/routes/macro';
 
 describe('absent data and zero are different facts', () => {
@@ -72,20 +73,24 @@ describe('the shape a total outage produces', () => {
     putCallRatioEquity: null, putCallRatioIndex: null, putCallRatioTotal: null,
     equityCallVolume: null, equityPutVolume: null, indexCallVolume: null,
     indexPutVolume: null, totalOptionsVolume: null,
+    vxn: null,
     updatedAt: new Date().toISOString(),
     source: 'cboe',
-    fetchStatus: { vix: 'failed', putCall: 'failed', note: '403 Request failed' },
+    // The reason the put/call block is missing. Carried on the payload rather
+    // than only in a log line, because an API client never sees the log.
+    putCallUnavailable: 'HTTP 403 Request failed',
   };
 
   it('reports failure explicitly rather than implying a reading', () => {
-    assert.equal(outage.fetchStatus.vix, 'failed');
-    assert.equal(outage.fetchStatus.putCall, 'failed');
-    assert.ok(outage.fetchStatus.note, 'the reason must be carried, never swallowed');
+    assert.ok(outage.putCallUnavailable, 'the reason must be carried, never swallowed');
+    // The VIX side has no separate status field and needs none: `null` on
+    // every tenor IS the report, and it is unrepresentable as a reading.
+    assert.equal(outage.vix, null);
   });
 
   it('no numeric field is 0 on a total outage', () => {
     const numeric = [
-      outage.vix, outage.vix9d, outage.vix3m, outage.vix6m, outage.vix1y,
+      outage.vix, outage.vix9d, outage.vix3m, outage.vix6m, outage.vix1y, outage.vxn,
       outage.putCallRatioEquity, outage.putCallRatioIndex, outage.putCallRatioTotal,
       outage.equityCallVolume, outage.equityPutVolume, outage.indexCallVolume,
       outage.indexPutVolume, outage.totalOptionsVolume,

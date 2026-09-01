@@ -51,6 +51,15 @@ function getClient(): SupabaseClient | null {
   return client;
 }
 
+/**
+ * Whether verification can succeed at all — i.e. a Supabase client exists.
+ * Used by `socketAuthConfigured()` for the boot-time warning; without it that
+ * check would need its own copy of the client-construction rule.
+ */
+export function verifierConfigured(): boolean {
+  return getClient() !== null;
+}
+
 /** Testing seam — forces the next getClient() to re-read the environment. */
 export function resetTokenVerifierForTests(): void {
   client = null;
