@@ -8,6 +8,7 @@ import WebSocket from 'ws';
 import { LegacyFlowEvent as FlowEvent } from '../index';
 import { computeHeatScore } from '../heatScore';
 import { classifySweep } from '../sweepDetector';
+import { num } from '../parseNumeric';
 
 const USER = process.env.TASTYTRADE_USER || '';
 const PASS = process.env.TASTYTRADE_PASS || '';
@@ -57,14 +58,36 @@ async function fetchOptionChain(symbol: string): Promise<void> {
           const size = opt['day-volume'] ?? 0;
           if (size < 50) continue;
 
-          const bid = parseFloat(opt['bid'] ?? 0);
-          const ask = parseFloat(opt['ask'] ?? 0);
-          const last = parseFloat(opt['last'] ?? ((bid + ask) / 2));
-          const oi = opt['open-interest'] ?? 0;
-          const strikePrice = parseFloat(strike['strike-price'] ?? 0);
+          // `parseFloat(x ?? 0)` on every field here, which failed twice over:
+          // it filled 0 for anything absent, and parseFloat is a prefix parser,
+          // so a string like "403 Forbidden" would have read as 403.
+          const bid = num(opt['bid']);
+          const ask = num(opt['ask']);
+          const oi = num(opt['open-interest']) ?? 0;
+          const strikePrice = num(strike['strike-price']);
           const expDate = exp['expiration-date'];
 
-          const heat = computeHeatScore({ bid, ask, price: last, size, avgVolume: size * 0.4, openInterest: oi });
+          // Identity: a row without a positive strike or an expiry is not a
+          // contract. It used to become one at strike 0, which is the engine's
+          // clustering key — so every unparsed row collapsed into a single
+          // fabricated contract.
+          if (strikePrice === null || strikePrice <= 0 || !expDate) continue;
+
+          // Price: `last`, else the mid of a two-sided quote. The old fallback
+          // computed a mid from bid/ask that were themselves 0 when absent, so
+          // a row with no quotes at all priced at 0.00 rather than being
+          // skipped.
+          const quoted = num(opt['last']);
+          const mid = bid !== null && ask !== null && ask >= bid ? (bid + ask) / 2 : null;
+          const last = quoted !== null && quoted > 0 ? quoted : mid;
+          if (last === null || last <= 0) continue;
+
+          // No two-sided quote means no spread to measure; the trade's own
+          // price gives zero displacement, which is the neutral answer.
+          const heat = computeHeatScore({
+            bid: bid ?? last, ask: ask ?? last,
+            price: last, size, avgVolume: size * 0.4, openInterest: oi,
+          });
 
           onFlowEvent?.({
             id: `tasty-${symbol}-${strikePrice}-${cp}-${Date.now()}`,
@@ -79,7 +102,7 @@ async function fetchOptionChain(symbol: string): Promise<void> {
             heatScore: heat,
             sentiment: cp === 'call' ? 'bullish' : 'bearish',
             source: 'tastytrade',
-            bid, ask,
+            bid: bid ?? undefined, ask: ask ?? undefined,
           } as FlowEvent);
         }
       }

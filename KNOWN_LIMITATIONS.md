@@ -93,3 +93,35 @@ date, and if so parse it and derive the delay from it. That requires egress to
 Related: `docs/FORENSIC_AUDIT.md` #27. The same file's zero-sentinels are fixed;
 this is the residue.
 
+
+## Zero-sentinels remaining in the connector layer (finding #31)
+
+The sweep converted every sentinel that could reach contract identity, a graded
+outcome, or the wire. What is left is deliberate, and falls into three groups.
+
+**Guarded downstream.** `cboeOptions.ts` still reads `Number(x) || 0` for `oi`,
+`gamma`, `volume` and `last`, but each is immediately gated — the GEX
+contribution requires `oi > 0 && gamma !== 0`, the unusual list requires
+`volume > 0 && last > 0`, and `spot` is checked with `if (!(spot > 0)) return
+null`. `parseOsi` likewise rejects a NaN strike via `!(strike > 0)`.
+`stooq.ts` fills `'0'` for a missing OHLC field and then throws
+`StooqParseError` unless `close > 0`, so a zero-filled bar is never cached.
+These are safe today but fragile: the guard, not the type, is what holds. They
+are listed here rather than silently left.
+
+**Genuinely zero-able.** `marketData.ts` keeps `num(...) ?? 0` for `volume` and
+`openInterest`, and `tastytrade.ts` for `day-volume`. No volume and no open
+interest are real readings, and the callers filter on them.
+
+**Dead in practice.** `yahoo.ts` retains ~13 sentinels on its quote path.
+Yahoo's dataset is `PROHIBITED` for `DISPLAY`, so `mayOperateConnector()`
+refuses the connector before `start()` and `onYahooQuote` sits behind
+`gateFor('yahoo').allowed`. The print path was converted anyway, because the
+rights gate is a policy decision that could change and the code should not
+depend on it for correctness; the quote path was not, and would need the same
+treatment if Yahoo were ever re-enabled.
+
+The durable fix for all three is a `DataResult<T>` at the connector boundary
+rather than nullable fields. That remains unbuilt: it would replace `num()`
+across ~15 files and change the shape of four public routes, which is a larger
+and separable change than this finding.

@@ -6,6 +6,7 @@ import axios from 'axios';
 import { LegacyFlowEvent as FlowEvent } from '../index';
 import { computeHeatScore } from '../heatScore';
 import { classifySweep } from '../sweepDetector';
+import { num } from '../parseNumeric';
 
 const ENABLED = process.env.YAHOO_ENABLED !== 'false';
 const WATCHED = ['SPY', 'QQQ', 'NVDA', 'AAPL', 'TSLA', 'MSFT', 'AMD', 'META', 'AMZN', 'MSTR', 'GLD', 'SLV'];
@@ -81,20 +82,36 @@ async function fetchOptionFlow(symbol: string): Promise<void> {
       const size = opt.volume ?? 0;
       if (size < 100) continue;
 
-      const bid = opt.bid ?? 0;
-      const ask = opt.ask ?? 0;
-      const last = opt.lastPrice ?? ((bid + ask) / 2);
-      const oi = opt.openInterest ?? 0;
+      const bid = num(opt.bid);
+      const ask = num(opt.ask);
+      const oi = num(opt.openInterest) ?? 0;
       const cp: 'C' | 'P' = opt.contractSymbol?.includes('C') ? 'C' : 'P';
 
-      const heat = computeHeatScore({ bid, ask, price: last, size, avgVolume: size * 0.3, openInterest: oi });
+      // Identity: no positive strike or expiry means no contract. `strike ?? 0`
+      // used to make one, and the strike is the engine's clustering key.
+      const strike = num(opt.strike);
+      const expiration = opt.expiration
+        ? new Date(opt.expiration * 1000).toISOString().split('T')[0] ?? '' : '';
+      if (strike === null || strike <= 0 || !expiration) continue;
+
+      // The old mid fallback averaged bid/ask that were themselves 0 when
+      // absent, so a row with no quotes priced at 0.00 instead of being skipped.
+      const quoted = num(opt.lastPrice);
+      const mid = bid !== null && ask !== null && ask >= bid ? (bid + ask) / 2 : null;
+      const last = quoted !== null && quoted > 0 ? quoted : mid;
+      if (last === null || last <= 0) continue;
+
+      const heat = computeHeatScore({
+        bid: bid ?? last, ask: ask ?? last,
+        price: last, size, avgVolume: size * 0.3, openInterest: oi,
+      });
 
       onFlowEvent?.({
         id: `yahoo-${opt.contractSymbol}-${Date.now()}`,
         timestamp: new Date().toISOString(),
         symbol,
-        expiration: opt.expiration ? new Date(opt.expiration * 1000).toISOString().split('T')[0] : '',
-        strike: opt.strike ?? 0,
+        expiration,
+        strike,
         callPut: cp,
         type: classifySweep({ size, exchanges: ['C'] }),
         size,
@@ -102,7 +119,7 @@ async function fetchOptionFlow(symbol: string): Promise<void> {
         heatScore: heat,
         sentiment: cp === 'C' ? 'bullish' : 'bearish',
         source: 'yahoo',
-        bid, ask, iv: opt.impliedVolatility,
+        bid: bid ?? undefined, ask: ask ?? undefined, iv: opt.impliedVolatility,
       } as FlowEvent);
     }
   } catch (err: any) {

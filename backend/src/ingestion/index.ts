@@ -1427,8 +1427,11 @@ function startSignalHistory(): void {
   // purpose, so it is refused in the rights registry, and reaching for it here
   // would route around that refusal.
   grader = new SignalGrader(store, (underlying) => {
+    // `getSpotPrice` now returns `null` for a cache miss rather than 0, so the
+    // two cases are distinguishable here instead of relying on this guard being
+    // the only thing between a missing mark and a graded outcome of -100%.
     const px = getSpotPrice(underlying);
-    return px > 0 ? px : undefined;
+    return px !== null && px > 0 ? px : undefined;
   });
 
   onSignal((sig, origin) => {
@@ -1502,7 +1505,7 @@ function scheduleBroadcast(): void {
 
 /** Convert the chain-snapshot connectors' camelCase events into RawPrints. */
 function legacyEventToPrint(e: LegacyFlowEvent, source: string): RawPrint | null {
-  if (!e.symbol || !e.expiration || !(e.size > 0)) return null;
+  if (!e.symbol || !e.expiration || !(e.size > 0) || !(e.strike > 0)) return null;
   const price = e.size > 0 ? e.premium / (e.size * 100) : 0;
   if (!(price > 0)) return null;
   return {

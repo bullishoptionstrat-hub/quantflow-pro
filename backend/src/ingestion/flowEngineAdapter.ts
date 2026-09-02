@@ -289,7 +289,17 @@ function originOf(sig: ClassifiedSignal): SignalOrigin {
  * the engine emits on burst close, not per trade).
  */
 export function ingestPrint(print: RawPrint): WireFlowEvent[] {
-  if (!print.symbol || !print.expiry || !(print.price > 0) || !(print.size > 0)) return [];
+  // `strike > 0` belongs with the other identity checks, and its absence was a
+  // hole. `occSymbol()` below builds the contract key from the strike, so a
+  // zero-strike print does not merely carry a wrong number — it is assigned a
+  // fabricated contract identity (strike part `00000000`), and the engine
+  // clusters by that key. A run of rows whose strike failed to parse therefore
+  // collapses into one synthetic "contract" and is scored as repeat activity on
+  // it. No listed option has a strike of zero, so this rejects nothing real.
+  if (
+    !print.symbol || !print.expiry ||
+    !(print.price > 0) || !(print.size > 0) || !(print.strike > 0)
+  ) return [];
 
   const ts = print.ts ?? Date.now();
   // Receipt time is stamped here, at the boundary — the earliest moment this

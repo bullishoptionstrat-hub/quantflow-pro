@@ -5,6 +5,7 @@
  * Docs: https://fred.stlouisfed.org/docs/api/fred/
  */
 import axios from 'axios';
+import { num } from '../parseNumeric';
 import { describeHttpError, redactSecrets } from '../httpError';
 
 const API_KEY = process.env.FRED_API_KEY || '';
@@ -16,7 +17,12 @@ export interface FREDSeries {
   value: number;
   previousValue: number;
   change: number;
-  changePct: number;
+  /**
+   * `null` when the previous observation was 0, because a percentage change
+   * from a base of zero has no value. It used to report 0 there, which asserts
+   * "unchanged" — a different and false claim.
+   */
+  changePct: number | null;
   date: string;
   units: string;
   source: 'fred';
@@ -57,8 +63,10 @@ export function onFREDHealth(handler: (h: FREDHealth) => void): void {
 export function getMacroData(): FREDSeries[] {
   return Array.from(macroCache.values());
 }
-export function getMacroValue(seriesId: string): number {
-  return macroCache.get(seriesId)?.value ?? 0;
+/** `null` when the series is not cached. A Fed Funds rate of 0% is a real
+ *  historical reading, so 0 could not mean "unknown" here. */
+export function getMacroValue(seriesId: string): number | null {
+  return macroCache.get(seriesId)?.value ?? null;
 }
 
 async function fetchSeries(seriesId: string): Promise<void> {
@@ -79,8 +87,15 @@ async function fetchSeries(seriesId: string): Promise<void> {
       throw new Error(`${seriesId}: no usable observations in the response.`);
     }
 
-    const latest = parseFloat(obs[0].value);
-    const prev = obs.length > 1 ? parseFloat(obs[1].value) : latest;
+    // FRED marks a missing observation as '.', filtered above — but any other
+    // unparseable value produced NaN here and cached it as the series value.
+    // NaN renders as "NaN" and compares false against every threshold, so it
+    // fails silently rather than loudly.
+    const latest = num(obs[0].value);
+    if (latest === null) {
+      throw new Error(`${seriesId}: latest observation "${obs[0].value}" is not a number.`);
+    }
+    const prev = obs.length > 1 ? num(obs[1].value) ?? latest : latest;
     const change = latest - prev;
     const meta = SERIES[seriesId];
 
@@ -90,7 +105,9 @@ async function fetchSeries(seriesId: string): Promise<void> {
       value: latest,
       previousValue: prev,
       change: parseFloat(change.toFixed(4)),
-      changePct: prev !== 0 ? parseFloat(((change / prev) * 100).toFixed(3)) : 0,
+      // Undefined, not 0: a percentage change from a base of zero has no
+      // value. Reporting 0 asserts "unchanged", which is a different claim.
+      changePct: prev !== 0 ? parseFloat(((change / prev) * 100).toFixed(3)) : null,
       date: obs[0].date,
       units: meta?.units ?? '',
       source: 'fred',

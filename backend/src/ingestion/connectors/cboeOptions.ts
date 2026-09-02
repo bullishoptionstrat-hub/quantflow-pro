@@ -40,11 +40,22 @@ export interface CboeUnusualContract {
   volume: number;
   openInterest: number;
   volumeToOI: number;
-  bid: number;
-  ask: number;
+  /**
+   * `null` when Cboe did not quote or measure it — never 0.
+   *
+   * `Number(x) || 0` is worse than `?? 0` here: it also collapses a legitimate
+   * 0 and a NaN. A bid of 0 is a real reading on an illiquid contract, so the
+   * old form could not distinguish "no bid" from "not quoted". `iv: 0` and
+   * `delta: 0` are not readings at all — an option has neither.
+   *
+   * The UI already renders `r.iv ? ... : '—'`, so absence displayed correctly
+   * by accident of falsiness; this makes the type say what the payload means.
+   */
+  bid: number | null;
+  ask: number | null;
   last: number;
-  iv: number;
-  delta: number;
+  iv: number | null;
+  delta: number | null;
   /** volume x last x 100. A day's notional, not one trade's premium. */
   notional: number;
   lastTradeTime: string | null;
@@ -213,11 +224,11 @@ export async function fetchCboeChain(symbol: string): Promise<CboeSnapshot | nul
         volume,
         openInterest: oi,
         volumeToOI: oi > 0 ? volume / oi : Infinity,
-        bid: Number(r.bid) || 0,
-        ask: Number(r.ask) || 0,
+        bid: num(r.bid),
+        ask: num(r.ask),
         last,
-        iv: Number(r.iv) || 0,
-        delta: Number(r.delta) || 0,
+        iv: num(r.iv),
+        delta: num(r.delta),
         notional: volume * last * 100,
         lastTradeTime: r.last_trade_time ?? null,
       });
