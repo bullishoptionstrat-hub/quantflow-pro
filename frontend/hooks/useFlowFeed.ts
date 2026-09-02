@@ -80,7 +80,6 @@ export function useFlowFeed() {
           alert_type: event.order_type as any,
           message: `${event.underlying} ${event.option_type === 'C' ? 'CALL' : 'PUT'} ${event.order_type} — $${event.total_premium >= 1e6 ? (event.total_premium / 1e6).toFixed(1) + 'M' : Math.round(event.total_premium / 1000) + 'K'} premium`,
           heat_score: event.heat_score,
-          ml_score: event.ml_score || 0,
           created_at: event.created_at,
           flow_event_id: event.id,
         })

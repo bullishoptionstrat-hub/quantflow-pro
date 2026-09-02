@@ -226,3 +226,62 @@ test('pages built from the store handle an empty store', () => {
     assert.match(code(file), marker, `${file} needs an empty state`);
   }
 });
+
+
+// ─── No unprovenanced confidence ────────────────────────────────────────────
+
+/**
+ * The ML service and its `ml_score` slot.
+ *
+ * `ml-service/` was a FastAPI app deployed as its own Render service, exposing
+ * `/score` for "unusual flow scoring", and nothing in `backend/src` ever called
+ * it. Its model could not have been trusted if it had: `train.py` draws the
+ * label first — `is_unusual = rng.random() < 0.25` — and then samples the
+ * features from two hand-written distributions conditioned on that label, so a
+ * classifier fit to it can only recover the author's own branch. Trained on
+ * `np.random` with seed 42, it encoded the generator, not the market.
+ *
+ * The dangerous part was not the service; it was the socket left for it.
+ * `PowerAlert.ml_score` was on the wire and `power-alerts/page.tsx` rendered
+ * `ML CONFIDENCE: {(alert.ml_score * 100).toFixed(0)}%`, gated behind `> 0`.
+ * Nothing populated it, so it never showed — and the next person to assign
+ * anything to that field would have shipped a confidence percentage with no
+ * provenance, in green, next to a real signal.
+ *
+ * Scoring already happens in `flow-engine/score.ts`: deterministic, documented,
+ * and carrying per-component `score_breakdown` on the wire, which is a strictly
+ * better thing to show than an opaque number.
+ */
+test('nothing presents a model confidence', () => {
+  for (const f of [
+    join(FRONTEND, 'app', 'power-alerts', 'page.tsx'),
+    join(FRONTEND, 'lib', 'types.ts'),
+    join(FRONTEND, 'hooks', 'useFlowFeed.ts'),
+    join(__dirname, '..', 'src', 'ingestion', 'flowEngineAdapter.ts'),
+  ]) {
+    assert.ok(!/ml_score/.test(code(f)), `${f} still carries an ml_score slot`);
+  }
+});
+
+test('the ML service is gone from the tree and the Blueprint', () => {
+  assert.ok(
+    !existsSync(join(__dirname, '..', '..', 'ml-service')),
+    'ml-service/ should be deleted, not left unreferenced',
+  );
+  const blueprint = readFileSync(join(__dirname, '..', '..', 'render.yaml'), 'utf8')
+    .replace(/^\s*#.*$/gm, '');
+  assert.ok(!/quantflow-pro-ml/.test(blueprint), 'the Blueprint should not declare it');
+  assert.ok(!/uvicorn/.test(blueprint), 'nor start it');
+});
+
+test('scoring still exists, and is the auditable kind', () => {
+  // Deleting a scorer would be capability loss if there were not already a
+  // better one. `scoreSignal` is deterministic and attributes its own output.
+  const engine = readFileSync(join(__dirname, '..', 'src', 'flow-engine', 'score.ts'), 'utf8');
+  assert.match(engine, /export function scoreSignal/);
+  const rows = load('flow').data as Array<Record<string, unknown>>;
+  assert.ok(
+    rows.every((r) => r.score_breakdown && typeof r.score_breakdown === 'object'),
+    'every recorded signal should carry its per-component attribution',
+  );
+});
