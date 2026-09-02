@@ -8,6 +8,7 @@ import axios from 'axios';
 import { LegacyFlowEvent as FlowEvent } from '../index';
 import { computeHeatScore } from '../heatScore';
 import { classifySweep } from '../sweepDetector';
+import { num } from '../parseNumeric';
 
 const APP_KEY = process.env.SCHWAB_APP_KEY || '';
 const APP_SECRET = process.env.SCHWAB_APP_SECRET || '';
@@ -69,35 +70,50 @@ async function fetchOptionsChain(symbol: string): Promise<void> {
       timeout: 8000,
     });
 
-    const spot = data.underlyingPrice ?? 0;
     const processMap = (optionMap: Record<string, any[]>, cp: 'C' | 'P') => {
       Object.values(optionMap).forEach((strikes: any) => {
         Object.values(strikes).forEach((contracts: any) => {
           const c = Array.isArray(contracts) ? contracts[0] : contracts;
           if (!c || c.totalVolume < 100) return;
 
+          // Identity and price, checked before anything is emitted. `strike`
+          // was passed through unguarded: undefined would reach `occSymbol()`
+          // as NaN and a zero would be assigned a fabricated contract key.
+          const strike = num(c.strikePrice);
+          const expiration = typeof c.expirationDate === 'string'
+            ? c.expirationDate.split('T')[0] ?? '' : '';
+          const last = num(c.last);
+          if (strike === null || strike <= 0 || !expiration) return;
+          if (last === null || last <= 0) return;
+
+          const bid = num(c.bid);
+          const ask = num(c.ask);
+
+          // Without a two-sided quote there is no spread to measure; using the
+          // trade's own price yields zero displacement rather than asserting a
+          // market of 0.00 bid at 0.00 offered.
           const heat = computeHeatScore({
-            bid: c.bid, ask: c.ask, price: c.last,
+            bid: bid ?? last, ask: ask ?? last, price: last,
             size: c.totalVolume, avgVolume: c.totalVolume * 0.3,
-            openInterest: c.openInterest,
+            openInterest: num(c.openInterest) ?? 0,
           });
 
           onFlowEvent?.({
             id: `schwab-${c.symbol}-${Date.now()}`,
             timestamp: new Date().toISOString(),
             symbol,
-            expiration: c.expirationDate?.split('T')[0] ?? '',
-            strike: c.strikePrice,
+            expiration,
+            strike,
             callPut: cp,
             type: classifySweep({ size: c.totalVolume, exchanges: ['C'] }),
             size: c.totalVolume,
-            premium: c.last * c.totalVolume * 100,
+            premium: last * c.totalVolume * 100,
             heatScore: heat,
             sentiment: cp === 'C' ? 'bullish' : 'bearish',
             source: 'schwab',
-            bid: c.bid, ask: c.ask,
+            bid: bid ?? undefined, ask: ask ?? undefined,
             iv: c.volatility ? c.volatility / 100 : undefined,
-            delta: c.delta,
+            delta: num(c.delta) ?? undefined,
           } as FlowEvent);
         });
       });

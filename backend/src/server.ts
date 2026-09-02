@@ -19,8 +19,14 @@ import {
   requireAuth, requireAuthOrDemo, isDemoModeEnabled, DEMO_HEADER,
   authenticateSocket, socketAuthConfigured,
 } from './middleware/auth';
+import { assertEnvOrExit } from './config/env';
+import { resolveDataMode } from './config/dataMode';
 
 config();
+
+// Must run after dotenv and before anything reads a secret. Refuses to boot in
+// production when a required secret is missing or blank. Logs names, never values.
+assertEnvOrExit();
 
 export const app = express();
 export const httpServer = createServer(app);
@@ -30,7 +36,7 @@ const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 // `NEXT_PUBLIC_WS_URL` points the browser straight at this server rather than
 // through the frontend's /api/* rewrite, so unlike the HTTP path below this is
 // a real browser-to-backend connection and the allowed origin actually does
-// something. It was `'*'` with `credentials: true`.
+// something. It was `'*'` with `credentials: true` — docs/FORENSIC_AUDIT.md #29.
 const CORS_ORIGINS = [FRONTEND_URL, 'http://localhost:3000'];
 
 export const io = new Server(httpServer, {
@@ -133,6 +139,7 @@ const PORT = Number(process.env.PORT) || 3001;
 httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`[Backend] QuantFlow Pro running on port ${PORT}`);
   console.log(`[Backend] Frontend URL: ${FRONTEND_URL}`);
+  console.log(`[Backend] DATA_MODE: ${resolveDataMode()}`);
 
   // requireAuth can only validate tokens when the service-role client exists.
   // Without these it rejects every authenticated route, so say so loudly rather

@@ -77,3 +77,21 @@ export function sentimentBg(s: string): string {
  * backend simulates prints when no keys are configured and flags them
  * `synthetic` where the UI can see it, so this was redundant even when honest.
  */
+
+/**
+ * The client-side data mode. `demo` unless NEXT_PUBLIC_DATA_MODE=live, so a
+ * deployment that forgets the variable labels everything synthetic rather than
+ * presenting simulated data as real — the safe direction.
+ *
+ * These two survived the removal of `generateSeedFlow` because they are the
+ * opposite of it: they are how the UI *reports* that data may be synthetic, not
+ * a source of synthetic data. `useDataMode` drives the badge from them.
+ */
+export function clientDataMode(): 'live' | 'demo' {
+  const raw = (process.env.NEXT_PUBLIC_DATA_MODE ?? '').trim().toLowerCase()
+  return raw === 'live' ? 'live' : 'demo'
+}
+
+export function syntheticAllowed(): boolean {
+  return clientDataMode() === 'demo'
+}

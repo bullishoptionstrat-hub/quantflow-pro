@@ -109,7 +109,11 @@ test('the grader really does depend on the variable the doctor names', () => {
   const ingestion = readFileSync(join(__dirname, '..', 'src', 'ingestion', 'index.ts'), 'utf8');
   assert.match(
     ingestion,
-    /new SignalGrader\(store,\s*\(underlying\)\s*=>\s*\{[\s\S]{0,200}?getSpotPrice\(underlying\)/,
+    // The span is generous on purpose: what is being pinned is that the grader's
+    // mark comes from `getSpotPrice`, not how much explanation sits between the
+    // two lines. A tight budget made an added comment look like a broken
+    // dependency, which is a false alarm about the one claim that matters.
+    /new SignalGrader\(store,\s*\(underlying\)\s*=>\s*\{[\s\S]{0,600}?getSpotPrice\(underlying\)/,
     'the grader should still take its mark from getSpotPrice',
   );
   const twelve = readFileSync(

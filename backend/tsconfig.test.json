@@ -6,6 +6,10 @@
   // same exposure and one extra reason to care: `tools/preview/serve.ts`
   // imports `authenticateSocket` from src, so a change to that signature
   // should break the preview here rather than at someone's next demo.
+  //
+  // NOTE: `npm run typecheck` runs `tsconfig.all.json`, which covers the same
+  // ground plus `scripts/**`. This file is kept as the narrower entry point;
+  // all.json is the one CI enforces, so the two must not disagree.
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": true,

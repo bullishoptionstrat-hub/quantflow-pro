@@ -175,3 +175,106 @@ test('the socket no longer accepts every origin', () => {
   );
   assert.match(code, /cors:\s*\{\s*origin:\s*CORS_ORIGINS/);
 });
+
+/**
+ * END TO END — an unauthenticated client receives no broadcast.
+ *
+ * The tests above pin the decision; this one pins that the decision is actually
+ * wired into a running server. `test('the gate is installed as handshake
+ * middleware, before connection')` above asserts that by reading server.ts as
+ * text, which proves the line exists but not that it works — a guard that is
+ * correct and installed in the wrong order would satisfy it.
+ *
+ * So this stands up a real socket.io server that broadcasts continuously, and
+ * asserts a client with no credentials receives zero market-data events. That
+ * is the property the whole gate exists for, stated as an observation rather
+ * than an inference.
+ */
+import { after, before, describe } from 'node:test';
+import { createServer, type Server as HttpServer } from 'node:http';
+import { AddressInfo } from 'node:net';
+import { Server } from 'socket.io';
+import { io as ioClient, type Socket as ClientSocket } from 'socket.io-client';
+
+describe('END TO END — an unauthenticated client receives no broadcast', () => {
+  let httpServer: HttpServer;
+  let io: Server;
+  let url: string;
+  const realDemoMode = process.env.DEMO_MODE;
+
+  before(async () => {
+    // Demo mode off, or a tokenless handshake would legitimately be admitted.
+    delete process.env.DEMO_MODE;
+
+    httpServer = createServer();
+    io = new Server(httpServer);
+
+    // The same wiring as server.ts: io.use() before any connection handler.
+    io.use(async (socket, next) => {
+      const result = await authenticateSocket(socket.handshake.auth ?? {});
+      if (!result.ok) return next(new Error(result.reason));
+      socket.data.identity = result.identity;
+      next();
+    });
+
+    // Broadcast continuously, as ingestion does. If the guard were registered
+    // after the connection handler, a client would receive one of these.
+    io.on('connection', (socket) => {
+      socket.emit('flow_batch', [{ id: 'secret-1', underlying: 'SPY' }]);
+    });
+    setInterval(() => io.emit('flow_batch', [{ id: 'secret-broadcast' }]), 20).unref();
+
+    await new Promise<void>((resolve) => httpServer.listen(0, resolve));
+    url = `http://localhost:${(httpServer.address() as AddressInfo).port}`;
+  });
+
+  after(async () => {
+    if (realDemoMode === undefined) delete process.env.DEMO_MODE;
+    else process.env.DEMO_MODE = realDemoMode;
+    io.close();
+    await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+  });
+
+  test('refuses the handshake and delivers zero flow_batch events', async () => {
+    const client: ClientSocket = ioClient(url, {
+      transports: ['websocket'],
+      reconnection: false,
+      timeout: 2000,
+    });
+
+    const received: unknown[] = [];
+    let connectError: Error | null = null;
+    client.on('flow_batch', (payload) => received.push(payload));
+    client.on('connect_error', (err) => { connectError = err; });
+
+    // Well past several broadcast intervals.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    client.close();
+
+    assert.equal(received.length, 0, 'an unauthenticated socket must receive NO market data');
+    assert.ok(connectError, 'the handshake must be actively refused, not left idle');
+    assert.equal(client.connected, false);
+  });
+
+  test('a demo socket IS admitted and does receive the feed', async () => {
+    // Keeps the test above from passing for the wrong reason. If the server
+    // refused everything — a broken gate rather than a working one — this fails.
+    process.env.DEMO_MODE = '1';
+
+    const client: ClientSocket = ioClient(url, {
+      transports: ['websocket'],
+      reconnection: false,
+      timeout: 2000,
+      auth: { demo: true },
+    });
+
+    const received: unknown[] = [];
+    client.on('flow_batch', (payload) => received.push(payload));
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    client.close();
+    delete process.env.DEMO_MODE;
+
+    assert.ok(received.length > 0, 'a correctly-admitted demo socket must receive the feed');
+  });
+});

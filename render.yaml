@@ -17,6 +17,15 @@ services:
       # throws at startup rather than being guessed. See provenance/rights.ts.
       - key: BUSINESS_MODE
         value: PRIVATE_RESEARCH
+      # The provenance switch. Defaults to `demo` when unset, which is the safe
+      # direction — a deployment that forgets it labels everything synthetic
+      # rather than presenting simulated prints as real. Declared here so a
+      # Blueprint deploy has somewhere to set `live`; an unrecognized value
+      # throws at startup rather than being guessed (config/env.ts).
+      - key: DATA_MODE
+        value: demo
+      - key: RUNTIME_MODE
+        sync: false
       - key: TRADIER_TOKEN
         sync: false
       - key: POLYGON_API_KEY

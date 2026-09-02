@@ -5,15 +5,20 @@
  */
 import axios from 'axios';
 import { describeHttpError } from '../httpError';
+import { num } from '../parseNumeric';
 
 export interface CBOEData {
-  vix: number;
-  vix9d: number;
-  vix3m: number;
-  vix6m: number;
-  vix1y: number;
+  /**
+   * The VIX term structure. `null` for any tenor Cboe did not return — never
+   * 0, which is a well-formed reading and would render as a real number.
+   */
+  vix: number | null;
+  vix9d: number | null;
+  vix3m: number | null;
+  vix6m: number | null;
+  vix1y: number | null;
   /** Nasdaq-100 volatility. Cboe publishes it; the Yahoo path never fetched it. */
-  vxn: number;
+  vxn: number | null;
   /**
    * Put/call ratios and volumes, or `null` when the statistics endpoint did
    * not answer.
@@ -68,7 +73,7 @@ const VIX_SYMBOLS = {
   vxn: '_VXN',
 } as const;
 
-type VixTerms = Record<keyof typeof VIX_SYMBOLS, number>;
+type VixTerms = Record<keyof typeof VIX_SYMBOLS, number | null>;
 
 /**
  * The VIX term structure, from Cboe.
@@ -87,8 +92,10 @@ type VixTerms = Record<keyof typeof VIX_SYMBOLS, number>;
  * Cboe publishes every one of these tenors itself, plus VXN, which the Yahoo
  * path never fetched at all. There was nothing to trade away.
  *
- * A tenor that fails or returns a non-positive price stays 0 and is rendered
- * as unavailable rather than as a reading of zero.
+ * A tenor that fails or returns a non-positive price is `null`, not 0. Zero was
+ * the previous answer, with the renderer expected to know it meant "no data" —
+ * but 0 is a well-formed VIX reading at the type level, so nothing downstream
+ * could tell a dead feed from a calm one except by convention.
  */
 async function fetchVixTerms(): Promise<VixTerms> {
   const entries = Object.entries(VIX_SYMBOLS) as [keyof VixTerms, string][];
@@ -96,10 +103,15 @@ async function fetchVixTerms(): Promise<VixTerms> {
   const settled = await Promise.all(entries.map(async ([key, symbol]) => {
     try {
       const { data } = await axios.get(QUOTE_URL(symbol), { timeout: 8000 });
-      const px = Number(data?.data?.current_price);
-      return [key, Number.isFinite(px) && px > 0 ? px : 0] as const;
-    } catch {
-      return [key, 0] as const;
+      const px = num(data?.data?.current_price);
+      return [key, px !== null && px > 0 ? px : null] as const;
+    } catch (err: any) {
+      // Never swallow, and never fabricate. This returned 0 on failure, so a
+      // Cboe outage rendered "VIX 0.00" — a number no market has ever printed,
+      // displayed with the same authority as a real one. null is the honest
+      // answer and the panel formats it as unavailable.
+      console.error(`[cboe] ${symbol} quote failed: ${describeHttpError(err)}`);
+      return [key, null] as const;
     }
   }));
 
@@ -107,14 +119,16 @@ async function fetchVixTerms(): Promise<VixTerms> {
 }
 
 interface PutCallValues {
-  putCallRatioEquity: number;
-  putCallRatioIndex: number;
-  putCallRatioTotal: number;
-  equityCallVolume: number;
-  equityPutVolume: number;
-  indexCallVolume: number;
-  indexPutVolume: number;
-  totalOptionsVolume: number;
+  // `number | null` per field, not just per block. Cboe answering while
+  // omitting one ratio is absence of that ratio; `0` would be a reading.
+  putCallRatioEquity: number | null;
+  putCallRatioIndex: number | null;
+  putCallRatioTotal: number | null;
+  equityCallVolume: number | null;
+  equityPutVolume: number | null;
+  indexCallVolume: number | null;
+  indexPutVolume: number | null;
+  totalOptionsVolume: number | null;
 }
 
 /** Either the block or the reason there isn't one. Never a silent `{}`. */
@@ -135,14 +149,20 @@ async function fetchPutCallRatios(): Promise<PutCallBlock> {
     }
 
     return { ok: true, values: {
-      putCallRatioEquity: parseFloat(today.equity_put_call_ratio ?? 0),
-      putCallRatioIndex: parseFloat(today.index_put_call_ratio ?? 0),
-      putCallRatioTotal: parseFloat(today.total_put_call_ratio ?? 0),
-      equityCallVolume: parseInt(today.equity_call_volume ?? 0),
-      equityPutVolume: parseInt(today.equity_put_volume ?? 0),
-      indexCallVolume: parseInt(today.index_call_volume ?? 0),
-      indexPutVolume: parseInt(today.index_put_volume ?? 0),
-      totalOptionsVolume: parseInt(today.total_volume ?? 0),
+      // `num()` rather than parseFloat/parseInt with `?? 0`. The block is
+      // nullable precisely so absence is distinguishable from a reading, and
+      // `?? 0` reintroduces the confusion one field at a time: a missing
+      // equity ratio would land as 0.00 — a real, bullish-looking value — in
+      // a payload that otherwise reports absence honestly. parseFloat is also
+      // a prefix parser, so an error string like "403 Forbidden" reads as 403.
+      putCallRatioEquity: num(today.equity_put_call_ratio),
+      putCallRatioIndex: num(today.index_put_call_ratio),
+      putCallRatioTotal: num(today.total_put_call_ratio),
+      equityCallVolume: num(today.equity_call_volume),
+      equityPutVolume: num(today.equity_put_volume),
+      indexCallVolume: num(today.index_call_volume),
+      indexPutVolume: num(today.index_put_volume),
+      totalOptionsVolume: num(today.total_volume),
     } };
   } catch (err: any) {
     // Reported, not swallowed. This is currently a 403, and for a long time it
@@ -179,7 +199,7 @@ async function fetchAll(): Promise<void> {
 
     onCBOEUpdate?.(cboeData);
     console.log(
-      `[cboe] Updated — VIX: ${cboeData.vix.toFixed(2)} | P/C Ratio: ` +
+      `[cboe] Updated — VIX: ${cboeData.vix?.toFixed(2) ?? 'unavailable'} | P/C Ratio: ` +
       (cboeData.putCallRatioTotal != null
         ? cboeData.putCallRatioTotal.toFixed(2)
         : `unavailable (${cboeData.putCallUnavailable})`),

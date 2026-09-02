@@ -79,13 +79,29 @@ export function computePLCurve(
   )
 }
 
+/** Option contract multiplier (100 shares). Named so it cannot be dropped again. */
+export const CONTRACT_MULTIPLIER = 100
+
+/**
+ * Gamma exposure per 1% move in the underlying.
+ *
+ * SIGN CONVENTION: call GEX positive, put GEX negative. This ASSUMES dealers
+ * are net long calls and short puts — real dealer inventory is not public, so
+ * this is a model, never an observation.
+ *
+ * Units: OI × gamma × 100 (contract multiplier) × S² × 0.01 (per 1% move).
+ * The multiplier was previously MISSING here, making every output 100× too
+ * small; see backend/src/gex/compute.ts for the canonical implementation.
+ */
 export function computeGEX(
   contracts: Array<{ strike: number; callOI: number; putOI: number; gamma: number; spotPrice: number }>
 ): GEXLevel[] {
   return contracts.map(c => {
-    const callGEX = c.callOI * c.gamma * c.spotPrice * c.spotPrice * 0.01
-    const putGEX = -c.putOI * c.gamma * c.spotPrice * c.spotPrice * 0.01
-    const netGEX = callGEX + putGEX
+    const scale = CONTRACT_MULTIPLIER * c.spotPrice * c.spotPrice * 0.01
+    // Collapse -0 to 0: it is never meaningful and breaks strict comparisons.
+    const callGEX = (c.callOI * c.gamma * scale) || 0
+    const putGEX = (-c.putOI * c.gamma * scale) || 0
+    const netGEX = (callGEX + putGEX) || 0
     const levelType: 'SUPPORT' | 'RESISTANCE' | 'FLIP' =
       netGEX > 0 ? 'SUPPORT' : netGEX < 0 ? 'RESISTANCE' : 'FLIP'
     return { strike: c.strike, net_gex: netGEX, call_gex: callGEX, put_gex: putGEX, level_type: levelType }

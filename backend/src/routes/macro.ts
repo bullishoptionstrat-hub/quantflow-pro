@@ -81,10 +81,10 @@ router.get('/vix', (_req, res) => {
     putCallRatioEquity: cboe.putCallRatioEquity,
     putCallRatioIndex: cboe.putCallRatioIndex,
     ...(cboe.putCallUnavailable ? { putCallUnavailable: cboe.putCallUnavailable } : {}),
-    // `termStructure: 'contango'` used to be here as a string constant — a
-    // regime label that was never computed from the curve it sat next to, and
-    // that nothing consumed. Removed rather than invented: deriving it is a
-    // feature, not a bug fix.
+    // Derived, never asserted. This was a hardcoded `'contango'` string; it is
+    // now computed from the two tenors above and is `null` when either is
+    // missing, so a Cboe outage yields no label rather than a stale default.
+    termStructure: classifyTermStructure(cboe.vix, cboe.vix3m),
     updatedAt: cboe.updatedAt,
   });
 });
@@ -114,3 +114,25 @@ router.get('/quotes', (_req, res) => {
 });
 
 export default router;
+
+/**
+ * The VIX term structure, derived from the two tenors beside it.
+ *
+ * `termStructure: 'contango'` used to sit on this payload as a string
+ * constant — a regime label asserted as fact regardless of the curve it was
+ * printed next to, so it read "contango" during a genuine backwardation,
+ * which is precisely when the claim matters. It was removed rather than
+ * derived, on the correct grounds that inventing it was the bug. This derives
+ * it, which is what makes it publishable again: `null` whenever either leg is
+ * missing, so an outage produces no label rather than a default one.
+ */
+export function classifyTermStructure(
+  front: number | null,
+  back: number | null,
+): 'contango' | 'backwardation' | 'flat' | null {
+  if (front === null || back === null || front <= 0 || back <= 0) return null;
+  const spread = back - front;
+  // Within 1% of front vol reads as flat rather than a directional claim.
+  if (Math.abs(spread) < front * 0.01) return 'flat';
+  return spread > 0 ? 'contango' : 'backwardation';
+}

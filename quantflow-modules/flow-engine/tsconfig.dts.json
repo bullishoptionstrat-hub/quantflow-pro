@@ -1,0 +1,12 @@
+{
+  // Emits .d.ts only. esbuild produces the CJS JS bundle; tsc produces types.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "emitDeclarationOnly": true,
+    "declaration": true,
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "include": ["src/**/*.ts"]
+}

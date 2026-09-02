@@ -60,8 +60,16 @@ export interface FlowEvent {
   spread_guess?: 'VERTICAL' | 'CALENDAR' | 'STRADDLE_STRANGLE' | 'UNKNOWN'
   /** Audit trail: the print ids that formed this signal. */
   print_ids?: string[]
-  /** True when the source was simulated, replayed, or chain-derived. */
+  /**
+   * @deprecated one-wave alias for `provenance.is_synthetic`.
+   * Typed `boolean` rather than `true`-only because the engine really does emit
+   * `false` (backend/src/flow-engine/types.ts). Consumers must still test
+   * `=== true`: a `false` here is NOT a claim that the data is real, it only
+   * says this flag was set. `provenance` is the authoritative field.
+   */
   synthetic?: boolean
+  /** Truth Firewall envelope — see lib/provenance.ts */
+  provenance?: import('./provenance').Provenance
 }
 
 /**

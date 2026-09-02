@@ -201,7 +201,10 @@ test('the legacy print feed refuses a gated source too', () => {
   // Defense in depth on the one path that carries prints to the flow engine.
   assert.match(
     INGESTION_SRC,
-    /const feedLegacy = \(source: string\)[\s\S]{0,600}?gateFor\(source\)[\s\S]{0,120}?return;/,
+    // `[^)]*` so the assertion survives feedLegacy gaining parameters — it
+    // now also takes a provenance factory. What is being pinned is the gate
+    // call and its early return, not the signature.
+    /const feedLegacy = \(source: string[^)]*\)[\s\S]{0,600}?gateFor\(source\)[\s\S]{0,120}?return;/,
     'feedLegacy must drop prints from a refused source',
   );
 });

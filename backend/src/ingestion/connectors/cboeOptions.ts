@@ -20,6 +20,7 @@
  * here carries `asOf` / `delayedMinutes` so the UI can label it honestly.
  */
 import axios from 'axios';
+import { num } from '../parseNumeric';
 
 export interface CboeGexLevel {
   strike: number;
@@ -39,11 +40,22 @@ export interface CboeUnusualContract {
   volume: number;
   openInterest: number;
   volumeToOI: number;
-  bid: number;
-  ask: number;
+  /**
+   * `null` when Cboe did not quote or measure it — never 0.
+   *
+   * `Number(x) || 0` is worse than `?? 0` here: it also collapses a legitimate
+   * 0 and a NaN. A bid of 0 is a real reading on an illiquid contract, so the
+   * old form could not distinguish "no bid" from "not quoted". `iv: 0` and
+   * `delta: 0` are not readings at all — an option has neither.
+   *
+   * The UI already renders `r.iv ? ... : '—'`, so absence displayed correctly
+   * by accident of falsiness; this makes the type say what the payload means.
+   */
+  bid: number | null;
+  ask: number | null;
   last: number;
-  iv: number;
-  delta: number;
+  iv: number | null;
+  delta: number | null;
   /** volume x last x 100. A day's notional, not one trade's premium. */
   notional: number;
   lastTradeTime: string | null;
@@ -56,12 +68,50 @@ export interface CboeSnapshot {
   gex: CboeGexLevel[];
   unusual: CboeUnusualContract[];
   contractCount: number;
-  asOf: string;
+  /**
+   * When the source says this chain was last traded. `null` when the payload
+   * carries no timestamp — see `tradeDateInferred`.
+   *
+   * Previously this fell back to `new Date().toISOString()`, so a chain that
+   * had stopped updating was stamped with the current time and read as fresh.
+   * A snapshot that cannot say when it is from must say THAT, not pick now.
+   */
+  asOf: string | null;
+  /**
+   * True when `asOf` could not be established from the payload. The UI must
+   * not present such a snapshot as current. (`packages/domain/src/freshness.ts`
+   * models this as the `TRADE_DATE_INFERRED` quality flag.)
+   */
+  tradeDateInferred: boolean;
+  /**
+   * Age in minutes derived from `asOf` where possible. Falls back to the
+   * publisher's declared lag when `asOf` is unknown — in which case this is a
+   * FLOOR, not a measurement, and `tradeDateInferred` says so.
+   */
   delayedMinutes: number;
   source: 'cboe';
 }
 
-const DELAYED_MINUTES = 15;
+/**
+ * CBOE's published lag for this feed. Used as a floor when the payload carries
+ * no timestamp of its own; when it does, real age is computed instead.
+ */
+const DECLARED_DELAY_MINUTES = 15;
+
+/**
+ * Minutes between a source timestamp and now, or null if unusable.
+ * A future timestamp yields null rather than a negative age — that is clock
+ * skew or a parse error, and pretending it means "very fresh" is how stale
+ * detection gets defeated.
+ */
+export function ageMinutesFrom(asOf: string | null, now: Date = new Date()): number | null {
+  if (!asOf) return null;
+  const t = Date.parse(asOf);
+  if (Number.isNaN(t)) return null;
+  const minutes = (now.getTime() - t) / 60_000;
+  if (minutes < 0) return null;
+  return Math.round(minutes);
+}
 
 /** CBOE prefixes cash indices with an underscore. */
 const CBOE_SYMBOL: Record<string, string> = {
@@ -174,11 +224,11 @@ export async function fetchCboeChain(symbol: string): Promise<CboeSnapshot | nul
         volume,
         openInterest: oi,
         volumeToOI: oi > 0 ? volume / oi : Infinity,
-        bid: Number(r.bid) || 0,
-        ask: Number(r.ask) || 0,
+        bid: num(r.bid),
+        ask: num(r.ask),
         last,
-        iv: Number(r.iv) || 0,
-        delta: Number(r.delta) || 0,
+        iv: num(r.iv),
+        delta: num(r.delta),
         notional: volume * last * 100,
         lastTradeTime: r.last_trade_time ?? null,
       });
@@ -187,15 +237,26 @@ export async function fetchCboeChain(symbol: string): Promise<CboeSnapshot | nul
 
   unusual.sort((a, b) => b.notional - a.notional);
 
+  // No fallback to now(). If the payload does not date itself, that is a fact
+  // about the payload, and the snapshot carries it rather than concealing it.
+  const asOf = typeof d.last_trade_time === 'string' && d.last_trade_time.trim().length > 0
+    ? d.last_trade_time
+    : null;
+
   const snap: CboeSnapshot = {
     symbol: upper,
     spot,
-    iv30: Number(d.iv30) || 0,
+    // Another sentinel: `Number(d.iv30) || 0`. An implied volatility of exactly
+    // 0 is not a market state, it is a parse failure wearing a number.
+    iv30: num(d.iv30) ?? 0,
     gex: [...byStrike.values()].sort((a, b) => a.strike - b.strike),
     unusual: unusual.slice(0, 40),
     contractCount: rows.length,
-    asOf: d.last_trade_time ?? new Date().toISOString(),
-    delayedMinutes: DELAYED_MINUTES,
+    asOf,
+    tradeDateInferred: asOf === null,
+    // Real age when the source dated itself; otherwise the publisher's declared
+    // lag as a floor, flagged above as inferred.
+    delayedMinutes: ageMinutesFrom(asOf) ?? DECLARED_DELAY_MINUTES,
     source: 'cboe',
   };
 

@@ -19,6 +19,8 @@
  */
 import { FlowEngine } from '../flow-engine/engine';
 import { sideBucket } from '../flow-engine/nbbo';
+import { type InferenceGrade, type Provenance, upstreamProvenance } from '../config/provenance';
+import { confidenceForSide, gradeForSide, inferenceMethodFor } from '../flow/grade';
 import type {
   ClassifiedSignal,
   ContractStats,
@@ -66,6 +68,13 @@ export interface RawPrint {
   source: string;
   /** Simulated / replayed data — surfaces as `synthetic` on the wire. */
   synthetic?: boolean;
+  /**
+   * Truth Firewall envelope for the originating print. Carried through
+   * classification so the emitted signal can state where it came from, whether
+   * it is delayed, and how its side was inferred. A print without provenance is
+   * not publishable in live mode — see `rejectEmission` in config/dataMode.
+   */
+  provenance?: Provenance;
   /**
    * Set by connectors replaying history. Suppresses the wall-clock receipt
    * stamp, because "now" says nothing about when a 2024 print was knowable.
@@ -129,6 +138,17 @@ export interface WireFlowEvent {
   print_ids: string[];
   /** True when the feeding source was simulated or replayed. */
   synthetic: boolean;
+  /**
+   * How far the `side` above may be trusted. Never OBSERVED — see flow/grade.ts.
+   */
+  classification_grade: InferenceGrade;
+  /**
+   * Provenance of the dominant originating print. Always present: when no
+   * origin carried one, a minimal envelope is synthesized from the source name
+   * so the field is never silently absent (absence would read as "real" at the
+   * emit boundary, which is the failure this contract exists to prevent).
+   */
+  provenance: Provenance;
 }
 
 // ─── Contract symbol / stats bookkeeping ────────────────────────────────────
@@ -166,7 +186,10 @@ function recordStats(symbol: string, print: RawPrint): void {
 const engine = new FlowEngine({}, (sym) => contractStats.get(sym));
 
 /** Source label per print id, so emitted signals keep their provenance. */
-const printSource = new Map<string, { source: string; synthetic: boolean; iv?: number; delta?: number }>();
+const printSource = new Map<
+  string,
+  { source: string; synthetic: boolean; iv?: number; delta?: number; provenance?: Provenance }
+>();
 const MAX_TRACKED_PRINTS = 20_000;
 
 let seq = 0;
@@ -269,7 +292,17 @@ function originOf(sig: ClassifiedSignal): SignalOrigin {
  * the engine emits on burst close, not per trade).
  */
 export function ingestPrint(print: RawPrint): WireFlowEvent[] {
-  if (!print.symbol || !print.expiry || !(print.price > 0) || !(print.size > 0)) return [];
+  // `strike > 0` belongs with the other identity checks, and its absence was a
+  // hole. `occSymbol()` below builds the contract key from the strike, so a
+  // zero-strike print does not merely carry a wrong number — it is assigned a
+  // fabricated contract identity (strike part `00000000`), and the engine
+  // clusters by that key. A run of rows whose strike failed to parse therefore
+  // collapses into one synthetic "contract" and is scored as repeat activity on
+  // it. No listed option has a strike of zero, so this rejects nothing real.
+  if (
+    !print.symbol || !print.expiry ||
+    !(print.price > 0) || !(print.size > 0) || !(print.strike > 0)
+  ) return [];
 
   const ts = print.ts ?? Date.now();
   // Receipt time is stamped here, at the boundary — the earliest moment this
@@ -322,6 +355,7 @@ export function ingestPrint(print: RawPrint): WireFlowEvent[] {
       synthetic: print.synthetic === true,
       iv: print.iv,
       delta: print.delta,
+      provenance: print.provenance,
     });
 
     const trade: OptionTradeEvent = {
@@ -389,6 +423,23 @@ function toWireEvent(sig: ClassifiedSignal): WireFlowEvent {
   const iv = origins.find((o) => o?.iv !== undefined)?.iv ?? 0;
   const delta = origins.find((o) => o?.delta !== undefined)?.delta ?? 0;
 
+  // Provenance of the dominant origin, else a minimal envelope built from the
+  // source name. Never left undefined: the emit boundary treats missing
+  // provenance in live mode as a rejection, and a signal that reached this
+  // point has real prints behind it — it should be rejected for the right
+  // reason (an unknown source) rather than for having no envelope at all.
+  const provenance: Provenance =
+    origins.find((o) => o?.provenance)?.provenance ??
+    upstreamProvenance({
+      source,
+      source_type: synthetic ? 'generator' : 'vendor',
+      // Side is always inferred here — this pipeline never receives an
+      // exchange aggressor flag. `sig.side` may legitimately be AMBIGUOUS.
+      is_inferred: true,
+      inference_method: inferenceMethodFor(sig.side),
+      confidence: confidenceForSide(sig.side),
+    });
+
   const exchanges = new Set<string>();
   sig.legs.forEach((l) => l.exchanges.forEach((e) => exchanges.add(e)));
 
@@ -415,6 +466,7 @@ function toWireEvent(sig: ClassifiedSignal): WireFlowEvent {
     created_at: new Date(sig.ts).toISOString(),
     source,
     side: sig.side,
+    classification_grade: gradeForSide(sig.side),
     score_breakdown: sig.scoreBreakdown,
     legs: sig.kind === 'MULTI_LEG'
       ? sig.legs.map((l) => ({
@@ -432,7 +484,10 @@ function toWireEvent(sig: ClassifiedSignal): WireFlowEvent {
       : undefined,
     spread_guess: sig.spreadGuess,
     print_ids: sig.printIds,
+    // `originOf` already ORs in `sig.synthetic` and treats evicted origins as
+    // synthetic, so this is the pessimistic value — do not re-OR it here.
     synthetic,
+    provenance,
   };
 }
 

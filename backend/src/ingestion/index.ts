@@ -12,6 +12,28 @@
  */
 import axios from 'axios';
 import WebSocket from 'ws';
+import { computeHeatScore } from './heatScore';
+import { classifySweep } from './sweepDetector';
+import {
+  markSynthetic,
+  rejectEmission,
+  resolveDataMode,
+  syntheticGeneratorsAllowed,
+} from '../config/dataMode';
+import {
+  provenanceLogLine,
+  type Provenance,
+  syntheticProvenance,
+  upstreamProvenance,
+} from '../config/provenance';
+import { reportFailure, reportSuccess, requestQuota } from '../providers/quota';
+import {
+  getOverallHealth,
+  getSourceHealth,
+  recordDisabled,
+  recordEvent,
+  registerSource,
+} from './sourceHealth';
 import { fetchCboeChain, getCboeSnapshot, getCboeSymbols } from './connectors/cboeOptions';
 import { fetchOccVolume, getOccVolume } from './connectors/occ';
 import { describeHttpError } from './httpError';
@@ -112,6 +134,15 @@ export interface LegacyFlowEvent {
   exchange?: string;
   conditions?: string[];
   unusualScore?: number;
+  /**
+   * Present and true only for locally generated records. Absent means the
+   * record came from an upstream feed. Never set to false — absence is the
+   * negative case, so a forgotten field cannot read as "this is real".
+   * @deprecated one-wave alias for provenance.is_synthetic. Removed in W2.
+   */
+  synthetic?: true;
+  /** Truth Firewall envelope. See src/config/provenance.ts. */
+  provenance?: Provenance;
 }
 
 export interface DarkPoolPrint {
@@ -123,6 +154,9 @@ export interface DarkPoolPrint {
   notional: number;
   exchange: string;
   source: string;
+  /** See FlowEvent.synthetic. */
+  synthetic?: true;
+  provenance?: Provenance;
 }
 
 export interface GEXLevel {
@@ -132,7 +166,18 @@ export interface GEXLevel {
   putOI: number;
   callGamma: number;
   putGamma: number;
+  /** See FlowEvent.synthetic. */
+  synthetic?: true;
+  provenance?: Provenance;
 }
+
+/** Every source this pipeline can carry. Declared so silence is visible. */
+export const ALL_KNOWN_SOURCES: readonly string[] = [
+  'tradier', 'polygon', 'finnhub',
+  'flashalpha', 'marketdata', 'schwab', 'tastytrade', 'twelvedata', 'fmp',
+  'coingecko', 'fred', 'reddit', 'newsapi', 'cboe', 'yahoo', 'stooq',
+  'simulation', 'seed',
+];
 
 // ─── In-memory stores ───────────────────────────────────────────────────────
 
@@ -196,8 +241,30 @@ function markRefused(source: string, d: ConnectorGateDecision): void {
  * three sources as off and named nothing an operator could act on, which is
  * the gap the credentials table was introduced to close everywhere else.
  */
+/**
+ * Disabled for a reason that is not a missing credential.
+ *
+ * `markNoCredentials` would state something false here — the simulation feed is
+ * refused by policy in live mode, and there is no variable anyone could set to
+ * enable it. Separate helper, same contract: a source that reports `disabled`
+ * on /api/health always says why, which is what
+ * `connectorCredentials.test.ts` pins.
+ */
+function markPolicyRefusal(source: string, reason: string): void {
+  sources[source] = 'disabled';
+  recordDisabled(source);
+  sourceErrors[source] = reason;
+}
+
 function markNoCredentials(source: string, vars: string[]): void {
   sources[source] = 'disabled';
+  // Also mark it disabled in sourceHealth, not just in the `sources` map.
+  // The three call sites this replaced each did so; without it a keyless
+  // connector reports 'never_reported' — "still waiting on it" — rather than
+  // 'disabled', which is "it will never report, and here is why". That is the
+  // same regression `startConnector` had, and test/connectorLifecycle.test.ts
+  // pins both.
+  recordDisabled(source);
   sourceErrors[source] =
     `No credentials — ${vars.join(', ')} ${vars.length === 1 ? 'is' : 'are'} not set. ` +
     `The connector is not contributing data.`;
@@ -232,6 +299,10 @@ export function getGEXLevels(symbol: string): GEXLevel[] {
   if (cached && Date.now() - cached.fetchedAt < 60_000) {
     return cached.levels;
   }
+  // In live mode there is no synthetic fallback: an empty surface is honest,
+  // a generated one is not.
+  if (!syntheticGeneratorsAllowed()) return [];
+
   const levels = generateSyntheticGEX(symbol);
   gexCache[symbol] = { levels, fetchedAt: Date.now() };
   return levels;
@@ -275,7 +346,10 @@ export function getIngestionStatus() {
 
   return {
     active: ingestionActive,
+    dataMode: resolveDataMode(),
+    // Legacy string map, kept for the existing /api/flow/stats consumer.
     sources,
+    // Per-source failure reasons: why a source is not connected.
     sourceErrors,
     sourceNotes: notes,
     // Listed even before the connector loop has run, so a refusal is visible
@@ -290,6 +364,9 @@ export function getIngestionStatus() {
       reason: d.reason,
     })),
     occ: getOccVolume(),
+    // Measured per-source staleness (Wave 1 exit criterion).
+    sourceHealth: getSourceHealth(),
+    overall: getOverallHealth(),
   };
 }
 
@@ -303,7 +380,14 @@ export function getUnusualActivity(symbol?: string) {
   const syms = symbol ? [symbol.toUpperCase()] : getCboeSymbols();
   const out = syms.flatMap((sy) => {
     const snap = getCboeSnapshot(sy);
-    return snap ? snap.unusual.map((u) => ({ ...u, asOf: snap.asOf, delayedMinutes: snap.delayedMinutes })) : [];
+    return snap
+      ? snap.unusual.map((u) => ({
+          ...u,
+          asOf: snap.asOf,
+          tradeDateInferred: snap.tradeDateInferred,
+          delayedMinutes: snap.delayedMinutes,
+        }))
+      : [];
   });
   return out.sort((a, b) => b.notional - a.notional);
 }
@@ -371,7 +455,11 @@ export function missingCredentials(
  * are checked directly, and a connector with none is reported `disabled` with
  * the variable names needed to enable it.
  */
-function startConnector(name: string, start: () => Promise<unknown>): Promise<void> {
+/**
+ * Exported for `test/connectorLifecycle.test.ts`, which pins the
+ * `recordDisabled` calls below — they were dropped once already in a merge.
+ */
+export function startConnector(name: string, start: () => Promise<unknown>): Promise<void> {
   // The rights gate runs before the connector does. A refused source must not
   // be started and then filtered downstream: `start()` is what opens the
   // socket or issues the fetch, and the request itself is the act the
@@ -387,6 +475,11 @@ function startConnector(name: string, start: () => Promise<unknown>): Promise<vo
       const missing = missingCredentials(name);
       if (missing.length > 0) {
         sources[name] = 'disabled';
+        // Also mark it disabled in sourceHealth. Every one of the 13 call sites
+        // this replaced did so; without it a keyless connector reports
+        // 'never_reported' (indistinguishable from one that is trying and
+        // failing) instead of 'disabled'.
+        recordDisabled(name);
         sourceErrors[name] =
           `No credentials — ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} ` +
           `not set. The connector started and returned immediately without fetching ` +
@@ -405,6 +498,7 @@ function startConnector(name: string, start: () => Promise<unknown>): Promise<vo
     })
     .catch((err) => {
       sources[name] = 'disabled';
+      recordDisabled(name);
       sourceErrors[name] = describeHttpError(err);
     });
 }
@@ -413,10 +507,26 @@ export function startIngestion(io: any): void {
   ioInstance = io;
   ingestionActive = true;
 
+  const dataMode = resolveDataMode();
+  console.log(`[ingestion] DATA_MODE=${dataMode}`);
+
+  // Declare every known source up front. A source that never delivers then
+  // shows as 'never_reported' instead of being invisible.
+  for (const s of ALL_KNOWN_SOURCES) registerSource(s);
+
   startSignalHistory();
 
-  // Seed with realistic data immediately
-  seedInitialData();
+  // Seeding is generation, not ingestion. It runs in demo mode only.
+  //
+  // NOTE: main's side of this merge called seedInitialData() unconditionally.
+  // Restoring that would put the synthetic generator back into live mode,
+  // which is the exact defect the DATA_MODE firewall exists to prevent — so
+  // the gate is kept and startSignalHistory() is added alongside it.
+  if (syntheticGeneratorsAllowed()) {
+    seedInitialData();
+  } else {
+    console.log('[ingestion] live mode — synthetic seed, GEX and dark-pool generators disabled');
+  }
 
   startCboeOptions();
   startOcc();
@@ -430,7 +540,12 @@ export function startIngestion(io: any): void {
   // The chain-snapshot connectors still build their own camelCase events with
   // the legacy scorer; convert them to RawPrints so classification and scoring
   // happen in one place. (Their internal heat/type values are discarded.)
-  const feedLegacy = (source: string) => (e: any) => {
+  //
+  // Each connector declares its own provenance here and it rides along on the
+  // print through classification. A connector that cannot state where its data
+  // came from is not publishable in live mode (enforced at the emit boundary),
+  // so this wiring is mandatory, not decorative.
+  const feedLegacy = (source: string, provenanceFor: () => Provenance) => (e: any) => {
     // Second guard, generic across all four legacy feeds. `startConnector`
     // already keeps a refused connector from running; this is what holds if a
     // connector ever acquires another way to be started, or keeps a poll timer
@@ -438,12 +553,22 @@ export function startIngestion(io: any): void {
     const gate = gateFor(source);
     if (!gate.allowed) { markRefused(source, gate); return; }
     const print = legacyEventToPrint(e, source);
-    if (print) emitSignals(ingestPrint(print));
+    if (!print) return;
+    emitSignals(ingestPrint({ ...print, provenance: e?.provenance ?? provenanceFor() }));
   };
-  onMarketDataFlow(feedLegacy('marketdata'));
-  onSchwabFlow(feedLegacy('schwab'));
-  onTastytradeFlow(feedLegacy('tastytrade'));
-  onYahooFlow(feedLegacy('yahoo'));
+  onMarketDataFlow(feedLegacy('marketdata', () =>
+    upstreamProvenance({ source: 'marketdata', source_type: 'vendor' })));
+  onSchwabFlow(feedLegacy('schwab', () =>
+    upstreamProvenance({ source: 'schwab', source_type: 'broker' })));
+  onTastytradeFlow(feedLegacy('tastytrade', () =>
+    upstreamProvenance({ source: 'tastytrade', source_type: 'broker' })));
+  // Yahoo is delayed ~15 min and is NOT a per-trade feed: this connector
+  // reports daily cumulative contract volume (KNOWN_LIMITATIONS #5).
+  onYahooFlow(feedLegacy('yahoo', () =>
+    upstreamProvenance({
+      source: 'yahoo', source_type: 'aggregator',
+      is_delayed: true, estimated_delay_seconds: 900,
+    })));
 
   // Wire quote updates to broadcast via Socket.IO
   onTwelveDataSpot((q) => {
@@ -543,6 +668,7 @@ export function startIngestion(io: any): void {
 
   // Drain bursts the engine is holding once the feed goes quiet — it finalizes
   // on the next trade's watermark, so an idle feed would sit on its last signal.
+  // Unconditional: this drains REAL signals and must run in live mode.
   setInterval(() => emitSignals(drainIdle()), 1_000);
 
   // `repeatHits` is scored per *day*; reset it at the UTC session boundary so a
@@ -557,15 +683,20 @@ export function startIngestion(io: any): void {
     }
   }, 60_000);
 
-  // Refresh GEX every 60 seconds
-  setInterval(() => {
-    ['SPX', 'SPY', 'QQQ', 'NVDA'].forEach((s) => {
-      gexCache[s] = { levels: generateSyntheticGEX(s), fetchedAt: Date.now() };
-    });
-  }, 60_000);
+  if (syntheticGeneratorsAllowed()) {
+    // Refresh synthetic GEX every 60 seconds (demo mode only).
+    // NOTE: main ran this unconditionally; that is the exact defect the Wave 1
+    // firewall exists to prevent — a live deployment with no chain source would
+    // silently serve invented gamma levels. Keep it behind the gate.
+    setInterval(() => {
+      ['SPX', 'SPY', 'QQQ', 'NVDA'].forEach((s) => {
+        gexCache[s] = { levels: generateSyntheticGEX(s), fetchedAt: Date.now() };
+      });
+    }, 60_000);
 
-  // Dark pool simulation refresh every 5 minutes
-  setInterval(addDarkPoolPrints, 300_000);
+    // Simulated print refresh every 5 minutes (demo mode only)
+    setInterval(addDarkPoolPrints, 300_000);
+  }
 
   console.log('[ingestion] v3 started — flow-engine classification, seeded',
     flowEvents.length, 'signals, 13 connectors initializing');
@@ -805,7 +936,18 @@ function processMarketTick(data: any, source: string): void {
   const size = parseInt(data.size, 10);
   if (!(price > 0) || !(size > 0)) return;
 
+  // NOTE: an earlier revision of this branch fabricated a quote here
+  // (`data.bid ?? price * 0.99`) and fed it to the scorer. That invents an NBBO
+  // and lets the quote rule "infer" a side from a number nobody observed.
+  // Passing undefined instead makes the engine return AMBIGUOUS, which is the
+  // truthful answer when the feed carried no quote.
   emitSignals(ingestPrint({
+    provenance: upstreamProvenance({
+      source,
+      source_type: 'broker',
+      // Tradier timesale carries no explicit exchange timestamp on this path.
+      provider_timestamp: typeof data.date === 'string' ? data.date : null,
+    }),
     id: `${source}-${data.seq ?? `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`}`,
     ts: data.date ? Number(data.date) : Date.now(),
     symbol: sym,
@@ -902,6 +1044,15 @@ function startPolygonIngestion(): void {
   // succeeded is how a dead key showed as healthy.
 
   async function poll() {
+    // W0-B fix: this used to fire every 10s = 6 req/min against Polygon's
+    // VERIFIED 5 req/min free limit. The quota manager is now the authority,
+    // so the interval can never exceed the declared budget.
+    const decision = requestQuota('polygon', { priority: 0 });
+    if (decision.action !== 'allow') {
+      // Degradation is logged, never silent.
+      console.warn(`[polygon] skipping poll: ${decision.action} (${'reason' in decision ? decision.reason : ''})`);
+      return;
+    }
     try {
       // Key goes in the Authorization header, not the query string: the URL
       // shows up in vendor error bodies and proxy logs, and this error path
@@ -984,6 +1135,17 @@ function startPolygonIngestion(): void {
             right: details.contract_type === 'call' ? 'C' : 'P',
             price: t.price,
             size: t.size,
+            provenance: upstreamProvenance({
+              source: 'polygon',
+              source_type: 'vendor',
+              // sip_timestamp is a REAL exchange time — the only source that has one.
+              exchange_timestamp: t.sip_timestamp
+                ? new Date(t.sip_timestamp / 1_000_000).toISOString()
+                : null,
+              // Polygon's free tier serves 15-min-delayed/EOD data, never realtime.
+              is_delayed: true,
+              estimated_delay_seconds: 900,
+            }),
             exchange: String(t.exchange ?? 'UNKNOWN'),
             conditions: Array.isArray(t.conditions) ? t.conditions : [],
             // Polygon condition 4 marks an Intermarket Sweep Order.
@@ -1002,6 +1164,7 @@ function startPolygonIngestion(): void {
           }));
         }
       }
+      reportSuccess('polygon');
     } catch (err: any) {
       // Every failure is reported, and the vendor's own words are what get
       // reported. This used to swallow anything that was not a 403 and, for a
@@ -1010,12 +1173,19 @@ function startPolygonIngestion(): void {
       // wrong about why the feed was down. Polygon names the reason in the
       // body (NOT_AUTHORIZED vs. an entitlement message); that is the thing
       // worth reading, so pass it through rather than editorializing.
+      const detail = describeHttpError(err);
+      // Never swallow: log source and cause before anything else.
+      console.error(`[polygon] poll failed: ${detail}`);
+      // The quota manager needs to see the failure too, so a dead provider
+      // backs off instead of continuing to consume its budget.
+      reportFailure('polygon');
       sources['polygon'] = 'error';
-      sourceErrors['polygon'] = describeHttpError(err);
+      sourceErrors['polygon'] = detail;
     }
   }
 
-  setInterval(poll, 10_000);
+  // 15s ⇒ 4 req/min, inside the verified 5 req/min free-tier budget.
+  setInterval(poll, 15_000);
   poll();
 }
 
@@ -1066,8 +1236,26 @@ const SIM_SPOTS: Record<string, number> = {
   SPY: 580, QQQ: 480, NVDA: 140, AAPL: 220, TSLA: 250, MSFT: 410, MSTR: 380, AMD: 165,
 };
 
-function startSimulationFeed(): void {
+// Exported so the simulation-quarantine tests can call it directly and assert
+// that it refuses to start in live mode.
+export function startSimulationFeed(): void {
   if (simInterval) return;
+
+  // Hard gate: the simulation generator does not start in live mode. A live
+  // deployment with no upstream feed shows an empty tape, not invented flow.
+  // main dropped this gate; it is restored here deliberately.
+  if (!syntheticGeneratorsAllowed()) {
+    markPolicyRefusal(
+      'simulation',
+      'Refused by policy — DATA_MODE=live. The simulation feed generates prints ' +
+      'rather than observing them, so it does not run in live mode. This is not ' +
+      'a credential problem and no variable enables it; an empty tape is the ' +
+      'honest answer when no upstream feed is configured.',
+    );
+    console.log('[ingestion] live mode — simulation feed refused');
+    return;
+  }
+
   sources['simulation'] = 'connected';
 
   simInterval = setInterval(() => {
@@ -1170,7 +1358,7 @@ function simulatePrints(symbol: string, spot: number, ts: number): RawPrint[] {
 function generateFlowFromSpot(symbol: string, spotPrice: number, source: string): void {
   if (!(spotPrice > 0)) return;
   const prints = simulatePrints(symbol, spotPrice, Date.now())
-    .map((pr) => ({ ...pr, source }));
+    .map((pr) => ({ ...pr, source, provenance: syntheticProvenance(source) }));
   emitSignals(prints.flatMap(ingestPrint));
 }
 
@@ -1185,6 +1373,39 @@ function isoDatePlusDays(fromTs: number, days: number): string {
 const BATCH_WINDOW_MS = 100;
 const broadcastQueue: FlowEvent[] = [];
 let batchTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * The single emit boundary for flow events. Every generator and connector
+ * funnels through here, so the provenance rules are enforced in exactly one
+ * place and cannot be bypassed by adding a new producer.
+ *
+ * MERGE NOTE: main routed finalized signals straight into `flowEvents` via
+ * `emitSignals`, bypassing this guard entirely. That is the Wave 1 firewall's
+ * whole purpose, so `emitSignals` now delegates here per event rather than
+ * pushing directly.
+ */
+export function addFlowEvent(event: FlowEvent): void {
+  const rejection = rejectEmission(event);
+  if (rejection) {
+    // Log with full provenance so a drop is diagnosable, never silent.
+    console.warn(
+      `[ingestion] DROPPED id=${event.id} reason=${rejection} ${provenanceLogLine(event.provenance)}`,
+    );
+    return;
+  }
+
+  // Real measured arrival — this is what /api/health reports staleness from.
+  recordEvent(event.source, event.provenance);
+
+  flowEvents.unshift(event);
+  if (flowEvents.length > MAX_FLOW_EVENTS) {
+    flowEvents = flowEvents.slice(0, MAX_FLOW_EVENTS);
+  }
+
+  if (!ioInstance) return;
+  broadcastQueue.push(event);
+  scheduleBroadcast();
+}
 
 /**
  * Store + broadcast finalized signals.
@@ -1215,8 +1436,11 @@ function startSignalHistory(): void {
   // purpose, so it is refused in the rights registry, and reaching for it here
   // would route around that refusal.
   grader = new SignalGrader(store, (underlying) => {
+    // `getSpotPrice` now returns `null` for a cache miss rather than 0, so the
+    // two cases are distinguishable here instead of relying on this guard being
+    // the only thing between a missing mark and a graded outcome of -100%.
     const px = getSpotPrice(underlying);
-    return px > 0 ? px : undefined;
+    return px !== null && px > 0 ? px : undefined;
   });
 
   onSignal((sig, origin) => {
@@ -1276,17 +1500,13 @@ export function getSignalHistoryStatus() {
 
 function emitSignals(events: FlowEvent[]): void {
   if (events.length === 0) return;
+  for (const event of events) addFlowEvent(event);
+}
 
-  for (const event of events) flowEvents.unshift(event);
-  if (flowEvents.length > MAX_FLOW_EVENTS) {
-    flowEvents = flowEvents.slice(0, MAX_FLOW_EVENTS);
-  }
-
-  if (!ioInstance) return;
-  broadcastQueue.push(...events);
-  if (batchTimer) return;
+function scheduleBroadcast(): void {
+  if (!ioInstance || batchTimer) return;
   batchTimer = setTimeout(() => {
-    if (broadcastQueue.length > 0) ioInstance.emit('flow_batch', [...broadcastQueue]);
+    if (broadcastQueue.length > 0) ioInstance?.emit('flow_batch', [...broadcastQueue]);
     broadcastQueue.length = 0;
     batchTimer = null;
   }, BATCH_WINDOW_MS);
@@ -1294,7 +1514,7 @@ function emitSignals(events: FlowEvent[]): void {
 
 /** Convert the chain-snapshot connectors' camelCase events into RawPrints. */
 function legacyEventToPrint(e: LegacyFlowEvent, source: string): RawPrint | null {
-  if (!e.symbol || !e.expiration || !(e.size > 0)) return null;
+  if (!e.symbol || !e.expiration || !(e.size > 0) || !(e.strike > 0)) return null;
   const price = e.size > 0 ? e.premium / (e.size * 100) : 0;
   if (!(price > 0)) return null;
   return {
@@ -1314,11 +1534,21 @@ function legacyEventToPrint(e: LegacyFlowEvent, source: string): RawPrint | null
     source,
     // These connectors poll option *chains* and synthesize a print from the
     // day's aggregate volume — not real tape. Flagged so the UI can say so.
+    //
+    // The VOLUME behind this is real; the per-trade PRINT is not. The record
+    // asserts "a trade of size N happened at time T", and that specific claim
+    // was never observed — so it is synthetic, and the live-mode emit guard
+    // correctly refuses to publish it on the flow tape. Real aggregate chain
+    // data still surfaces through `getUnusualActivity`, which does not claim
+    // to be tape.
     synthetic: true,
+    provenance: syntheticProvenance(source),
   };
 }
 
 function addDarkPoolPrints(): void {
+  if (!syntheticGeneratorsAllowed()) return;
+
   const SYMBOLS = ['SPY', 'QQQ', 'NVDA', 'AAPL', 'TSLA', 'MSFT', 'AMD'];
   const spots: Record<string, number> = {
     SPY: 580, QQQ: 480, NVDA: 140, AAPL: 220, TSLA: 250, MSFT: 410, AMD: 165,
@@ -1329,7 +1559,7 @@ function addDarkPoolPrints(): void {
     const price = spots[symbol] * (1 + (Math.random() - 0.5) * 0.01);
     const size = Math.floor(Math.random() * 100_000 + 10_000);
 
-    darkPoolPrints.unshift({
+    darkPoolPrints.unshift(markSynthetic({
       id: `dp-${Date.now()}-${i}`,
       timestamp: new Date(Date.now() - 86_400_000).toISOString(),
       symbol,
@@ -1338,7 +1568,7 @@ function addDarkPoolPrints(): void {
       notional: parseFloat((price * size).toFixed(0)),
       exchange: ['FINRA', 'IEX', 'EDGX'][Math.floor(Math.random() * 3)],
       source: 'simulation',
-    });
+    }));
   }
 
   if (darkPoolPrints.length > MAX_DP_PRINTS) {
@@ -1362,8 +1592,10 @@ function seedInitialData(): void {
     const symbol = symbols[Math.floor(Math.random() * symbols.length)]!;
     // Spread across the last hour, oldest first.
     const ts = now - Math.round((60 - i) * 60_000 * (0.6 + Math.random() * 0.4));
+    // Seed rows are invented outright — tag them so the emit guard refuses to
+    // publish them in live mode, exactly as it does the simulation feed.
     prints.push(...simulatePrints(symbol, SIM_SPOTS[symbol]!, ts)
-      .map((pr) => ({ ...pr, source: 'seed' })));
+      .map((pr) => ({ ...pr, source: 'seed', provenance: syntheticProvenance('seed') })));
   }
   prints.sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0));
 
@@ -1396,13 +1628,13 @@ function generateSyntheticGEX(symbol: string): GEXLevel[] {
     const putGamma = 0.025 * Math.exp(-distFromSpot * 0.4);
     const netGEX = (callOI * callGamma - putOI * putGamma) * spot * spot * 0.01;
 
-    levels.push({
+    levels.push(markSynthetic({
       strike,
       gex: parseFloat(netGEX.toFixed(2)),
       callOI, putOI,
       callGamma: parseFloat(callGamma.toFixed(6)),
       putGamma: parseFloat(putGamma.toFixed(6)),
-    });
+    }));
   }
 
   return levels.sort((a, b) => a.strike - b.strike);

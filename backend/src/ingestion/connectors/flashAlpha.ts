@@ -4,27 +4,40 @@
  * Docs: https://flashalpha.com/api-documentation
  */
 import axios from 'axios';
+import { num } from '../parseNumeric';
 
 const API_KEY = process.env.FLASHALPHA_API_KEY || '';
 const BASE = 'https://lab.flashalpha.com';
 const SYMBOLS = ['SPX', 'SPY', 'QQQ', 'NVDA', 'AAPL', 'TSLA', 'MSFT'];
 
 export interface FlashGEXLevel {
+  /** Non-null: a level without a strike is not a level, and is dropped. */
   strike: number;
-  gex: number;
-  dex: number;
-  vex: number;
-  callGamma: number;
-  putGamma: number;
+  /**
+   * `null` when the vendor did not report the exposure — never 0. Zero net
+   * gamma at a strike is a real and meaningful reading (it is what a gamma
+   * flip looks like), so the sentinel made "no data" indistinguishable from
+   * the single most significant value on the curve.
+   */
+  gex: number | null;
+  dex: number | null;
+  vex: number | null;
+  callGamma: number | null;
+  putGamma: number | null;
   source: 'flashalpha';
 }
 
 export interface FlashGEXSummary {
   symbol: string;
-  gammaFlip: number;
-  maxPain: number;
-  callWall: number;
-  putWall: number;
+  /**
+   * `null` when absent — never 0. These are strike prices: a gamma flip or a
+   * call wall "at 0" is not a level anyone can act on, and plotting it puts a
+   * fabricated line on the chart at the bottom of the axis.
+   */
+  gammaFlip: number | null;
+  maxPain: number | null;
+  callWall: number | null;
+  putWall: number | null;
   dealerRegime: 'long' | 'short' | 'neutral';
   levels: FlashGEXLevel[];
   fetchedAt: number;
@@ -47,22 +60,31 @@ async function fetchGEX(symbol: string): Promise<void> {
       timeout: 8000,
     });
 
-    const levels: FlashGEXLevel[] = (data.strikes ?? []).map((s: any) => ({
-      strike: s.strike,
-      gex: s.net_gex ?? 0,
-      dex: s.net_dex ?? 0,
-      vex: s.net_vex ?? 0,
-      callGamma: s.call_gamma ?? 0,
-      putGamma: s.put_gamma ?? 0,
-      source: 'flashalpha' as const,
-    }));
+    const levels: FlashGEXLevel[] = (data.strikes ?? [])
+      .map((s: any) => {
+        // A level needs a strike to be a level. Rows without one are dropped
+        // rather than collapsed onto strike 0, where they would stack into a
+        // single fabricated level at the bottom of the chart.
+        const strike = num(s.strike);
+        if (strike === null || strike <= 0) return null;
+        return {
+          strike,
+          gex: num(s.net_gex),
+          dex: num(s.net_dex),
+          vex: num(s.net_vex),
+          callGamma: num(s.call_gamma),
+          putGamma: num(s.put_gamma),
+          source: 'flashalpha' as const,
+        };
+      })
+      .filter((l: FlashGEXLevel | null): l is FlashGEXLevel => l !== null);
 
     cache.set(symbol, {
       symbol,
-      gammaFlip: data.gamma_flip ?? 0,
-      maxPain: data.max_pain ?? 0,
-      callWall: data.call_wall ?? 0,
-      putWall: data.put_wall ?? 0,
+      gammaFlip: num(data.gamma_flip),
+      maxPain: num(data.max_pain),
+      callWall: num(data.call_wall),
+      putWall: num(data.put_wall),
       dealerRegime: data.dealer_regime ?? 'neutral',
       levels,
       fetchedAt: Date.now(),

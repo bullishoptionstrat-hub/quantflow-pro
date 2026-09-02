@@ -52,10 +52,16 @@ interface MacroSeries {
 interface CryptoQuote {
   symbol: string
   name: string
+  /** Non-null: the backend skips a coin it has no price for. */
   price: number
-  changePct24h: number
-  marketCap: number
-  volume24h: number
+  /**
+   * `null` when CoinGecko omitted the field. The route is the contract and this
+   * page follows it — these were `number` while the wire could send absence,
+   * and `changePct24h.toFixed(2)` would have thrown on the first such payload.
+   */
+  changePct24h: number | null
+  marketCap: number | null
+  volume24h: number | null
 }
 /**
  * `GET /api/macro` → `futures` / `indices` / `yields`.
@@ -80,16 +86,24 @@ interface StooqQuote {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-function fmt(n: number, decimals = 2) {
+function fmt(n: number | null, decimals = 2) {
+  // An absent number is not zero and must not format as one.
+  if (n === null || !Number.isFinite(n)) return '—'
   if (n >= 1e12) return `$${(n / 1e12).toFixed(1)}T`
   if (n >= 1e9) return `$${(n / 1e9).toFixed(1)}B`
   if (n >= 1e6) return `$${(n / 1e6).toFixed(1)}M`
   return n.toFixed(decimals)
 }
-function pctColor(v: number) {
+function pctColor(v: number | null) {
+  if (v === null) return 'var(--text-muted)'
   if (v > 0) return '#22c55e'
   if (v < 0) return '#ef4444'
   return 'var(--text-muted)'
+}
+/** A percentage, or an em dash. Never "0.00%" standing in for "unknown". */
+function pct(v: number | null) {
+  if (v === null || !Number.isFinite(v)) return '—'
+  return `${v > 0 ? '+' : ''}${v.toFixed(2)}%`
 }
 /**
  * What a panel shows when it has nothing.
@@ -320,7 +334,7 @@ function CryptoPanel({ data }: { data: CryptoQuote[] }) {
                   ${cryptoPrice(c.price)}
                 </td>
                 <td style={{ padding: '8px 12px', textAlign: 'right', color: pctColor(c.changePct24h), fontFamily: "'JetBrains Mono', monospace", fontWeight: 700 }}>
-                  {c.changePct24h > 0 ? '+' : ''}{c.changePct24h.toFixed(2)}%
+                  {pct(c.changePct24h)}
                 </td>
                 <td style={{ padding: '8px 12px', textAlign: 'right', color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
                   {fmt(c.marketCap)}

@@ -4,6 +4,7 @@
  * Docs: https://docs.coingecko.com
  */
 import axios from 'axios';
+import { num } from '../parseNumeric';
 
 const API_KEY = process.env.COINGECKO_API_KEY || '';
 const BASE = API_KEY
@@ -20,26 +21,40 @@ export interface CryptoQuote {
   id: string;
   symbol: string;
   name: string;
+  /**
+   * Non-null by construction: a quote with no price is not a quote, so
+   * `fetchPrices` skips the row rather than publishing `price: 0`. BTC at
+   * $0.00 rendered in the same markup as a real quote was the failure mode.
+   */
   price: number;
-  change24h: number;
-  changePct24h: number;
-  marketCap: number;
-  volume24h: number;
-  high24h: number;
-  low24h: number;
-  ath: number;
-  athChangePct: number;
+  /**
+   * `null` when CoinGecko omitted the field — never 0, which is a real reading
+   * ("unchanged on the day") and would be indistinguishable from absence.
+   */
+  change24h: number | null;
+  changePct24h: number | null;
+  marketCap: number | null;
+  volume24h: number | null;
+  high24h: number | null;
+  low24h: number | null;
+  ath: number | null;
+  athChangePct: number | null;
   lastUpdated: string;
   source: 'coingecko';
 }
 
 export interface GlobalCryptoData {
-  totalMarketCap: number;
-  totalVolume: number;
-  btcDominance: number;
-  ethDominance: number;
-  activeCurrencies: number;
-  marketCapChangePct24h: number;
+  /**
+   * `null` for any field CoinGecko's /global response omitted. Zero would be a
+   * reading — a total market cap of $0 or a BTC dominance of 0% are both
+   * statements about the market, not about the request.
+   */
+  totalMarketCap: number | null;
+  totalVolume: number | null;
+  btcDominance: number | null;
+  ethDominance: number | null;
+  activeCurrencies: number | null;
+  marketCapChangePct24h: number | null;
   source: 'coingecko';
 }
 
@@ -74,19 +89,25 @@ async function fetchPrices(): Promise<void> {
     });
 
     for (const coin of (data ?? [])) {
+      // A quote with no price is not a quote. This used to publish `price: 0`,
+      // which the macro page rendered as "$0.00" beside real quotes in the same
+      // markup — the reader had no way to tell a dead field from a real one.
+      const price = num(coin.current_price);
+      if (price === null || price <= 0) continue;
+
       const quote: CryptoQuote = {
         id: coin.id,
         symbol: CRYPTO_SYMBOLS[coin.id] ?? coin.symbol?.toUpperCase(),
         name: coin.name,
-        price: coin.current_price ?? 0,
-        change24h: coin.price_change_24h ?? 0,
-        changePct24h: coin.price_change_percentage_24h ?? 0,
-        marketCap: coin.market_cap ?? 0,
-        volume24h: coin.total_volume ?? 0,
-        high24h: coin.high_24h ?? 0,
-        low24h: coin.low_24h ?? 0,
-        ath: coin.ath ?? 0,
-        athChangePct: coin.ath_change_percentage ?? 0,
+        price,
+        change24h: num(coin.price_change_24h),
+        changePct24h: num(coin.price_change_percentage_24h),
+        marketCap: num(coin.market_cap),
+        volume24h: num(coin.total_volume),
+        high24h: num(coin.high_24h),
+        low24h: num(coin.low_24h),
+        ath: num(coin.ath),
+        athChangePct: num(coin.ath_change_percentage),
         lastUpdated: coin.last_updated ?? new Date().toISOString(),
         source: 'coingecko',
       };
@@ -108,12 +129,12 @@ async function fetchGlobal(): Promise<void> {
     const d = data?.data;
     if (!d) return;
     globalData = {
-      totalMarketCap: d.total_market_cap?.usd ?? 0,
-      totalVolume: d.total_volume?.usd ?? 0,
-      btcDominance: d.market_cap_percentage?.btc ?? 0,
-      ethDominance: d.market_cap_percentage?.eth ?? 0,
-      activeCurrencies: d.active_cryptocurrencies ?? 0,
-      marketCapChangePct24h: d.market_cap_change_percentage_24h_usd ?? 0,
+      totalMarketCap: num(d.total_market_cap?.usd),
+      totalVolume: num(d.total_volume?.usd),
+      btcDominance: num(d.market_cap_percentage?.btc),
+      ethDominance: num(d.market_cap_percentage?.eth),
+      activeCurrencies: num(d.active_cryptocurrencies),
+      marketCapChangePct24h: num(d.market_cap_change_percentage_24h_usd),
       source: 'coingecko',
     };
   } catch (err: any) {

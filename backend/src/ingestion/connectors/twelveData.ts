@@ -4,6 +4,7 @@
  * Docs: https://twelvedata.com/docs
  */
 import axios from 'axios';
+import { num } from '../parseNumeric';
 import WebSocket from 'ws';
 
 const API_KEY = process.env.TWELVE_DATA_API_KEY || '';
@@ -13,10 +14,16 @@ const WATCHED = ['SPY', 'QQQ', 'NVDA', 'AAPL', 'TSLA', 'MSFT', 'AMD', 'META', 'A
 
 export interface SpotQuote {
   symbol: string;
+  /** The mark. A quote is not published without one. */
   price: number;
-  change: number;
-  changePct: number;
-  volume: number;
+  /**
+   * `null` when TwelveData omitted the field — never 0. An unchanged session
+   * is a real reading of 0.00, so the sentinel made "flat" and "no data"
+   * the same value, and `parseFloat` made an error string parse as a number.
+   */
+  change: number | null;
+  changePct: number | null;
+  volume: number | null;
   timestamp: number;
   source: 'twelvedata';
 }
@@ -33,8 +40,16 @@ export function getSpotQuotes(): Map<string, SpotQuote> {
   return spotCache;
 }
 
-export function getSpotPrice(symbol: string): number {
-  return spotCache.get(symbol)?.price ?? 0;
+/**
+ * `null` for a symbol we have no spot for — never 0.
+ *
+ * The grader marks signals against this. A price of 0 would grade every
+ * outcome as a total loss with total confidence; the one caller guards with
+ * `px > 0`, but the type said `number`, so the guard was the only thing
+ * standing between a cache miss and a fabricated mark.
+ */
+export function getSpotPrice(symbol: string): number | null {
+  return spotCache.get(symbol)?.price ?? null;
 }
 
 function startWebSocket(): void {
@@ -51,10 +66,10 @@ function startWebSocket(): void {
       if (msg.event === 'price' && msg.symbol && msg.price) {
         const quote: SpotQuote = {
           symbol: msg.symbol,
-          price: parseFloat(msg.price),
-          change: parseFloat(msg.day_change ?? 0),
-          changePct: parseFloat(msg.day_change_percent ?? 0),
-          volume: parseInt(msg.volume ?? 0),
+          price: num(msg.price) ?? 0,
+          change: num(msg.day_change),
+          changePct: num(msg.day_change_percent),
+          volume: num(msg.volume),
           timestamp: msg.timestamp ?? Date.now(),
           source: 'twelvedata',
         };
@@ -62,10 +77,14 @@ function startWebSocket(): void {
         onSpotUpdate?.(quote);
         wsCreditsUsed++;
       }
-    } catch {}
+    } catch (err: any) {
+      console.error(`[twelvedata] message handling failed: ${err?.message ?? err}`);
+    }
   });
 
-  ws.on('error', () => {});
+  ws.on('error', (err) => {
+    console.error(`[twelvedata] websocket error: ${err?.message ?? err}`);
+  });
   ws.on('close', () => { setTimeout(startWebSocket, 5000); });
 }
 
@@ -81,10 +100,10 @@ async function fetchQuotesBatch(): Promise<void> {
       if (!q || q.status === 'error') return;
       const quote: SpotQuote = {
         symbol: sym,
-        price: parseFloat(q.close ?? q.price ?? 0),
-        change: parseFloat(q.change ?? 0),
-        changePct: parseFloat(q.percent_change ?? 0),
-        volume: parseInt(q.volume ?? 0),
+        price: num(q.close) ?? num(q.price) ?? 0,
+        change: num(q.change),
+        changePct: num(q.percent_change),
+        volume: num(q.volume),
         timestamp: Date.now(),
         source: 'twelvedata',
       };
