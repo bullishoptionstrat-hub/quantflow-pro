@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { apiFetch } from '@/lib/apiFetch'
+import { fmt, pctColor, pcrColor, cryptoPrice } from '@/lib/format'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 /**
@@ -80,17 +81,6 @@ interface StooqQuote {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-function fmt(n: number, decimals = 2) {
-  if (n >= 1e12) return `$${(n / 1e12).toFixed(1)}T`
-  if (n >= 1e9) return `$${(n / 1e9).toFixed(1)}B`
-  if (n >= 1e6) return `$${(n / 1e6).toFixed(1)}M`
-  return n.toFixed(decimals)
-}
-function pctColor(v: number) {
-  if (v > 0) return '#22c55e'
-  if (v < 0) return '#ef4444'
-  return 'var(--text-muted)'
-}
 /**
  * What a panel shows when it has nothing.
  *
@@ -117,29 +107,7 @@ function EmptyState({ what, why }: { what: string; why?: string }) {
   )
 }
 
-/**
- * A crypto price, at enough precision to be a price.
- *
- * The old rule was `toFixed(4)` below $1, which renders SHIB at 0.0000058 as
- * **$0.0000** — a live quote displayed as zero, which is the same defect as
- * the dead sources below, just arriving through the formatter. Sub-cent
- * assets get significant digits instead of fixed decimals.
- */
-function cryptoPrice(v: number) {
-  if (v >= 1) return v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-  if (v >= 0.01) return v.toFixed(4)
-  if (!(v > 0)) return '0'
-  // Four meaningful digits however small the number is, written out rather
-  // than in exponent form, with the padding zeros trimmed back off.
-  const places = Math.max(4, -Math.floor(Math.log10(v)) + 3)
-  return v.toFixed(places).replace(/0+$/, '').replace(/\.$/, '')
-}
 
-/** Grey for a ratio we do not have. Absence is not a reading. */
-function pcrColor(v: number | null | undefined) {
-  if (v == null) return 'var(--text-muted)'
-  return v > 1 ? '#ef4444' : '#22c55e'
-}
 
 // ─── VIX Term Structure ───────────────────────────────────────────────────────
 function VIXPanel({ data }: { data: VIXData | null }) {

@@ -18,6 +18,13 @@
  * Re-record with:
  *   DEMO_MODE=1 npm run dev              # in another shell
  *   npm run preview:capture -- --out test/fixtures
+ *
+ * These are text assertions against source, which is what a backend suite can
+ * reach across the directory boundary. `frontend/test/` now renders the same
+ * components against these same fixtures and asserts what a person sees — the
+ * half text matching cannot do. Both are worth having: this file catches a
+ * field name drifting, that one catches a field name being read correctly and
+ * displayed wrongly.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
