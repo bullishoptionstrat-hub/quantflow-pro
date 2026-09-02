@@ -14,8 +14,20 @@ import { CONNECTOR_CREDENTIALS, missingCredentials } from '../src/ingestion/inde
 
 const CONNECTOR_DIR = join(__dirname, '..', 'src', 'ingestion', 'connectors');
 
-/** Connector name in the table → its source file. */
+/**
+ * Connector name in the table → the file that reads its variables.
+ *
+ * Tradier, Polygon and Finnhub are implemented inline in `ingestion/index.ts`
+ * rather than in `connectors/`, which is why they were missing from the table
+ * entirely until `tools/collection/doctor.ts` asked which variable enables
+ * Tradier and got nothing back.
+ */
+const INLINE = '../index.ts';
+
 const FILES: Record<string, string> = {
+  tradier: INLINE,
+  polygon: INLINE,
+  finnhub: INLINE,
   flashalpha: 'flashAlpha.ts',
   marketdata: 'marketData.ts',
   schwab: 'schwab.ts',
@@ -42,7 +54,7 @@ test('every connector in the table has a source file, and vice versa', () => {
     assert.ok(FILES[name], `${name} is in the table but has no mapped source file`);
   }
   const onDisk = readdirSync(CONNECTOR_DIR).filter((f) => f.endsWith('.ts'));
-  const mapped = new Set(Object.values(FILES));
+  const mapped = new Set(Object.values(FILES).filter((f) => f !== INLINE));
   // cboeOptions and occ are started separately, not through startConnector.
   const exempt = new Set(['cboeOptions.ts', 'occ.ts']);
   for (const f of onDisk) {
