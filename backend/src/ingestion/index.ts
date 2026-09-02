@@ -413,6 +413,15 @@ export function getUnusualActivity(symbol?: string) {
  * names are already documented in `.env.example`. Values never appear here.
  */
 export const CONNECTOR_CREDENTIALS: Readonly<Record<string, readonly string[]>> = {
+  // The three legacy connectors start on their own paths rather than through
+  // `startConnector`, and were left out of this table for that reason. They
+  // still *need* credentials, and leaving them out meant nothing could answer
+  // "which variable turns Tradier on" — `tools/collection/doctor.ts` asked and
+  // got "(none listed)" for the two most likely options feeds.
+  tradier: ['TRADIER_TOKEN'],
+  polygon: ['POLYGON_API_KEY'],
+  finnhub: ['FINNHUB_API_KEY'],
+
   flashalpha: ['FLASHALPHA_API_KEY'],
   marketdata: ['MARKETDATA_TOKEN'],
   schwab: ['SCHWAB_APP_KEY', 'SCHWAB_APP_SECRET', 'SCHWAB_REFRESH_TOKEN'],

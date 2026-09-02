@@ -9,7 +9,8 @@
     "typecheck": "tsc -p tsconfig.all.json",
     "verify": "npm run typecheck && npm test",
     "preview:capture": "tsx tools/preview/capture.ts",
-    "preview": "tsx tools/preview/serve.ts"
+    "preview": "tsx tools/preview/serve.ts",
+    "collection:doctor": "tsx tools/collection/doctor.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.43.1",
