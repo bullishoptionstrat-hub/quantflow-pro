@@ -4,7 +4,7 @@ import { useStore } from '@/store/useStore'
 import { heatColor, heatBg, formatPremium } from '@/lib/utils'
 
 export default function HeatMapPage() {
-  const { flowEvents } = useStore()
+  const { flowEvents, connected } = useStore()
 
   const heatData = useMemo(() => {
     const byTicker: Record<string, { ticker: string; totalPremium: number; heat: number; count: number; calls: number; puts: number; sweeps: number }> = {}
@@ -31,6 +31,23 @@ export default function HeatMapPage() {
         <h1 style={{ fontSize: 18, fontWeight: 700, color: '#fafafa', marginBottom: 4 }}>🗺 Heat Score Map</h1>
         <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>Premium-weighted heat across all tickers · Sorted by total flow</p>
       </div>
+
+      {/*
+        An empty heat map was unreachable until now: `useFlowFeed` seeded fifty
+        invented events on mount, so there was always something to tile. With
+        the fabricator gone this renders a bare grid and no explanation unless
+        it says one.
+      */}
+      {heatData.length === 0 && (
+        <div className="card" style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', marginBottom: 24 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Nothing to map yet</div>
+          <div style={{ fontSize: 11, lineHeight: 1.7, maxWidth: 480, margin: '0 auto' }}>
+            {connected
+              ? 'The feed is connected and no signals have arrived. Tiles appear as the engine classifies flow.'
+              : 'The flow feed is not connected, so there is no flow to weight. This map is built entirely from live signals.'}
+          </div>
+        </div>
+      )}
 
       {/* Big tile heatmap */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 10, marginBottom: 24 }}>

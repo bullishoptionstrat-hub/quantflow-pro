@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { badgeFor, delayLabel, isSynthetic, type Provenance } from './provenance'
-import { clientDataMode, generateSeedFlow, syntheticAllowed } from './utils'
+import * as utils from './utils'
+import { clientDataMode, syntheticAllowed } from './utils'
 
 const upstream: Provenance = {
   source: 'tradier',
@@ -84,22 +85,18 @@ describe('client generator gating', () => {
     expect(syntheticAllowed()).toBe(true)
   })
 
-  it('EVERY generated event carries is_synthetic + is_demo', () => {
-    const events = generateSeedFlow(25)
-    expect(events).toHaveLength(25)
-    for (const e of events) {
-      expect(e.provenance?.is_synthetic).toBe(true)
-      expect(e.provenance?.is_demo).toBe(true)
-      expect(e.provenance?.raw_or_derived).toBe('derived')
-      // and therefore can only ever render as DEMO
-      expect(badgeFor(e)).toBe('DEMO')
-    }
-  })
-
-  it('generated events never claim a provider or exchange timestamp', () => {
-    for (const e of generateSeedFlow(10)) {
-      expect(e.provenance?.provider_timestamp).toBeNull()
-      expect(e.provenance?.exchange_timestamp).toBeNull()
+  it('the browser exports no flow generator at all', () => {
+    // This used to assert that every event `generateSeedFlow` produced carried
+    // is_synthetic + is_demo, so it could only ever render as DEMO. That was
+    // the weaker fix: the eight-second caller fed `handleEvent`, which speaks
+    // a trade aloud above heat 80 and raises an OS notification above 85, and
+    // neither reads provenance. Flagging the output would have left the
+    // terminal announcing invented sweeps with a badge on them.
+    //
+    // The generator is deleted instead, so the assertion is now that it does
+    // not exist. Reintroducing one under any of these names fails here.
+    for (const name of ['generateSeedFlow', 'generateDarkPool', 'generateGEX']) {
+      expect(utils as Record<string, unknown>).not.toHaveProperty(name)
     }
   })
 })

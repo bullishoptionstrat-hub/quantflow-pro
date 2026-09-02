@@ -89,9 +89,8 @@ export interface ClassifiedSignal {
    * was not actionable at the burst's first tick; measuring from here grants
    * a backtest that 500 ms of free information and makes every excursion look
    * better than it was. Kept because the wire contract and the UI use it as a
-   * display timestamp. For any measurement, use the consumer's own decision
-   * timestamp instead — in this repo's backend that is `decisionAt`, built in
-   * persistence/identity.ts.
+   * display timestamp. Use `decisionAt` (see persistence/identity.ts) for any
+   * measurement.
    */
   ts: number;
   /** ts of the LAST print in the cluster — when the cluster was complete. */

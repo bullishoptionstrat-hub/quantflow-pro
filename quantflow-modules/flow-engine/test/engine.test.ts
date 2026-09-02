@@ -5,6 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { FlowEngine } from "../src/engine.js";
+import { NbboBook } from "../src/nbbo.js";
 import { ClassifiedSignal, ContractStats } from "../src/types.js";
 import {
   ambiguousScenario,
@@ -149,4 +150,67 @@ test("every signal carries a complete audit trail of print ids", () => {
   resetSeq(); // ids are assigned at fixture construction time
   const signals = run(buySweepScenario(c));
   assert.deepEqual(signals[0]!.printIds, ["syn_1", "syn_2", "syn_3"]);
+});
+
+// ─── Look-ahead ─────────────────────────────────────────────────────────────
+
+/**
+ * A quote timestamped after the trade must never infer a side.
+ *
+ * `inferSide` gated staleness with `tradeTs - nbbo.ts > maxAgeMs`. That is a
+ * subtraction, so a quote stamped AFTER the trade produces a negative age and
+ * passes — the engine would read the side of a print off an NBBO that may
+ * already reflect that very print. Nothing exercised it while every quote
+ * arrived carrying its own trade's timestamp, but an independent quote feed
+ * (a Polygon NBBO poll, a replay with interleaved quotes) walks straight in.
+ *
+ * This is the same class of error as measuring an outcome from `ClassifiedSignal.ts`
+ * instead of `decisionAt`: information that did not exist at decision time,
+ * handed to the decision for free, and every result comes out flattering.
+ */
+test("a quote from after the trade is not evidence about it", () => {
+  const book = new NbboBook();
+  const sym = "SPY260918C00500000";
+
+  // Quote lands one millisecond after the print.
+  book.onQuote({ ts: T0 + 1, contractSymbol: sym, bid: 1.00, ask: 1.10 });
+
+  // At the ask — would read BUY if the future quote were allowed.
+  assert.equal(
+    book.inferSide(sym, 1.10, T0, 2_000), "AMBIGUOUS",
+    "a later quote must not give a trade its direction",
+  );
+});
+
+test("a quote from well after the trade is refused however wide the age window", () => {
+  const book = new NbboBook();
+  const sym = "SPY260918C00500000";
+  book.onQuote({ ts: T0 + 60_000, contractSymbol: sym, bid: 1.00, ask: 1.10 });
+  // A generous maxAge must not become a licence to look forward.
+  assert.equal(book.inferSide(sym, 1.10, T0, 3_600_000), "AMBIGUOUS");
+});
+
+test("a quote at exactly the trade timestamp is still usable", () => {
+  // The boundary the fix must not break: every existing source publishes the
+  // NBBO stamped with its own trade's timestamp, so `nbbo.ts === tradeTs` is
+  // the normal case, not an edge one.
+  const book = new NbboBook();
+  const sym = "SPY260918C00500000";
+  book.onQuote({ ts: T0, contractSymbol: sym, bid: 1.00, ask: 1.10 });
+  assert.equal(book.inferSide(sym, 1.10, T0, 2_000), "BUY");
+  assert.equal(book.inferSide(sym, 1.00, T0, 2_000), "SELL");
+});
+
+test("a quote from before the trade still ages out normally", () => {
+  const book = new NbboBook();
+  const sym = "SPY260918C00500000";
+  book.onQuote({ ts: T0 - 5_000, contractSymbol: sym, bid: 1.00, ask: 1.10 });
+  assert.equal(
+    book.inferSide(sym, 1.10, T0, 2_000), "AMBIGUOUS",
+    "5s old against a 2s window is stale",
+  );
+  assert.equal(
+    book.inferSide(sym, 1.10, T0, 10_000), "BUY",
+    "the same quote inside a wider window is fine",
+  );
 });

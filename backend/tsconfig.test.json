@@ -1,17 +1,19 @@
 {
-  // Typechecks the tests, which `tsconfig.json` deliberately excludes because
-  // they must not be emitted into dist/. Without this, a test can call a
-  // function with the wrong signature and only fail at run time — or, worse,
-  // pass for the wrong reason.
+  // Typechecks the tests and the dev tools, both of which `tsconfig.json`
+  // deliberately excludes because they must not be emitted into dist/.
+  // Without this, a test can call a function with the wrong signature and only
+  // fail at run time — or, worse, pass for the wrong reason. `tools/` has the
+  // same exposure and one extra reason to care: `tools/preview/serve.ts`
+  // imports `authenticateSocket` from src, so a change to that signature
+  // should break the preview here rather than at someone's next demo.
   //
-  // NOTE: `npm run typecheck` runs `tsconfig.all.json`, which is a strict
-  // superset of this graph (it adds `scripts/**`). This file is kept as the
-  // narrower tests-only entry point; if the two ever disagree, all.json is the
-  // one CI enforces.
+  // NOTE: `npm run typecheck` runs `tsconfig.all.json`, which covers the same
+  // ground plus `scripts/**`. This file is kept as the narrower entry point;
+  // all.json is the one CI enforces, so the two must not disagree.
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": true,
     "rootDir": "."
   },
-  "include": ["src/**/*", "test/**/*"]
+  "include": ["src/**/*", "test/**/*", "tools/**/*"]
 }

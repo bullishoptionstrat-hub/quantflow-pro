@@ -3,7 +3,6 @@ import { useRef, useState, useCallback } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useStore } from '@/store/useStore'
 import { useFlowFeed } from '@/hooks/useFlowFeed'
-import { ProvenanceBadge } from '@/components/ui/ProvenanceBadge'
 import { HeatBadge, SentimentBadge, OrderBadge, PremiumBadge } from '@/components/ui/HeatBadge'
 import { FlowFilters } from './FlowFilters'
 import { FlowStats } from './FlowStats'
@@ -37,8 +36,8 @@ function SortHeader({ col, sort, onSort }: { col: string; sort: [string, 'asc'|'
 }
 
 export function FlowFeed() {
-  useFlowFeed() // activate feed + simulator
-  const { flowEvents, filters } = useStore()
+  useFlowFeed() // subscribes to the socket; nothing is generated locally
+  const { flowEvents, filters, connected } = useStore()
   const [sort, setSort] = useState<[string, 'asc'|'desc']>(['time', 'desc'])
   const [chartSymbol, setChartSymbol] = useState<string | null>(null)
   const [isLoading] = useState(false)
@@ -151,11 +150,30 @@ export function FlowFeed() {
                         {formatTime(e.created_at)}
                       </td>
                       <td className="col-symbol">
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                          <span className="ticker-pill">{e.underlying}</span>
-                          {/* Every rendered event shows its own provenance. */}
-                          <ProvenanceBadge carrier={e} showDelay={false} />
-                        </span>
+                        <span className="ticker-pill">{e.underlying}</span>
+                        {/*
+                          `synthetic` is an honesty contract the backend has
+                          maintained all along and the terminal never showed.
+                          It is set on simulated prints, on replayed history,
+                          and on chain-snapshot connectors (marketData, schwab,
+                          tastytrade, yahoo) that synthesize a print from
+                          aggregate volume — so in a fully credentialed
+                          deployment some rows are constructed and some are
+                          observed tape, and until now nothing distinguished
+                          them. The demo banner is all-or-nothing and cannot:
+                          this is per row, which is the case that matters.
+                        */}
+                        {e.synthetic && (
+                          <span
+                            title="Constructed from aggregate volume or generated — not an observed print"
+                            style={{
+                              marginLeft: 5, fontSize: 8, fontWeight: 700, letterSpacing: '0.06em',
+                              padding: '1px 4px', borderRadius: 3, verticalAlign: 'middle',
+                              fontFamily: "'JetBrains Mono', monospace",
+                              background: 'rgba(251,191,36,0.14)', color: '#fde68a',
+                            }}
+                          >SYN</span>
+                        )}
                       </td>
                       <td className="col-exp" style={{ color: 'var(--text-secondary)', fontSize: 11 }}>
                         {formatExpiry(e.expiry)}
@@ -186,6 +204,31 @@ export function FlowFeed() {
               </tbody>
             )}
           </table>
+
+          {/*
+            An empty feed used to be impossible: the hook seeded fifty invented
+            events on mount and made one more every eight seconds. Now it can
+            be empty, and the three reasons are not the same thing — a refused
+            socket is a configuration answer, a disconnected one is an outage,
+            and a connected-but-quiet one is just a slow tape. Saying "no data"
+            for all three sends the reader after the wrong problem.
+          */}
+          {!isLoading && sorted.length === 0 && (
+            <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)' }}>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
+                {connected
+                  ? flowEvents.length === 0 ? 'No flow yet' : 'No flow matches these filters'
+                  : 'Not connected to the flow feed'}
+              </div>
+              <div style={{ fontSize: 11, lineHeight: 1.7, maxWidth: 520, margin: '0 auto' }}>
+                {connected
+                  ? flowEvents.length === 0
+                    ? 'The feed is connected and the tape is quiet. Signals appear here as the engine classifies them.'
+                    : `${flowEvents.length} signal(s) received; none pass the current filters.`
+                  : 'Either the backend is unreachable, or it refused the socket — the feed needs a signed-in session, or a deployment with DEMO_MODE=1. The browser console carries which. Nothing is shown in the meantime; this panel used to fill itself with generated prints.'}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

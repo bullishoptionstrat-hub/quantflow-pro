@@ -18,13 +18,30 @@ create table if not exists public.user_profiles (
   updated_at    timestamptz not null default now()
 );
 
--- API key storage (encrypted at rest via Supabase vault in production)
+-- API key storage — UNUSED. Nothing in the codebase reads or writes this table.
+--
+-- It cannot work as designed. The backend reads TRADIER_TOKEN and every other
+-- credential once at module load, into module-level consts, and runs a single
+-- process-wide ingestion pipeline broadcasting one global flow_batch. There is
+-- no per-user key path for these rows to feed, and making one would mean
+-- running ingestion per user.
+--
+-- The settings page used to present a form that appeared to save into this
+-- shape; it discarded what you typed and reported success. That form is gone.
+-- Keys are backend environment variables (see the root render.yaml).
+--
+-- Left in place rather than dropped: this file is run by hand in the Supabase
+-- SQL editor, so what is actually deployed cannot be verified from here, and a
+-- DROP with its RLS policies, index and trigger is a decision for whoever knows
+-- that. Do not start using it without resolving the plaintext column below.
 create table if not exists public.api_keys (
   id            uuid primary key default gen_random_uuid(),
   user_id       uuid not null references auth.users(id) on delete cascade,
   provider      text not null,   -- 'tradier' | 'polygon' | 'alpaca' | 'finnhub' | etc.
   key_name      text not null,   -- display label
-  key_value     text not null,   -- should be encrypted in production
+  -- Plaintext. Nothing writes here today; if that changes, this column needs
+  -- Supabase Vault first, not a comment saying it should have it.
+  key_value     text not null,
   is_active     boolean not null default true,
   created_at    timestamptz not null default now(),
   updated_at    timestamptz not null default now(),

@@ -1,93 +1,102 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { formatPremium, formatTime } from '@/lib/utils'
-import { HeatBadge } from '@/components/ui/HeatBadge'
 import { TableSkeleton } from '@/components/ui/Skeleton'
-import type { DarkPoolPrint } from '@/lib/types'
-import { DemoModeBanner } from '@/components/ui/ProvenanceBadge'
-import { useDataMode } from '@/hooks/useDataMode'
-
-const EXCHANGES = ['NYSE', 'NASDAQ', 'CBOE', 'BATS', 'IEX', 'DARK_NYSE', 'DARK_NASDAQ']
+import { apiFetch } from '@/lib/apiFetch'
+import type { DarkPoolPrint, DarkPoolResponse } from '@/lib/types'
 
 /**
- * FABRICATED DATA. There is no dark-pool feed in this build (KNOWN_LIMITATIONS #1).
- * Note also that FINRA ATS data — the only free option — is WEEKLY AGGREGATED
- * VOLUME, never intraday prints, so a future real integration must not be
- * labeled "prints" either.
+ * Dark pool prints, from `/api/darkpool`.
+ *
+ * This page used to call `generateDarkPool()`: random tickers, random sizes,
+ * random exchanges — including `DARK_NYSE` and `DARK_NASDAQ`, which are not
+ * exchange codes — random `repeat_count`, and prices hardcoded at 2024 values
+ * (AAPL 212, NVDA 942). A new invented print was pushed in every 20 seconds so
+ * the table looked live. Above it sat a badge reading **⚠ 24-HOUR DELAY**,
+ * which asserts these are real prints held back for regulatory reasons.
+ *
+ * Wiring the endpoint does **not** make this page real, and the commit should
+ * not be read that way: the backend's own prints currently carry
+ * `source: "simulation"` when no vendor feed is configured. What changes is
+ * that the page stops asserting things nobody knows. The backend already
+ * publishes `notice` and `disclaimer` fields — the actual regulatory language
+ * — and the page rendered neither, preferring a badge it made up. Rows that
+ * are simulated now say so, per row, the way `synthetic` marks a flow signal.
  */
-function generateDarkPool(count = 30): DarkPoolPrint[] {
-  const tickers = ['NVDA','AAPL','MSFT','META','TSLA','AMZN','GOOGL','AMD','MU','MRVL','SPY','QQQ','IWM','GLD','XLF','SOXL']
-  return Array.from({ length: count }, (_, i) => {
-    const ticker = tickers[Math.floor(Math.random() * tickers.length)]
-    const price = ticker === 'AAPL' ? 212 : ticker === 'MSFT' ? 428 : ticker === 'NVDA' ? 942 : Math.floor(Math.random() * 300 + 50)
-    const size = Math.floor(Math.random() * 800000 + 10000)
-    const notional = price * size
-    return {
-      id: `dp-${i}-${Date.now()}`,
-      symbol: ticker,
-      price,
-      size,
-      notional,
-      exchange: EXCHANGES[Math.floor(Math.random() * EXCHANGES.length)],
-      condition: ['', 'BLOCK', 'SWEEP_DARK', 'INTERMARKET'][Math.floor(Math.random() * 4)],
-      created_at: new Date(Date.now() - i * 120000).toISOString(),
-      is_block: notional > 5_000_000,
-      repeat_count: Math.floor(Math.random() * 5),
-    }
-  }).sort((a, b) => b.notional - a.notional)
-}
+
+/** Above this, a print is called a block. A presentation threshold, ours. */
+const BLOCK_NOTIONAL = 5_000_000
 
 export default function DarkPoolPage() {
   const [prints, setPrints] = useState<DarkPoolPrint[]>([])
+  const [meta, setMeta] = useState<Pick<DarkPoolResponse, 'notice' | 'disclaimer'> | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    setTimeout(() => { setPrints(generateDarkPool(30)); setLoading(false) }, 800)
-    const id = setInterval(() => {
-      setPrints(prev => {
-        const [newPrint] = generateDarkPool(1)
-        return [{ ...newPrint, created_at: new Date().toISOString() }, ...prev].slice(0, 200)
-      })
-    }, 20000)
-    return () => clearInterval(id)
+    let cancelled = false
+
+    async function load() {
+      try {
+        const res = await apiFetch('/api/darkpool?limit=100')
+        if (!res.ok) throw new Error(`backend returned ${res.status}`)
+        const body: DarkPoolResponse = await res.json()
+        if (cancelled) return
+        setPrints(Array.isArray(body.data) ? body.data : [])
+        setMeta({ notice: body.notice, disclaimer: body.disclaimer })
+        setError(null)
+      } catch (e: any) {
+        if (cancelled) return
+        // An empty table with a reason beats a full one that was invented.
+        setPrints([])
+        setError(e?.message ?? 'could not reach the backend')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+
+    load()
+    const id = setInterval(load, 20_000)
+    return () => { cancelled = true; clearInterval(id) }
   }, [])
 
   const totalNotional = prints.reduce((s, p) => s + p.notional, 0)
-  const blocks = prints.filter(p => p.is_block).length
+  const blocks = prints.filter(p => p.notional > BLOCK_NOTIONAL).length
+  const simulated = prints.filter(p => p.source === 'simulation').length
 
   return (
     <div>
-      {/* This page is fabricated in EVERY mode — no dark-pool feed exists. */}
-      <div
-        data-testid="darkpool-synthetic-warning"
-        role="status"
-        style={{
-          display: 'flex', alignItems: 'center', gap: 8,
-          background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.35)',
-          color: '#fbbf24', borderRadius: 6, padding: '8px 12px', marginBottom: 14,
-          fontSize: 12, fontFamily: "'JetBrains Mono', monospace",
-        }}
-      >
-        <span style={{ fontWeight: 700 }}>DEMO DATA</span>
-        <span style={{ color: '#fcd34d' }}>
-          These prints are generated, not real. This build has no dark-pool feed. Do not trade on this.
-        </span>
-      </div>
       <div style={{ marginBottom: 16 }}>
-        <h1 style={{ fontSize: 18, fontWeight: 700, color: '#fafafa', marginBottom: 4 }}>🌑 Dark Pool Prints (Demo Data)</h1>
-        <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
-          <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>Off-exchange institutional block trades · 24-hour delay disclaimer</p>
-          <span style={{ background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.3)', color: '#fbbf24', fontSize: 10, padding: '2px 8px', borderRadius: 4, fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 }}>
-            ⚠ 24-HOUR DELAY
-          </span>
-        </div>
+        <h1 style={{ fontSize: 18, fontWeight: 700, color: '#fafafa', marginBottom: 4 }}>🌑 Dark Pool Prints</h1>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>Off-exchange institutional block trades</p>
+        {/* The publisher's wording, carried through — not a badge invented here. */}
+        {meta?.notice && (
+          <div style={{ marginTop: 8, fontSize: 11, color: '#fde68a', background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.25)', borderRadius: 5, padding: '7px 10px', lineHeight: 1.6 }}>
+            {meta.notice}
+          </div>
+        )}
+        {simulated > 0 && (
+          <div style={{ marginTop: 6, fontSize: 11, color: '#fca5a5', background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.25)', borderRadius: 5, padding: '7px 10px', lineHeight: 1.6 }}>
+            {simulated === prints.length
+              ? 'Every print below is generated by the backend, not observed. No dark-pool feed is configured.'
+              : `${simulated} of ${prints.length} prints below are generated by the backend, not observed.`}
+          </div>
+        )}
       </div>
+
+      {error && (
+        <div className="card" style={{ marginBottom: 16, borderColor: 'rgba(248,113,113,0.4)' }}>
+          <div style={{ padding: 14, fontSize: 12, color: '#fca5a5' }}>
+            Could not reach the backend — {error}. Nothing below is current.
+          </div>
+        </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 16 }}>
         {[
           { label: 'TOTAL NOTIONAL', value: formatPremium(totalNotional), color: '#fafafa' },
-          { label: 'BLOCK TRADES', value: blocks.toString(), color: '#fbbf24' },
-          { label: 'PRINTS TODAY', value: prints.length.toString(), color: '#a78bfa' },
+          { label: `BLOCKS > ${formatPremium(BLOCK_NOTIONAL)}`, value: blocks.toString(), color: '#fbbf24' },
+          { label: 'PRINTS RETURNED', value: prints.length.toString(), color: '#a78bfa' },
         ].map(s => (
           <div key={s.label} className="card" style={{ padding: '12px 14px' }}>
             <div style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: '0.1em', fontWeight: 600, marginBottom: 6 }}>{s.label}</div>
@@ -105,44 +114,53 @@ export default function DarkPoolPage() {
           <table className="flow-table">
             <thead>
               <tr>
-                <th>TIME</th>
-                <th>SYMBOL</th>
-                <th>PRICE</th>
-                <th>SIZE</th>
-                <th>NOTIONAL</th>
-                <th>EXCHANGE</th>
-                <th>CONDITION</th>
-                <th>REPEAT</th>
+                <th>TIME</th><th>SYMBOL</th><th>PRICE</th><th>SIZE</th>
+                <th>NOTIONAL</th><th>EXCHANGE</th><th>SOURCE</th>
               </tr>
             </thead>
-            {loading ? <TableSkeleton rows={10} /> : (
+            {loading ? <TableSkeleton rows={10} /> : prints.length === 0 ? (
               <tbody>
-                {prints.map(p => (
-                  <tr key={p.id} style={{ borderLeft: p.is_block ? '2px solid #fbbf24' : '2px solid transparent' }}>
-                    <td style={{ color: 'var(--text-muted)', fontSize: 11 }}>{formatTime(p.created_at)}</td>
-                    <td><span className="ticker-pill">{p.symbol}</span></td>
-                    <td style={{ fontWeight: 600 }}>${p.price.toFixed(2)}</td>
-                    <td>{p.size.toLocaleString()}</td>
-                    <td style={{ color: p.is_block ? '#fbbf24' : '#fafafa', fontWeight: p.is_block ? 700 : 400 }}>
-                      {p.is_block ? '🐋 ' : ''}{formatPremium(p.notional)}
-                    </td>
-                    <td style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: "'JetBrains Mono', monospace" }}>{p.exchange}</td>
-                    <td>
-                      {p.condition && (
-                        <span style={{ background: 'rgba(139,92,246,0.1)', color: '#a78bfa', fontSize: 10, padding: '2px 6px', borderRadius: 3, fontFamily: "'JetBrains Mono', monospace" }}>
-                          {p.condition}
-                        </span>
-                      )}
-                    </td>
-                    <td style={{ color: p.repeat_count > 2 ? '#f97316' : 'var(--text-muted)', fontWeight: p.repeat_count > 2 ? 700 : 400 }}>
-                      {p.repeat_count > 0 ? `×${p.repeat_count}` : '—'}
-                    </td>
-                  </tr>
-                ))}
+                <tr><td colSpan={7} style={{ textAlign: 'center', padding: '28px 16px', color: 'var(--text-muted)', fontSize: 12 }}>
+                  {error ? 'No prints — the backend is unreachable.' : 'No dark pool prints reported.'}
+                </td></tr>
+              </tbody>
+            ) : (
+              <tbody>
+                {prints.map(p => {
+                  const isBlock = p.notional > BLOCK_NOTIONAL
+                  const sim = p.source === 'simulation'
+                  return (
+                    <tr key={p.id} style={{ borderLeft: isBlock ? '2px solid #fbbf24' : '2px solid transparent' }}>
+                      <td style={{ color: 'var(--text-muted)', fontSize: 11 }}>{formatTime(p.timestamp)}</td>
+                      <td><span className="ticker-pill">{p.symbol}</span></td>
+                      <td style={{ fontWeight: 600 }}>${p.price.toFixed(2)}</td>
+                      <td>{p.size.toLocaleString()}</td>
+                      <td style={{ color: isBlock ? '#fbbf24' : '#fafafa', fontWeight: isBlock ? 700 : 400 }}>
+                        {isBlock ? '🐋 ' : ''}{formatPremium(p.notional)}
+                      </td>
+                      <td style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: "'JetBrains Mono', monospace" }}>{p.exchange}</td>
+                      <td>
+                        {/* Per row, because a mixed table is the case that matters:
+                            one observed print beside one generated one, told apart. */}
+                        <span style={{
+                          fontSize: 10, padding: '2px 6px', borderRadius: 3, fontWeight: 700,
+                          fontFamily: "'JetBrains Mono', monospace",
+                          background: sim ? 'rgba(248,113,113,0.12)' : 'rgba(34,197,94,0.12)',
+                          color: sim ? '#fca5a5' : '#86efac',
+                        }}>{sim ? 'SIMULATED' : p.source.toUpperCase()}</span>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             )}
           </table>
         </div>
+        {meta?.disclaimer && (
+          <div style={{ padding: '10px 14px', borderTop: '1px solid var(--border)', fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+            {meta.disclaimer}
+          </div>
+        )}
       </div>
     </div>
   )
