@@ -50,7 +50,6 @@ export interface FlowEvent {
   spot_price: number
   created_at: string
   source: string
-  ml_score?: number
 
   // ── Engine-native fields ──
   side?: InferredSide
@@ -109,7 +108,6 @@ export interface PowerAlert {
   alert_type: 'SWEEP' | 'BLOCK' | 'DARK_POOL' | 'GEX_FLIP' | 'ML_SIGNAL'
   message: string
   heat_score: number
-  ml_score: number
   created_at: string
   flow_event_id?: string
 }

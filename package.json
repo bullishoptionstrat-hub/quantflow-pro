@@ -22,7 +22,6 @@
     "verify:frontend:test": "npm --prefix frontend test",
     "verify:frontend:types": "npm --prefix frontend run typecheck",
     "verify:migrations": "./scripts/verify-migrations.sh",
-    "verify:ml": "./scripts/verify-ml.sh",
     "verify:modules": "npm run verify:flow-engine && npm run verify:firecrawl",
     "verify:rls": "./scripts/verify-rls.sh",
     "verify:secrets": "./scripts/secret-scan.sh",

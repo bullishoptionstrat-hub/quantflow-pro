@@ -125,3 +125,33 @@ The durable fix for all three is a `DataResult<T>` at the connector boundary
 rather than nullable fields. That remains unbuilt: it would replace `num()`
 across ~15 files and change the shape of four public routes, which is a larger
 and separable change than this finding.
+
+## The ML service was deleted, including its staging gates (main PR #24)
+
+`ml-service/` is gone. The reasoning is main's and it is correct: nothing in
+`backend/src` called it, and `train.py` drew the label first
+(`is_unusual = rng.random() < 0.25`) before sampling features from two
+hand-written distributions conditioned on it — so any classifier fit to that
+data recovers the author's branch, not a market. The live hazard was the
+`PowerAlert.ml_score` slot on the wire, which `power-alerts/page.tsx` rendered
+as "ML CONFIDENCE: N%" gated on `> 0`: unpopulated today, one assignment away
+from a green confidence figure with no provenance beside a real signal.
+
+**This branch's Wave 8 work went with it, deliberately.** `model_registry.py`
+staged models RESEARCH -> CANDIDATE -> SHADOW -> VALIDATED -> PRODUCTION and
+`main.py` refused to serve below VALIDATED; `train_real.py` trained only on
+`flow_outcomes` with a hard 1000-sample floor, chronological splits, and
+purge/embargo — and correctly refused to train at 0 real samples.
+`test_ml_gates.py` proved those refusals.
+
+That was the weaker fix, in the same way gating `generateSeedFlow` was weaker
+than deleting it: a quarantined fabricator is one line from returning, and the
+next caller does not know what it feeds. The staging discipline is preserved in
+git history (`ml-service/` at 577982c) if a model is ever wanted again. Nothing
+can train one today regardless — `collection:doctor` names the four independent
+conditions that must hold before a single real graded outcome exists, and that
+path is blocked on data, not on code.
+
+Scoring is `flow-engine/score.ts`: deterministic, and it publishes a
+per-component `score_breakdown` on every signal, which is a better thing to put
+in front of a reader than one opaque number.

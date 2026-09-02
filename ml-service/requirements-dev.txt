@@ -1,4 +1,0 @@
-# Dev-only dependencies. Not installed in production images.
-pytest==8.3.4
-# Needed only when train_real.py connects to a real database.
-psycopg[binary]==3.2.3
