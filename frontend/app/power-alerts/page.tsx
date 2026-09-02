@@ -76,11 +76,14 @@ export default function PowerAlertsPage() {
                   <div style={{ fontSize: 13, color: '#fafafa', fontFamily: "'JetBrains Mono', monospace" }}>
                     {alert.message}
                   </div>
-                  {alert.ml_score > 0 && (
-                    <div style={{ marginTop: 6, fontSize: 11, color: '#22c55e', fontFamily: "'JetBrains Mono', monospace" }}>
-                      ML CONFIDENCE: {(alert.ml_score * 100).toFixed(0)}%
-                    </div>
-                  )}
+                  {/*
+                    A "ML CONFIDENCE: N%" line rendered here, gated on
+                    `ml_score > 0`. Nothing ever populated it, and the service
+                    that would have — `ml-service/` — was trained on data from
+                    `np.random` with a fixed seed. Removed with the field, not
+                    left waiting: a slot like this is one assignment away from
+                    presenting a number with no provenance as a confidence.
+                  */}
                 </div>
                 <div style={{ textAlign: 'right', flexShrink: 0 }}>
                   <div style={{ fontSize: 22, fontWeight: 800, color: heatColor(alert.heat_score), fontFamily: "'JetBrains Mono', monospace" }}>

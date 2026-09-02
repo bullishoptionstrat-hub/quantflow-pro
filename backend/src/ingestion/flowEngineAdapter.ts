@@ -101,7 +101,10 @@ export interface WireFlowEvent {
   spot_price: number;
   created_at: string;
   source: string;
-  ml_score?: number;
+
+  // `ml_score` was declared here and never populated. The service that would
+  // have filled it is deleted; a scored signal carries `score_breakdown`, which
+  // is the deterministic engine attribution and can be checked.
 
   // ── Engine-native fields (additive; older clients ignore them) ──
   /** Quote-rule inference. AMBIGUOUS when NBBO was missing or stale. */

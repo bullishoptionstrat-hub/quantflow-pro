@@ -15,11 +15,6 @@ Built by Quantum Edge Capital LLC.
 └─────────────────────────┘                 └──────────┬───────────────┘
                                                        │
                                          ┌─────────────▼──────────────┐
-                                         │  Python FastAPI ML Service  │
-                                         │  (Render.com — free tier)  │
-                                         └─────────────────────────────┘
-                                                       │
-                                         ┌─────────────▼──────────────┐
                                          │  Supabase (Postgres + RLS) │
                                          └─────────────────────────────┘
 ```
@@ -51,8 +46,6 @@ cd frontend && npm install && cd ..
 # Backend
 cd backend && npm install && cd ..
 
-# ML Service
-cd ml-service && pip install -r requirements.txt && cd ..
 ```
 
 ### 2. Environment Variables
@@ -66,8 +59,6 @@ cp .env.example frontend/.env.local
 cp .env.example backend/.env
 # Edit backend/.env with your API keys
 
-# ML Service
-cp .env.example ml-service/.env
 ```
 
 ### 3. Run Supabase Schema
@@ -79,7 +70,6 @@ cp .env.example ml-service/.env
 ### 4. Train ML Model (optional — heuristics work without it)
 
 ```bash
-cd ml-service
 python train.py
 # Output: models/flow_scorer.pkl
 ```
@@ -90,10 +80,7 @@ python train.py
 # Terminal 1 — Backend
 cd backend && npm run dev
 
-# Terminal 2 — ML Service
-cd ml-service && uvicorn main:app --reload --port 8000
-
-# Terminal 3 — Frontend
+# Terminal 2 — Frontend
 cd frontend && npm run dev
 ```
 
@@ -163,13 +150,6 @@ Open http://localhost:3000
 | `GET /api/chain?symbol=SPY&expiration=2025-01-17` | Options chain |
 | `GET /api/chain/expirations?symbol=SPY` | Available expirations |
 
-**ML Service:**
-| Endpoint | Description |
-|----------|-------------|
-| `GET /health` | ML service health |
-| `POST /score` | Score single flow event |
-| `POST /score/batch` | Score up to 100 events |
-
 ---
 
 ## Environment Variables Reference
@@ -181,7 +161,6 @@ Open http://localhost:3000
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anonymous key |
 | `NEXT_PUBLIC_WS_URL` | Backend WebSocket URL |
-| `NEXT_PUBLIC_ML_URL` | ML service URL |
 
 ### Backend (`backend/.env`)
 
