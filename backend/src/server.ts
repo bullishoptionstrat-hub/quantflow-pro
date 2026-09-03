@@ -112,13 +112,82 @@ io.use(async (socket, next) => {
   next();
 });
 
+/**
+ * A socket event handler that cannot take the process down.
+ *
+ * Socket.IO invokes listeners through a plain EventEmitter, which does not
+ * catch. A throw inside one propagates out to Node as an `uncaughtException`,
+ * and nothing here installs a handler for that — so it terminates the process.
+ *
+ * `unsubscribe_ticker` was `(ticker: string) => socket.leave(ticker.toUpperCase())`
+ * with no guard, while `subscribe_ticker` immediately above it checked the type
+ * and the length. The asymmetry was the bug: a client emitting
+ * `unsubscribe_ticker` with **no argument at all** crashed the backend, and on
+ * a deployment with `DEMO_MODE=1` that client does not need an account. Two
+ * emits, measured:
+ *
+ *   UNCAUGHT EXCEPTION: Cannot read properties of undefined (reading 'toUpperCase')
+ *   UNCAUGHT EXCEPTION: ticker.toUpperCase is not a function
+ *   process still alive after 400ms: false
+ *
+ * The type guard below fixes that handler. This wrapper fixes the class: an
+ * argument arrives from a remote caller and is `unknown` until proven
+ * otherwise, and one careless handler should not be able to end the service.
+ */
+function safeOn(
+  socket: { on(event: string, cb: (...args: unknown[]) => void): unknown; id: string },
+  event: string,
+  handler: (...args: unknown[]) => void,
+): void {
+  socket.on(event, (...args: unknown[]) => {
+    try {
+      handler(...args);
+    } catch (err) {
+      console.error(
+        `[Socket] handler for "${event}" threw on ${socket.id}:`,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  });
+}
+
+/**
+ * How many symbol rooms one socket may join.
+ *
+ * Rooms are joinable for future targeted streams and nothing broadcasts to
+ * them yet, so a join is inert — but it is not free: socket.io tracks every
+ * room per socket, and `subscribe_ticker` had no cap on how many a single
+ * connection could accumulate.
+ */
+const MAX_ROOMS_PER_SOCKET = 50;
+
+/** A symbol a client may name: uppercase letters, digits and dots, bounded. */
+function tickerFrom(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const ticker = value.trim().toUpperCase();
+  if (!/^[A-Z0-9.]{1,10}$/.test(ticker)) return null;
+  return ticker;
+}
+
 io.on('connection', (socket) => {
   const who = socket.data.identity?.demo ? 'demo' : socket.data.identity?.user?.id ?? 'unknown';
   console.log(`[Socket] connected: ${socket.id} (${who})`);
-  socket.on('subscribe_ticker', (ticker: string) => {
-    if (typeof ticker === 'string' && ticker.length <= 10) socket.join(ticker.toUpperCase());
+
+  safeOn(socket, 'subscribe_ticker', (raw) => {
+    const ticker = tickerFrom(raw);
+    if (!ticker) return;
+    // `socket.rooms` always contains the socket's own id, so the cap is
+    // measured against the joined rooms rather than the set size.
+    if (socket.rooms.size - 1 >= MAX_ROOMS_PER_SOCKET) return;
+    socket.join(ticker);
   });
-  socket.on('unsubscribe_ticker', (ticker: string) => socket.leave(ticker.toUpperCase()));
+
+  safeOn(socket, 'unsubscribe_ticker', (raw) => {
+    const ticker = tickerFrom(raw);
+    if (!ticker) return;
+    socket.leave(ticker);
+  });
+
   socket.on('disconnect', () => console.log(`[Socket] disconnected: ${socket.id}`));
 });
 
