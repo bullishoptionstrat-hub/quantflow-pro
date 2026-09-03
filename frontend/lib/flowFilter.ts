@@ -42,5 +42,10 @@ export function matchesFilters(e: FlowEvent, f: FlowFilters): boolean {
  * so what reaches them cannot be qualified after the fact.
  */
 export function isPowerAlert(e: FlowEvent): boolean {
-  return e.is_unusual && e.heat_score >= 75
+  // `e.is_unusual && e.heat_score >= 75` was the condition, and the second
+  // term is implied by the first: the backend sets `is_unusual` to exactly
+  // `heat_score >= 75`. Restating the threshold here made one rule look like
+  // two and gave it a second home to drift from. Read the field the backend
+  // publishes; it decides where the line is.
+  return e.is_unusual
 }

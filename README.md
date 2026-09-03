@@ -65,16 +65,22 @@ cp .env.example backend/.env
 
 1. Create a project at https://supabase.com
 2. Open the SQL Editor
-3. Run `supabase/schema.sql`
+3. Run `supabase/schema.sql` — the seven application tables
+4. Run every file in `supabase/migrations/` **in filename order**
 
-### 4. Train ML Model (optional — heuristics work without it)
+Step 4 is not optional. `schema.sql` creates none of the four tables the
+recorder and grader write to (`signal_history`, `signal_outcomes`,
+`signal_write_incidents`, `collection_gaps`); those live in
+`migrations/20260829120000_signal_history.sql`. Skipping it gives a database
+where every signal write fails and `/api/track-record` stays empty forever,
+with nothing on screen saying why. `backend/test/schemaSetup.test.ts` holds
+this instruction to the tables the code actually addresses.
 
-```bash
-python train.py
-# Output: models/flow_scorer.pkl
-```
+`supabase/gate-proofs.sql` is optional and re-runnable: it proves the
+signal-history constraints refuse what they claim to. Every `ERROR:` in its
+output is a pass.
 
-### 5. Start All Services
+### 4. Start All Services
 
 ```bash
 # Terminal 1 — Backend

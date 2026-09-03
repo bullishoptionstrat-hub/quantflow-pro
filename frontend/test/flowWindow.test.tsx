@@ -129,11 +129,16 @@ describe('alerts follow the market, not the view', () => {
     expect(s.getState().powerAlerts.map(a => a.flow_event_id)).toContain('call')
   })
 
-  test('the alert criteria are unusual and heat, and nothing else', () => {
-    expect(isPowerAlert(flow({ is_unusual: true, heat_score: 75 }))).toBe(true)
-    expect(isPowerAlert(flow({ is_unusual: true, heat_score: 74 }))).toBe(false)
+  test('the alert criterion is the backend\'s own unusual flag', () => {
+    // It was `is_unusual && heat_score >= 75`, and the backend sets
+    // `is_unusual` to exactly `heat_score >= 75` — so the second term was
+    // implied by the first and restated the threshold in a second home.
+    expect(isPowerAlert(flow({ is_unusual: true }))).toBe(true)
+    expect(isPowerAlert(flow({ is_unusual: false }))).toBe(false)
     // A sweep on its own is not an alert, whatever the page used to claim.
     expect(isPowerAlert(flow({ is_unusual: false, heat_score: 99, order_type: 'SWEEP' }))).toBe(false)
+    // And the frontend no longer holds an opinion about where the line is.
+    expect(isPowerAlert(flow({ is_unusual: true, heat_score: 10 }))).toBe(true)
   })
 
   test('an alert carries the order type that raised it', async () => {

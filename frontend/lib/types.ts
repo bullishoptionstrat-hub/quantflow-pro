@@ -39,15 +39,33 @@ export interface FlowEvent {
   total_premium: number
   heat_score: number
   sentiment: 'BULLISH' | 'BEARISH' | 'NEUTRAL'
+  /**
+   * `heat_score >= 75`, decided by the backend.
+   *
+   * `isPowerAlert` used to read `e.is_unusual && e.heat_score >= 75` — a
+   * conjunction whose second term is implied by the first, restating the
+   * backend's threshold here while looking like an independent condition.
+   * Read this field; the threshold lives in `flowEngineAdapter.ts`.
+   */
   is_unusual: boolean
   exchange_count: number
   avg_price: number
-  iv: number
-  delta: number
-  open_interest: number
+  /**
+   * Contract greeks and chain figures as the source reported them, or null.
+   *
+   * These were `?? 0` on the wire, so a print arriving without a chain
+   * snapshot published `iv: 0`, `delta: 0`, `open_interest: 0` and
+   * `spot_price: 0`. Nothing renders them yet — which is the hazard, not the
+   * consolation: a field carrying a fabricated default is one binding away
+   * from showing a zero as a fact. That is what `ml_score` was.
+   */
+  iv: number | null
+  delta: number | null
+  open_interest: number | null
   days_to_expiry: number
-  moneyness: 'ITM' | 'ATM' | 'OTM'
-  spot_price: number
+  /** `UNKNOWN` where the underlying's price was not known — it used to say OTM. */
+  moneyness: 'ITM' | 'ATM' | 'OTM' | 'UNKNOWN'
+  spot_price: number | null
   created_at: string
   source: string
 
