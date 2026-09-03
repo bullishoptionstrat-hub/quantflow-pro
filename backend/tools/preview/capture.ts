@@ -34,6 +34,13 @@ const ENDPOINTS: Endpoint[] = [
   { name: 'crypto',    path: '/api/macro/crypto' },
   { name: 'quotes',    path: '/api/macro/quotes' },
   { name: 'track',     path: '/api/track-record' },
+  // The sentiment router's own three read-only endpoints. Its enrichment
+  // routes (`/context`, `/regulatory/:slug`) are deliberately absent: they sit
+  // on `requireAuth` and spend metered Firecrawl credits per call, and a
+  // capture run must never be a way to bill this account.
+  { name: 'sentiment', path: '/api/sentiment' },
+  { name: 'news',      path: '/api/sentiment/news/headlines' },
+  { name: 'earnings',  path: '/api/sentiment/earnings/calendar' },
 ];
 
 function arg(flag: string, fallback: string): string {

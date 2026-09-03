@@ -385,3 +385,81 @@ test('the tape dates a price it can no longer vouch for', () => {
   assert.match(bar, /STALE_MS/, 'the tape needs a staleness threshold');
   assert.match(bar, /AS OF/, 'and must say when stale prices are from');
 });
+
+// ─── The news page ──────────────────────────────────────────────────────────
+
+/**
+ * Three panels, three hardcoded arrays.
+ *
+ * Two of them were unreachable-by-construction: the page tested
+ * `Array.isArray(body)` against `{ headlines: [...] }` and
+ * `{ earnings: [...] }`, so the live arrays never populated on any deployment
+ * and the fallback always won. The content is what raises this above the rest
+ * of the family — six invented headlines attributed by name to Reuters,
+ * Bloomberg, CNBC, MarketWatch, the WSJ and Barron's, and six invented Reddit
+ * posts in quotation marks. The others fabricated numbers; this one fabricated
+ * reporting and put real newsrooms' names on it.
+ *
+ * The render-level assertions are in `frontend/test/newsPage.test.tsx`. These
+ * are the source-level ones: that the arrays are gone rather than unused, and
+ * that the page reads the envelopes the routes actually send.
+ */
+
+const NEWS_PAGE = join(FRONTEND, 'app', 'news', 'page.tsx');
+
+test('the invented headlines are gone, not merely unrendered', () => {
+  const page = readFileSync(NEWS_PAGE, 'utf8');
+  assert.ok(!/const FALLBACK/.test(page), 'a FALLBACK array survives on the news page');
+  for (const outlet of ['Bloomberg', 'MarketWatch', "Barron", 'CNBC']) {
+    // Named outlets may appear in the file's history note; they must not
+    // appear in a data literal. The check is that no string is assigned as a
+    // publisher, which is what `publisher:` would look like.
+    assert.ok(
+      !new RegExp(`publisher:\\s*['"\`]${outlet}`).test(page),
+      `the page still carries a hardcoded ${outlet} byline`,
+    );
+  }
+});
+
+test('the news page reads the envelope each route sends', () => {
+  // `Array.isArray(response)` against `{headlines: [...]}` is always false.
+  // The same mistake emptied the macro page, twice.
+  const page = readFileSync(NEWS_PAGE, 'utf8');
+  for (const key of ['headlines', 'reddit', 'earnings']) {
+    assert.match(page, new RegExp(`listAt\\(b, '${key}'\\)`), `the page must read \`${key}\` off the body`);
+  }
+});
+
+test('every news panel distinguishes refused, empty and unreachable', () => {
+  const page = readFileSync(NEWS_PAGE, 'utf8');
+  assert.match(page, /REFUSED — the backend did not accept this session/, 'a refused panel is not an empty one');
+  // And does not send a reader gated in by `middleware.ts` back to the login
+  // page over what is usually a backend misconfiguration.
+  assert.ok(!/sign in|SIGNED OUT/i.test(page.replace(/\/\*[\s\S]*?\*\//g, '')),
+    'the refusal notice must not prescribe signing in');
+  assert.match(page, /UNREACHABLE/, 'an outage is not an empty one either');
+  assert.match(page, /see Settings for source status/, 'and an empty one points somewhere');
+});
+
+test('the frontend news types match what the sentiment route sends', () => {
+  // The old `RedditPost` declared `sentiment`, `bullishPct`, `bearishPct`,
+  // `topPost` and `lastUpdated` — five fields, none of which the wire has
+  // ever carried. `EarningsEvent` declared `name` and a BMO/AMC `time`, which
+  // FMP's calendar does not send either.
+  const REDDIT = join(__dirname, '..', 'src', 'ingestion', 'connectors', 'reddit.ts');
+  const FMP = join(__dirname, '..', 'src', 'ingestion', 'connectors', 'fmp.ts');
+
+  for (const [iface, path, backendName] of [
+    ['RedditSentiment', REDDIT, 'RedditSentiment'],
+    ['EarningsEvent', FMP, 'EarningsEvent'],
+    ['NewsItem', join(__dirname, '..', 'src', 'routes', 'sentiment.ts'), 'NewsWireItem'],
+  ] as const) {
+    const wire = fieldsOfIn(path, backendName);
+    const phantom = [...fieldsOf(iface)].filter((f) => !wire.has(f)).sort();
+    assert.deepEqual(
+      phantom, [],
+      `frontend ${iface} declares fields the backend does not send: ${phantom.join(', ')}\n` +
+      `  backend sends: ${[...wire].sort().join(', ')}`,
+    );
+  }
+});
