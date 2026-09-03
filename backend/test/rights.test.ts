@@ -225,12 +225,41 @@ test('nothing manufactures option prints from an equity tick any more', () => {
   assert.match(code, /function simulatePrints/, 'simulation mode still needs it');
 });
 
-test('finnhub is no longer a source the pipeline can stamp', () => {
-  // It was mapped to SIMULATION precisely because it published none of
-  // Finnhub's data. With the connector gone no source string needs the
-  // mapping, and leaving one would invite the next reader to assume Finnhub
-  // data is classified — it is not, and using it for what Finnhub actually
-  // publishes needs a dataset entry with the terms read.
-  assert.equal(datasetIdForSource('finnhub'), undefined);
+test('finnhub is registered for what it now publishes, and stamps no prints', () => {
+  // The old connector was mapped to SIMULATION because it published none of
+  // Finnhub's data — it manufactured option prints from equity ticks. The new
+  // one publishes Finnhub's own spot quotes, so it has a dataset entry of its
+  // own with the terms read.
+  //
+  // It is absent from INGESTION_SOURCES on purpose: that list is every source
+  // string a *RawPrint* can carry, and this connector emits none. A spot quote
+  // is not a print.
+  assert.equal(datasetIdForSource('finnhub'), 'FINNHUB_QUOTES');
   assert.ok(!INGESTION_SOURCES.includes('finnhub' as never));
+});
+
+test('the display board may be fetched; the track record may not be graded on it', () => {
+  // The two axes, on the one dataset that separates them. Finnhub's terms
+  // permit use and forbid sharing "data or derived results" with a third
+  // party, and `/api/track-record` publishes derived results to anyone who can
+  // reach it.
+  assert.equal(classifySource('finnhub', 'DISPLAY', 'PRIVATE_RESEARCH').allowed, true);
+  assert.equal(classifySource('finnhub', 'PERSIST', 'PRIVATE_RESEARCH').allowed, false);
+  assert.equal(classifySource('finnhub', 'PERSIST', 'PUBLIC_COMMERCIAL').allowed, false);
+  // And a commercial deployment may not show it either — that is redistribution.
+  assert.equal(classifySource('finnhub', 'DISPLAY', 'PUBLIC_COMMERCIAL').allowed, false);
+});
+
+test('the grader reads only a source it is allowed to read', () => {
+  // `getSpotPrice` is the grader's single mark source. Yahoo is refused for
+  // access outright and Finnhub for persistence, so neither may appear there;
+  // this is the one place a "just add a fallback" would route around a quoted
+  // restriction.
+  const { readFileSync } = require('node:fs') as typeof import('node:fs');
+  const { join } = require('node:path') as typeof import('node:path');
+  const twelve = readFileSync(
+    join(__dirname, '..', 'src', 'ingestion', 'connectors', 'twelveData.ts'), 'utf8');
+  const spotPrice = twelve.slice(twelve.indexOf('export function getSpotPrice'));
+  assert.match(spotPrice.slice(0, 200), /spotCache/, 'the mark comes from Twelve Data alone');
+  assert.ok(!/finnhub|yahoo/i.test(spotPrice.slice(0, 200)));
 });

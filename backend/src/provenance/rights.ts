@@ -151,6 +151,61 @@ export const DATASETS: readonly DatasetRights[] = [
       'the specific plan and are not established here, so commercial is UNVERIFIED.',
   },
   {
+    id: 'FINNHUB_QUOTES',
+    label: 'Finnhub real-time stock quotes',
+    host: 'finnhub.io',
+    // DISPLAY is fine for our own research; showing the board to a third party
+    // is redistribution, which the quote below forbids without written
+    // approval. The connector gate refuses PROHIBITED before `start()` runs,
+    // so in PUBLIC_COMMERCIAL this connector never opens a socket at all.
+    display: { PRIVATE_RESEARCH: 'PERMITTED', PUBLIC_COMMERCIAL: 'PROHIBITED' },
+    // PERSIST is refused in both modes, and the clause is the reason this
+    // source is NOT wired into the grader. `/api/track-record` publishes
+    // exactly "derived results from the data", to anyone who can reach it.
+    persist: { PRIVATE_RESEARCH: 'PROHIBITED', PUBLIC_COMMERCIAL: 'PROHIBITED' },
+    quotedRestriction:
+      'You hereby agree to not redistribute or share access to data or derived ' +
+      'results from the data obtained from Finnhub with anyone or any 3rd party ' +
+      'without written approval from Finnhub.',
+    termsUrl: 'https://finnhub.io/terms-of-service',
+    termsReadAt: '2026-09-03',
+    basis:
+      'Redistribution Rights and Personal Use forbids sharing data OR DERIVED ' +
+      'RESULTS with any third party without written approval, which is what a ' +
+      'published track record is. Intellectual Property adds "All data must be ' +
+      'deleted should your subscription to that data ends" — an obligation this ' +
+      'service has no mechanism to honour, so a permanent record cannot be kept ' +
+      'under it either. The same section limits the personal plan to non-business ' +
+      'use absent written approval, which no code here can verify.',
+  },
+  {
+    id: 'TWELVEDATA_QUOTES',
+    label: 'Twelve Data spot quotes (REST + WebSocket)',
+    host: 'api.twelvedata.com',
+    display: { PRIVATE_RESEARCH: 'PERMITTED', PUBLIC_COMMERCIAL: 'UNVERIFIED' },
+    // UNVERIFIED, not PROHIBITED: retention is capped at what the subscription
+    // permits, and what this deployment's subscription permits is not
+    // established. We are recording that we do not know.
+    //
+    // This is load-bearing and currently unenforced: `getSpotPrice` is the
+    // grader's only mark source, so every persisted outcome is derived from
+    // Twelve Data. `tools/collection/doctor.ts` reports it; nothing refuses
+    // it, because the connector gate deliberately refuses PROHIBITED only.
+    persist: { PRIVATE_RESEARCH: 'UNVERIFIED', PUBLIC_COMMERCIAL: 'UNVERIFIED' },
+    quotedRestriction:
+      'Customer may retain Data only: (a) For duration permitted by subscription ' +
+      '(b) As required for regulatory compliance',
+    termsUrl: 'https://twelvedata.com/terms',
+    termsReadAt: '2026-09-03',
+    basis:
+      'Section 16.1 (Retention Limits) caps retention at the subscription\'s ' +
+      'permitted duration, and Section 2.3 prohibits storing or caching data ' +
+      'beyond the timeframes in the documentation — neither of which is ' +
+      'established for this deployment, so PERSIST is UNVERIFIED rather than ' +
+      'asserted either way. Section 2.3 also prohibits commercial use of Free ' +
+      'Tier data, and the default configuration here is the free tier.',
+  },
+  {
     id: 'CBOE_CDN_DELAYED_CHAIN',
     label: 'Cboe delayed options chain (CDN JSON)',
     host: 'cdn.cboe.com',
@@ -303,6 +358,8 @@ const SOURCE_TO_DATASET: Readonly<Record<string, string>> = {
   // needs the mapping. If Finnhub is ever used for what it actually publishes,
   // it needs a dataset entry of its own with the terms read — not this one.
   seed: 'SIMULATION',
+  finnhub: 'FINNHUB_QUOTES',
+  twelvedata: 'TWELVEDATA_QUOTES',
 };
 
 export function datasetIdForSource(source: string): string | undefined {

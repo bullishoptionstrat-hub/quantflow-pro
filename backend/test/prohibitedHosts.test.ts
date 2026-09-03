@@ -20,8 +20,16 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  BUSINESS_MODES, datasetIdForSource, listDatasets,
+  BUSINESS_MODES, datasetIdForSource, listDatasets, mayOperateConnector,
 } from '../src/provenance/rights';
+
+/** The connector source string that maps to a dataset id. */
+function sourceFor(datasetId: string): string {
+  const source = ['yahoo', 'finnhub', 'tradier', 'polygon', 'cboe', 'occ', 'twelvedata']
+    .find((s) => datasetIdForSource(s) === datasetId);
+  assert.ok(source, `no connector source maps to ${datasetId}`);
+  return source!;
+}
 
 const SRC = join(__dirname, '..', 'src');
 
@@ -34,12 +42,21 @@ const PROHIBITED_HOSTS = listDatasets()
 
 /**
  * The one file allowed to name a prohibited host: the connector that *is* that
- * dataset. It is refused at start by the name gate, so the reference is inert
- * — and deleting the file to satisfy a lint would lose the record of what the
- * refusal is refusing.
+ * dataset. The name gate decides per business mode whether it runs, so the
+ * reference is inert wherever the prohibition applies — and deleting the file
+ * to satisfy a lint would lose the record of what the refusal is refusing.
+ *
+ * Yahoo is refused in both modes: its terms prohibit automated access outright.
+ * Finnhub is the first entry here that is refused in only one — PERMITTED for
+ * display under PRIVATE_RESEARCH, PROHIBITED under PUBLIC_COMMERCIAL, because
+ * showing the board to a third party is the redistribution its terms forbid.
+ * `mayOperateConnector` is what makes that hold, and the test below checks it
+ * rather than taking the exemption on trust: an owner file is exempted from
+ * the *scan*, not from the gate.
  */
 const OWNER_FILE: Record<string, string> = {
   YAHOO_QUOTES: join('ingestion', 'connectors', 'yahoo.ts'),
+  FINNHUB_QUOTES: join('ingestion', 'connectors', 'finnhub.ts'),
 };
 
 /**
@@ -91,6 +108,33 @@ test('the registry actually asserts a prohibition to check', () => {
   assert.ok(PROHIBITED_HOSTS.some((h) => h.host === 'query1.finance.yahoo.com'));
 });
 
+test('an owner file exists, and is exempt from the scan but not from the gate', () => {
+  // The exemption says "this reference is inert because the gate refuses the
+  // connector". That is only true if the gate actually refuses it, so check.
+  //
+  // Finnhub is the first dataset refused in one mode and not the other: its
+  // terms permit use and forbid sharing with a third party, so the display
+  // board is fine for private research and is redistribution in a commercial
+  // deployment. Taking the exemption on trust would let a future entry name a
+  // prohibited host from a connector nothing stops.
+  for (const [id, file] of Object.entries(OWNER_FILE)) {
+    assert.ok(readFileSync(join(SRC, file), 'utf8').length > 0, `${file} should exist`);
+    const dataset = listDatasets().find((d) => d.id === id);
+    assert.ok(dataset, `${id} should be registered`);
+    const prohibitedModes = BUSINESS_MODES.filter((m) => dataset!.display[m] === 'PROHIBITED');
+    assert.ok(
+      prohibitedModes.length > 0,
+      `${file} is exempted as an owner file, but ${id} is not display-prohibited in any mode`,
+    );
+    for (const mode of prohibitedModes) {
+      assert.equal(
+        mayOperateConnector(sourceFor(id), mode).allowed, false,
+        `${id} is PROHIBITED for display in ${mode}, so its connector must not start there`,
+      );
+    }
+  }
+});
+
 test('no source file contacts a prohibited host', () => {
   const offences: string[] = [];
 
@@ -107,16 +151,6 @@ test('no source file contacts a prohibited host', () => {
     offences, [],
     `a prohibited host is reachable from code the connector gate lets run:\n  ${offences.join('\n  ')}`,
   );
-});
-
-test('the owner file exemption points at a real file that is gated', () => {
-  // The exemption is only safe while the file it names is refused at start.
-  for (const [id, file] of Object.entries(OWNER_FILE)) {
-    const body = readFileSync(join(SRC, file), 'utf8');
-    assert.ok(body.length > 0, `${file} should exist`);
-    const source = Object.keys({ yahoo: 1 }).find((s) => datasetIdForSource(s) === id);
-    assert.ok(source, `${id} needs a connector source string`);
-  }
 });
 
 test('the CBOE connector reads Cboe, and only Cboe', () => {

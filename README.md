@@ -177,6 +177,7 @@ Open http://localhost:3000
 | `SUPABASE_SERVICE_KEY` | Service role key (server only) |
 | `TRADIER_TOKEN` | [Sign up free](https://developer.tradier.com/user/sign_up) |
 | `POLYGON_API_KEY` | [Sign up free](https://polygon.io/dashboard/signup) |
+| `FINNHUB_API_KEY` | [Sign up free](https://finnhub.io/register) — spot quotes for the display board only; not used for grading, see `FINNHUB_QUOTES` in the rights registry |
 
 ---
 

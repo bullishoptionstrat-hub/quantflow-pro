@@ -17,16 +17,19 @@ const CONNECTOR_DIR = join(__dirname, '..', 'src', 'ingestion', 'connectors');
 /**
  * Connector name in the table → the file that reads its variables.
  *
- * Tradier, Polygon and Finnhub are implemented inline in `ingestion/index.ts`
- * rather than in `connectors/`, which is why they were missing from the table
+ * Tradier and Polygon are implemented inline in `ingestion/index.ts` rather
+ * than in `connectors/`, which is why they were missing from the table
  * entirely until `tools/collection/doctor.ts` asked which variable enables
- * Tradier and got nothing back.
+ * Tradier and got nothing back. (Finnhub was inline too; its connector was
+ * deleted and a spot-quote one written in `connectors/finnhub.ts`, so it is a
+ * normal file-backed entry now.)
  */
 const INLINE = '../index.ts';
 
 const FILES: Record<string, string> = {
   tradier: INLINE,
   polygon: INLINE,
+  finnhub: 'finnhub.ts',
   flashalpha: 'flashAlpha.ts',
   marketdata: 'marketData.ts',
   schwab: 'schwab.ts',
