@@ -1,11 +1,39 @@
 'use client'
 import { useStore } from '@/store/useStore'
+import type { FlowFilters as Filters } from '@/lib/types'
 
-const OPTION_TYPES = [['ALL', 'All Types'], ['C', 'CALLS'], ['P', 'PUTS']]
-const ORDER_TYPES = [['ALL', 'All Orders'], ['SWEEP', 'SWEEP'], ['BLOCK', 'BLOCK'], ['SPLIT', 'SPLIT'], ['MULTI_LEG', 'MULTI-LEG'], ['LARGE', 'LARGE']]
-const SENTIMENTS = [['ALL', 'All Sentiment'], ['BULLISH', 'BULLISH'], ['BEARISH', 'BEARISH'], ['NEUTRAL', 'NEUTRAL']]
-const HEAT_LEVELS = [[0, 'All Heat'], [40, '40+ Warm'], [65, '65+ Hot'], [75, '75+ 🔥 Fire']]
-const PREMIUM_LEVELS = [[25000, '$25K+'], [100000, '$100K+'], [500000, '$500K+'], [1000000, '$1M+'], [5000000, '$5M+'], [10000000, '$10M+']]
+/**
+ * The option lists are typed against `FlowFilters`, and the casts are gone.
+ *
+ * These were `string[][]`, and each `onChange` narrowed `e.target.value` with
+ * `as any`. So nothing checked a list against the union it feeds: an order
+ * type added to the engine and not to `ORDER_TYPES` is invisible, and — worse
+ * — a typo in a list writes a value no signal can ever match into the store,
+ * and the feed silently goes empty with the control showing a plausible label.
+ *
+ * Same hazard as `PowerAlert.alert_type`, where `event.order_type as any` was
+ * the only reason a union missing SPLIT, MULTI_LEG and LARGE compiled. A cast
+ * over a value crossing between two type systems is where these hide.
+ */
+type Choice<T> = readonly [value: T, label: string]
+
+const OPTION_TYPES: readonly Choice<Filters['optionType']>[] = [
+  ['ALL', 'All Types'], ['C', 'CALLS'], ['P', 'PUTS'],
+]
+const ORDER_TYPES: readonly Choice<Filters['orderType']>[] = [
+  ['ALL', 'All Orders'], ['SWEEP', 'SWEEP'], ['BLOCK', 'BLOCK'],
+  ['SPLIT', 'SPLIT'], ['MULTI_LEG', 'MULTI-LEG'], ['LARGE', 'LARGE'],
+]
+const SENTIMENTS: readonly Choice<Filters['sentiment']>[] = [
+  ['ALL', 'All Sentiment'], ['BULLISH', 'BULLISH'], ['BEARISH', 'BEARISH'], ['NEUTRAL', 'NEUTRAL'],
+]
+const HEAT_LEVELS: readonly Choice<number>[] = [
+  [0, 'All Heat'], [40, '40+ Warm'], [65, '65+ Hot'], [75, '75+ 🔥 Fire'],
+]
+const PREMIUM_LEVELS: readonly Choice<number>[] = [
+  [25000, '$25K+'], [100000, '$100K+'], [500000, '$500K+'],
+  [1000000, '$1M+'], [5000000, '$5M+'], [10000000, '$10M+'],
+]
 
 const selectStyle: React.CSSProperties = {
   background: 'var(--bg-secondary)', border: '1px solid var(--border-light)',
@@ -28,17 +56,17 @@ export function FlowFilters() {
       />
 
       {/* Option type */}
-      <select value={filters.optionType} onChange={e => setFilters({ optionType: e.target.value as any })} style={selectStyle}>
+      <select value={filters.optionType} onChange={e => setFilters({ optionType: e.target.value as Filters['optionType'] })} style={selectStyle}>
         {OPTION_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
       </select>
 
       {/* Order type */}
-      <select value={filters.orderType} onChange={e => setFilters({ orderType: e.target.value as any })} style={selectStyle}>
+      <select value={filters.orderType} onChange={e => setFilters({ orderType: e.target.value as Filters['orderType'] })} style={selectStyle}>
         {ORDER_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
       </select>
 
       {/* Sentiment */}
-      <select value={filters.sentiment} onChange={e => setFilters({ sentiment: e.target.value as any })} style={selectStyle}>
+      <select value={filters.sentiment} onChange={e => setFilters({ sentiment: e.target.value as Filters['sentiment'] })} style={selectStyle}>
         {SENTIMENTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
       </select>
 
