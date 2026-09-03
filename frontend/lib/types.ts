@@ -200,6 +200,17 @@ export interface BSResult {
   theta: number
   vega: number
   rho: number
+  /**
+   * Risk-neutral probability the option finishes in the money at expiry:
+   * `N(d2)` for a call, `N(-d2)` for a put, under the `sigma` and `r` passed in.
+   *
+   * A model quantity, not a market fact, and not a probability of *profit* —
+   * it ignores the premium paid. It exists because the optimizer was reading
+   * `delta` as a probability, which is an approximation for a call and an
+   * arithmetic error for a put: put delta is negative here, so `1 - delta`
+   * returned 1.42 and the strategy ranking was driven by it.
+   */
+  probItm: number
 }
 
 /**

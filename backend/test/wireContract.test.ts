@@ -799,3 +799,68 @@ test('the filter option lists are checked against the filters they set', () => {
   assert.match(code, /Choice<Filters\['orderType'\]>/,
     'the order-type list must be typed by the filter it sets');
 });
+
+// ─── The strategy optimizer ─────────────────────────────────────────────────
+
+/**
+ * The optimizer ranked six strategies and one of them was not computed at all.
+ *
+ * `Bear Put Spread` was listed in `STRATEGIES` with no branch in the pricing
+ * chain, so it fell through to `else { risk = 100; reward = 200; prob = 50;
+ * legs = ['—'] }` and rendered `RISK $100 · REWARD $200 · R/R 2.00x` in the
+ * same markup as the five computed rows. The list and the pricer had drifted
+ * apart, and the fallback made the drift invisible.
+ *
+ * The ranking itself came off an arithmetic error: `prob` fed 40% of the score
+ * and was read from `delta`, which `blackScholes` returns **negative** for a
+ * put, so `(1 - delta) * 100` was 142 and Long Put took the `#1` badge with a
+ * score of 117 on a scale that reads 0–100.
+ *
+ * The render-level assertions are in `frontend/test/optimizer.test.tsx`. These
+ * are the source-level ones.
+ */
+
+const OPTIMIZER = join(FRONTEND, 'app', 'optimizer', 'page.tsx');
+
+/** A file with its comments removed, so a scan reads code and not history. */
+function codeOf(path: string): string {
+  return readFileSync(path, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+}
+
+test('no strategy can be listed without being priced', () => {
+  const page = readFileSync(OPTIMIZER, 'utf8');
+  // The pricers are a `Record<StrategyId, …>`, so a strategy added to the
+  // union without an entry is a type error rather than a $100/$200 row.
+  assert.match(page, /Record<StrategyId, \(i: Inputs\) => Plan>/,
+    'the pricers must be keyed exhaustively by strategy id');
+  assert.ok(!/risk = 100; reward = 200/.test(codeOf(OPTIMIZER)),
+    'the fabricated fallback survives');
+});
+
+test('the optimizer reads a probability, not a delta', () => {
+  const code = codeOf(OPTIMIZER);
+  assert.ok(!/\.delta/.test(code),
+    'delta is not a probability — on a put it is negative, and 1 - delta was 142%');
+  assert.match(code, /probItm/, 'the model publishes N(d2); use it');
+});
+
+test('probItm is returned on every path out of blackScholes', () => {
+  // Including the `T <= 0` early return, which would otherwise hand back an
+  // object missing the field and read as `undefined * 100`.
+  const bs = readFileSync(join(FRONTEND, 'lib', 'blackScholes.ts'), 'utf8');
+  const returns = bs.slice(bs.indexOf('export function blackScholes'), bs.indexOf('export function impliedVolatility'));
+  const objectReturns = returns.split('return {').length - 1;
+  const withProb = returns.split(/probItm/).length - 1;
+  assert.equal(withProb, objectReturns,
+    `blackScholes has ${objectReturns} object returns but ${withProb} carry probItm`);
+});
+
+test('the optimizer claims neither AI nor live data', () => {
+  // There is no model here. `ml-service` was deleted for putting a number with
+  // no provenance beside a real signal, and this page was calling a hardcoded
+  // 2024 spot price "current conditions".
+  const rendered = codeOf(OPTIMIZER);
+  assert.ok(!/AI-ranked/.test(rendered), 'nothing here is AI-ranked');
+  assert.ok(!/current conditions/.test(rendered), 'none of the inputs comes from a feed');
+  assert.ok(!/useState\(557\)/.test(rendered), 'the 2024 spot default survives');
+});
