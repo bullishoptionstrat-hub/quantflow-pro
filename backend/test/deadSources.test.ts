@@ -258,7 +258,7 @@ test('no stream frame is dropped without being counted', () => {
   assert.ok(!/catch\s*\{\s*\}/.test(code),
     'a bare catch in the ingestion pipeline swallows a frame with no trace');
   assert.match(code, /noteUnparsedFrame\('tradier'\)/);
-  assert.match(code, /noteUnparsedFrame\('finnhub'\)/);
+  // Finnhub's handler is gone with its connector; Tradier's is the one left.
 });
 
 test('unparsable frames reach /api/health as a source note', () => {

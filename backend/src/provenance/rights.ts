@@ -294,14 +294,15 @@ const SOURCE_TO_DATASET: Readonly<Record<string, string>> = {
   tastytrade: 'TASTYTRADE_API',
   simulation: 'SIMULATION',
   // `seed` is the same generator as `simulation`, backdated to populate the
-  // ring buffer at boot. `finnhub` streams EQUITY trades, not options tape, so
-  // its option "prints" are produced by `simulatePrints` from a real spot
-  // price — the emitted print is our own construction, not Finnhub's data, and
-  // it is flagged synthetic. Both are therefore the simulator, not a vendor
-  // dataset, and classifying them anywhere else would misattribute output we
-  // generated to a third party.
+  // ring buffer at boot — the simulator, not a vendor dataset, and classifying
+  // it anywhere else would misattribute output we generated to a third party.
+  //
+  // `finnhub` was mapped here too, for the same reason: its connector streamed
+  // EQUITY trades and `generateFlowFromSpot` turned each one into a
+  // manufactured OPTION print. That connector is gone, so no source string
+  // needs the mapping. If Finnhub is ever used for what it actually publishes,
+  // it needs a dataset entry of its own with the terms read — not this one.
   seed: 'SIMULATION',
-  finnhub: 'SIMULATION',
 };
 
 export function datasetIdForSource(source: string): string | undefined {

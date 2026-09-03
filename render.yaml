@@ -31,8 +31,6 @@ services:
       # ALPACA_KEY / ALPACA_SECRET were declared here and read by nothing —
       # there is no Alpaca connector in `backend/src`. Removed rather than
       # left as a slot an operator might fill.
-      - key: FINNHUB_API_KEY
-        sync: false
 
       # ── Free-tier connectors ────────────────────────────────────────────
       # Every one of these was read by `src/ingestion/connectors/*` and

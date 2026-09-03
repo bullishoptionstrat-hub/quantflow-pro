@@ -221,7 +221,7 @@ test('Yahoo\'s non-print publication path is gated as well', () => {
 /** Every connector source string the registry maps, read from the registry. */
 const MAPPED_SOURCES = [
   'tradier', 'polygon', 'cboe', 'cboe_options', 'cboeOptions', 'occ', 'yahoo',
-  'finra', 'marketdata', 'schwab', 'tastytrade', 'simulation', 'seed', 'finnhub',
+  'finra', 'marketdata', 'schwab', 'tastytrade', 'simulation', 'seed',
 ].filter((s) => datasetIdForSource(s));
 
 test('MAPPED_SOURCES has not drifted from the registry', () => {
@@ -230,11 +230,11 @@ test('MAPPED_SOURCES has not drifted from the registry', () => {
   const mapped = MAPPED_SOURCES.length;
   const known = new Set(
     ['tradier', 'polygon', 'cboe', 'cboe_options', 'cboeOptions', 'occ', 'yahoo',
-     'finra', 'marketdata', 'schwab', 'tastytrade', 'simulation', 'seed', 'finnhub']
+     'finra', 'marketdata', 'schwab', 'tastytrade', 'simulation', 'seed']
       .filter((s) => datasetIdForSource(s)),
   ).size;
   assert.equal(mapped, known);
-  assert.equal(mapped, 14, 'SOURCE_TO_DATASET changed — update MAPPED_SOURCES');
+  assert.equal(mapped, 13, 'SOURCE_TO_DATASET changed — update MAPPED_SOURCES');
 });
 
 /** One representative source per dataset, for the divergence canary. */

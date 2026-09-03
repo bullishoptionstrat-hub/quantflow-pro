@@ -139,7 +139,6 @@ test('assertRights throws a RightsViolationError carrying the decision', () => {
 const INGESTION_SOURCES = [
   'tradier',      // processMarketTick
   'polygon',      // polygon WS
-  'finnhub',      // generateFlowFromSpot — synthesized from equity ticks
   'simulation',   // simulatePrints
   'seed',         // simulatePrints, backdated at boot
   'marketdata',   // feedLegacy
@@ -204,4 +203,34 @@ test('the health snapshot reports the mode in force and every class under it', (
   const cboe = snap.datasets.find((d) => d.id === 'CBOE_CDN_DELAYED_CHAIN')!;
   assert.equal(cboe.persist, 'UNVERIFIED');
   assert.ok(cboe.quotedRestriction);
+});
+
+test('nothing manufactures option prints from an equity tick any more', () => {
+  // `generateFlowFromSpot` handed a Finnhub EQUITY trade's price to
+  // `simulatePrints` and put the manufactured OPTION prints on the tape, at
+  // random, on roughly 15% of ticks — on a deployment that had paid for a real
+  // feed. They were flagged `synthetic: true` and mapped to the SIMULATION
+  // dataset so nothing entered the record under Finnhub's name, which made it
+  // honest; it was still a terminal inventing option flow for a reader who had
+  // every reason to think a configured vendor meant observed data.
+  const { readFileSync } = require('node:fs') as typeof import('node:fs');
+  const { join } = require('node:path') as typeof import('node:path');
+  const code = readFileSync(join(__dirname, '..', 'src', 'ingestion', 'index.ts'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+
+  assert.ok(!/generateFlowFromSpot/.test(code), 'the synthesizer survives');
+  assert.ok(!/startFinnhubIngestion/.test(code), 'its only caller survives');
+  // `simulatePrints` still backs simulation and seed mode. What must not come
+  // back is a *credentialed* connector feeding it.
+  assert.match(code, /function simulatePrints/, 'simulation mode still needs it');
+});
+
+test('finnhub is no longer a source the pipeline can stamp', () => {
+  // It was mapped to SIMULATION precisely because it published none of
+  // Finnhub's data. With the connector gone no source string needs the
+  // mapping, and leaving one would invite the next reader to assume Finnhub
+  // data is classified — it is not, and using it for what Finnhub actually
+  // publishes needs a dataset entry with the terms read.
+  assert.equal(datasetIdForSource('finnhub'), undefined);
+  assert.ok(!INGESTION_SOURCES.includes('finnhub' as never));
 });
