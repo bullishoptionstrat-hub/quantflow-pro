@@ -1,9 +1,37 @@
+/**
+ * `.env` is loaded here, on the first line, and that position is load-bearing.
+ *
+ * `config()` used to be called in the statement body below the imports. With
+ * `module: commonjs`, TypeScript compiles imports to `require` calls in source
+ * order and evaluates each module fully before the importer's body runs — so
+ * every module-level `process.env.X` in the import graph had already read an
+ * **empty** environment by the time `config()` populated it.
+ *
+ * That silently disabled every connector configured from a `.env` file, and
+ * the reporting made it worse rather than obvious: `startConnector` calls
+ * `missingCredentials()` at *call* time, when `process.env` is finally
+ * populated, so it concluded the credentials were present and marked the
+ * source `connected` — while the connector itself had skipped at import time
+ * for want of the same key. `/api/health` showed:
+ *
+ *     fred        connected
+ *     finnhub     connected
+ *
+ * while the log showed `[fred] No key — skipped` and no `[finnhub]` line at
+ * all. Render injects real environment variables before the process starts, so
+ * this never bit in production — it bit every developer with a `.env`, and it
+ * bit them by lying.
+ *
+ * A side-effect import runs before any later import in the same file, so this
+ * must stay the first line. `dotenvOrder.test.ts` fails if it moves.
+ */
+import 'dotenv/config';
+
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import helmet from 'helmet';
-import { config } from 'dotenv';
 import { startIngestion } from './ingestion/index';
 import { startEnrichment } from './enrichment/index';
 import flowRouter from './routes/flow';
@@ -19,8 +47,6 @@ import {
   requireAuth, requireAuthOrDemo, isDemoModeEnabled, DEMO_HEADER,
   authenticateSocket, socketAuthConfigured,
 } from './middleware/auth';
-
-config();
 
 export const app = express();
 export const httpServer = createServer(app);
