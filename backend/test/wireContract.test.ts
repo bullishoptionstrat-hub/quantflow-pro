@@ -524,3 +524,72 @@ test('the builder does not price a leg against a spot it does not have', () => {
   assert.ok(!/\|\| 100/.test(code), 'the fallback spot survives');
   assert.match(code, /useSpot === null/, 'the no-spot case needs a rendered state');
 });
+
+// ─── The P/L calculator ─────────────────────────────────────────────────────
+
+/**
+ * Selling was a no-op, and a bought call was shown with no downside.
+ *
+ * `computePLCurve` decided a leg's direction with `leg.qty > 0` while the
+ * quantity input clamped to `Math.max(1, …)` with `min={1}` — so the test was
+ * true for every leg that could be built and the `ACTION` select changed
+ * nothing at all. A sold contract produced a byte-identical curve to a bought
+ * one, and with it an identical max profit, max loss and breakeven.
+ *
+ * `entryPrice` defaulted to `0`, so the curve plotted the position's value
+ * rather than its P/L: at the calculator's own defaults a long call reported
+ * MAX PROFIT $18,252, MAX LOSS $0, BREAKEVEN — and PREMIUM PAID **Credit**.
+ *
+ * And the chart was headed P/L AT EXPIRY while plotting `T = dte / 365`, the
+ * model value today across spot prices.
+ *
+ * The arithmetic is tested in `frontend/test/payoff.test.tsx`, which also
+ * renders the builder. These are the source-level guards.
+ */
+
+test('direction comes from action, and only from action', () => {
+  const bs = readFileSync(join(FRONTEND, 'lib', 'blackScholes.ts'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  assert.ok(!/qty > 0/.test(bs),
+    'the quantity input clamps to >= 1, so `qty > 0` is true for every leg');
+  assert.match(bs, /action === 'BUY'/, 'the curve must read the leg action');
+
+  const payoff = readFileSync(join(FRONTEND, 'lib', 'payoff.ts'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  assert.ok(!/qty > 0/.test(payoff), 'the payoff must not carry a second convention');
+});
+
+test('the risk-free rate is passed in, not defaulted', () => {
+  // It was `r = 0.05` as a default parameter, plus a second copy inline in the
+  // Greeks call — two assumed rates that could disagree, neither on screen.
+  const bs = readFileSync(join(FRONTEND, 'lib', 'blackScholes.ts'), 'utf8');
+  assert.ok(!/r = 0\.05/.test(bs), 'computePLCurve must not default the rate');
+  const builder = readFileSync(BUILDER, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  assert.ok(!/r: 0\.05/.test(builder), 'the Greeks panel must use the same rate as the curve');
+  assert.match(builder, /RISK-FREE/, 'and the assumption belongs on screen');
+});
+
+test('the chart does not name one curve and draw another', () => {
+  const builder = readFileSync(BUILDER, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  assert.ok(!/P\/L AT EXPIRY/.test(builder),
+    'that heading sat over `computePLCurve`, which values the position today');
+  assert.match(builder, /dataKey="expiry"/, 'the payoff at expiry needs drawing to be claimed');
+  assert.match(builder, /dataKey="today"/, 'and the model value is the other series');
+
+  const page = readFileSync(join(FRONTEND, 'app', 'calculator', 'page.tsx'), 'utf8');
+  assert.ok(!/P\/L at expiry curve/.test(page), 'the page subtitle repeated the claim');
+});
+
+test('the summary tiles report the position, not the plotted range', () => {
+  const builder = readFileSync(BUILDER, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  // `Math.min`/`Math.max` over a 60-point sample gave a naked short call a
+  // finite max loss, which was a fact about where the range stopped.
+  assert.ok(!/Math\.max\(\.\.\.plData/.test(builder) && !/Math\.min\(\.\.\.plData/.test(builder),
+    'the extremes must come from the payoff, not from the sample');
+  assert.match(builder, /extremes\(legs\)/, 'use the exact extremes');
+  assert.match(builder, /breakevens\(legs\)/, 'and the solved breakevens');
+  // `total > 0 ? $total : 'Credit'` called a long call at its default entry
+  // price a credit. "Nothing entered yet" is a third state.
+  assert.ok(!/'Credit'/.test(builder), "the two-state cost label survives");
+  assert.match(builder, /no entry set/, 'the unset state needs saying');
+});
