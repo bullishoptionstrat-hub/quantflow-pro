@@ -24,6 +24,14 @@ services:
       # request. Raise this only if another proxy is added in front of Render.
       - key: TRUST_PROXY_HOPS
         value: "1"
+      # How long a verified Supabase token is trusted without re-asking
+      # Supabase. Bounds a revocation window: a token revoked upstream stays
+      # accepted here for at most this long. `0` disables the cache and
+      # verifies every request, which is what happened before it existed — and
+      # is what made a polling terminal rate-limit itself out of its own
+      # session. An entry never outlives the token's own `exp`.
+      - key: AUTH_CACHE_TTL_SECONDS
+        value: "30"
       - key: TRADIER_TOKEN
         sync: false
       - key: POLYGON_API_KEY
