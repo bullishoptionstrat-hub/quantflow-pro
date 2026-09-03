@@ -58,9 +58,16 @@ describe('heat map', () => {
 })
 
 describe('power alerts', () => {
-  test('an empty store says so', () => {
+  test('an empty store says so, and says which kind of empty', () => {
+    // Two different problems, the same finding as the heat map above: a
+    // terminal with no feed and a tape with nothing loud enough are not the
+    // same answer, and "No power alerts yet" was given to both.
     render(<PowerAlertsPage />)
-    expect(screen.getByText(/No power alerts yet/i)).toBeDefined()
+    expect(screen.getByText(/Not connected to the flow feed/i)).toBeDefined()
+
+    setStore({ connected: true })
+    render(<PowerAlertsPage />)
+    expect(screen.getAllByText(/No power alerts yet/i).length).toBeGreaterThan(0)
   })
 
   test('no alert presents a model confidence', () => {
