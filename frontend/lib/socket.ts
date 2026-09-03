@@ -54,14 +54,18 @@ export function getSocket(): Socket {
   socket.on('connect_error', (err) => {
     // The backend's reason is deliberately coarse ("Unauthorized") because it
     // crosses to an unauthenticated caller. Say plainly what it means here,
-    // where the reader is the developer: the feed being gated looks identical
-    // to the backend being down, and `useFlowFeed` quietly substitutes
-    // simulated prints for both.
+    // where the reader is the developer.
+    //
+    // This used to end "Showing simulated prints instead of real flow", which
+    // was true when `useFlowFeed` invented an event every eight seconds and
+    // has not been true since that was deleted. Nothing substitutes for a
+    // refused feed now: the store stays empty and every page built from it
+    // says which kind of empty it is.
     const unauthorized = /unauthorized/i.test(err.message)
     console.warn(
       unauthorized
         ? '[Socket] Refused: the live feed needs a signed-in session, or a backend ' +
-          'with DEMO_MODE=1. Showing simulated prints instead of real flow.'
+          'with DEMO_MODE=1. No flow will arrive until one of those is true.'
         : `[Socket] Connection error: ${err.message}`,
     )
   })

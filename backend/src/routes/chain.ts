@@ -1,20 +1,73 @@
 import { Router, Request, Response } from 'express';
 import axios from 'axios';
+import { describeHttpError } from '../ingestion/httpError';
+
+/**
+ * The option chain, from Tradier or not at all.
+ *
+ * This route used to answer every failure with a fabricated chain.
+ * `buildMockChain` produced twenty strikes of `Math.random()` — bids, asks,
+ * volume, open interest, gamma, theta, vega and **implied volatility** — around
+ * a hardcoded 2024 spot map (SPY 580, NVDA 140, TSLA 250, SPX 5800), and it was
+ * returned in three cases: no `TRADIER_TOKEN`, a Tradier error of any kind, and
+ * — for `/expirations` — with **no marker at all**, since that response shape
+ * carries no `source` field. A revoked token, a rate limit or a timeout
+ * produced a complete chain of invented prices behind `requireAuth`, which is
+ * the tier this repo reserves for entitled vendor data.
+ *
+ * That is the finding `deadSources.test.ts` exists for, applied to a route
+ * rather than a connector: **a source that is down must never present itself as
+ * data.** Stooq's browser-challenge page became twelve quotes priced at zero;
+ * Cboe's 403 became a put/call ratio of 0.00 in green. This was the same shape
+ * with more digits.
+ *
+ * The numbers were not even internally consistent. `bid` and `ask` drew
+ * *independent* random terms, so ask came in below bid — a crossed market — on
+ * roughly half the strikes; `Math.max(0, …)` flattened a whole wing to a zero
+ * bid and a zero ask; and a call's `delta` is `0.5 - (k - spot) / (spot * 0.1)`,
+ * which is unbounded below, so far-OTM calls carried deltas past -3. The spot
+ * map disagreed with the frontend's deleted one about NVDA by a factor of ten,
+ * because one was written before the split and one after.
+ *
+ * Deleted rather than flagged, like `generateSeedFlow`, `generateDarkPool` and
+ * the ticker tape's `generateQuotes` before it. Flagging would not have helped:
+ * `/api/chain` sits on plain `requireAuth` and is never served to demo traffic,
+ * so the mock could only ever reach a signed-in reader who had every reason to
+ * think the chain was real. Nothing in the frontend calls this route today,
+ * which is exactly when a fabricator is cheapest to remove.
+ */
 
 const router = Router();
 
 const TRADIER_TOKEN = process.env.TRADIER_TOKEN || '';
 const TRADIER_BASE = 'https://api.tradier.com/v1';
 
+/**
+ * No credential is a configuration answer, not an outage, and it names the
+ * variable that fixes it — the same contract `markNoCredentials()` gives every
+ * connector on `/api/health`.
+ */
+function noCredentials(res: Response): void {
+  res.status(503).json({
+    error: 'chain_unavailable',
+    reason: 'No options chain vendor is configured.',
+    credential: 'TRADIER_TOKEN',
+  });
+}
+
+/** The vendor's own words, scrubbed of anything credential-shaped. */
+function vendorFailed(res: Response, err: unknown): void {
+  const reason = describeHttpError(err);
+  console.error('[chain] tradier error:', reason);
+  res.status(502).json({ error: 'chain_unavailable', reason, source: 'tradier' });
+}
+
 // GET /api/chain?symbol=SPY&expiration=2025-01-17
 router.get('/', async (req: Request, res: Response) => {
   const symbol = ((req.query.symbol as string) || 'SPY').toUpperCase();
   const expiration = (req.query.expiration as string) || '';
 
-  if (!TRADIER_TOKEN) {
-    // Return mock chain if no token
-    return res.json(buildMockChain(symbol, expiration));
-  }
+  if (!TRADIER_TOKEN) return noCredentials(res);
 
   try {
     const url = `${TRADIER_BASE}/markets/options/chains`;
@@ -33,9 +86,8 @@ router.get('/', async (req: Request, res: Response) => {
     );
 
     res.json({ symbol, expiration, strikes, calls, puts, source: 'tradier' });
-  } catch (err: any) {
-    console.error('[chain] tradier error:', err.message);
-    res.json(buildMockChain(symbol, expiration));
+  } catch (err: unknown) {
+    vendorFailed(res, err);
   }
 });
 
@@ -43,9 +95,7 @@ router.get('/', async (req: Request, res: Response) => {
 router.get('/expirations', async (req: Request, res: Response) => {
   const symbol = ((req.query.symbol as string) || 'SPY').toUpperCase();
 
-  if (!TRADIER_TOKEN) {
-    return res.json({ symbol, expirations: generateExpirations() });
-  }
+  if (!TRADIER_TOKEN) return noCredentials(res);
 
   try {
     const { data } = await axios.get(`${TRADIER_BASE}/markets/options/expirations`, {
@@ -55,74 +105,14 @@ router.get('/expirations', async (req: Request, res: Response) => {
     });
 
     const dates = data?.expirations?.date ?? [];
-    res.json({ symbol, expirations: Array.isArray(dates) ? dates : [dates] });
-  } catch (err: any) {
-    console.error('[chain] expirations error:', err.message);
-    res.json({ symbol, expirations: generateExpirations() });
+    res.json({ symbol, expirations: Array.isArray(dates) ? dates : [dates], source: 'tradier' });
+  } catch (err: unknown) {
+    // `generateExpirations()` answered here, rolling eight Fridays forward from
+    // today. Unlike the chain it carried no `source`, so the response was
+    // indistinguishable from Tradier's — and an expiration Tradier does not
+    // list is a chain request that will fail, or worse, quietly return nothing.
+    vendorFailed(res, err);
   }
 });
-
-function generateExpirations(): string[] {
-  const dates: string[] = [];
-  const now = new Date();
-  for (let i = 0; i < 8; i++) {
-    const d = new Date(now);
-    d.setDate(d.getDate() + i * 7);
-    // Round to nearest Friday
-    const day = d.getDay();
-    const diff = (5 - day + 7) % 7;
-    d.setDate(d.getDate() + diff);
-    dates.push(d.toISOString().split('T')[0]);
-  }
-  return [...new Set(dates)];
-}
-
-function buildMockChain(symbol: string, expiration: string) {
-  const basePrice: Record<string, number> = {
-    SPY: 580, QQQ: 480, NVDA: 140, AAPL: 220, TSLA: 250, MSFT: 410, SPX: 5800,
-  };
-  const spot = basePrice[symbol] ?? 100;
-  const strikes = Array.from({ length: 20 }, (_, i) => Math.round(spot * (0.92 + i * 0.008)));
-
-  const calls = strikes.map((k) => ({
-    symbol: `${symbol}${expiration}C${k}`,
-    description: `${symbol} ${expiration} Call ${k}`,
-    strike: k,
-    option_type: 'call',
-    expiration_date: expiration || new Date().toISOString().split('T')[0],
-    bid: Math.max(0, parseFloat(((spot - k + 5 + Math.random() * 3) * 0.8).toFixed(2))),
-    ask: Math.max(0, parseFloat(((spot - k + 5 + Math.random() * 3) * 0.82).toFixed(2))),
-    volume: Math.floor(Math.random() * 5000 + 100),
-    open_interest: Math.floor(Math.random() * 20000 + 500),
-    greeks: {
-      delta: parseFloat((0.5 - (k - spot) / (spot * 0.1)).toFixed(4)),
-      gamma: parseFloat((0.03 + Math.random() * 0.02).toFixed(4)),
-      theta: parseFloat((-0.1 - Math.random() * 0.05).toFixed(4)),
-      vega: parseFloat((0.2 + Math.random() * 0.1).toFixed(4)),
-      iv: parseFloat((0.25 + Math.random() * 0.15).toFixed(4)),
-    },
-  }));
-
-  const puts = strikes.map((k) => ({
-    symbol: `${symbol}${expiration}P${k}`,
-    description: `${symbol} ${expiration} Put ${k}`,
-    strike: k,
-    option_type: 'put',
-    expiration_date: expiration || new Date().toISOString().split('T')[0],
-    bid: Math.max(0, parseFloat(((k - spot + 5 + Math.random() * 3) * 0.8).toFixed(2))),
-    ask: Math.max(0, parseFloat(((k - spot + 5 + Math.random() * 3) * 0.82).toFixed(2))),
-    volume: Math.floor(Math.random() * 5000 + 100),
-    open_interest: Math.floor(Math.random() * 20000 + 500),
-    greeks: {
-      delta: parseFloat((-0.5 + (k - spot) / (spot * 0.1)).toFixed(4)),
-      gamma: parseFloat((0.03 + Math.random() * 0.02).toFixed(4)),
-      theta: parseFloat((-0.1 - Math.random() * 0.05).toFixed(4)),
-      vega: parseFloat((0.2 + Math.random() * 0.1).toFixed(4)),
-      iv: parseFloat((0.25 + Math.random() * 0.15).toFixed(4)),
-    },
-  }));
-
-  return { symbol, expiration, strikes, calls, puts, source: 'mock' };
-}
 
 export default router;
