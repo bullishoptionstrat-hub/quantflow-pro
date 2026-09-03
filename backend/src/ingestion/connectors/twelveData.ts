@@ -11,14 +11,29 @@ const BASE = 'https://api.twelvedata.com';
 const WS_URL = 'wss://ws.twelvedata.com/v1/quotes/price';
 const WATCHED = ['SPY', 'QQQ', 'NVDA', 'AAPL', 'TSLA', 'MSFT', 'AMD', 'META', 'AMZN', 'MSTR'];
 
+/**
+ * The canonical spot-quote shape, shared by every source that fills the board.
+ *
+ * It lives here because Twelve Data was the first and remains the reference
+ * implementation — `wireContract.test.ts` checks the frontend's copy against
+ * this declaration, and `deadSources.test.ts` checks `quoteTimestamp` against
+ * this file's write paths. A second source imports both rather than restating
+ * either.
+ *
+ * `volume` is nullable because Finnhub's `/quote` does not carry one: it
+ * returns current, change, percent change, high, low, open and previous close,
+ * and nothing else. A zero there would be the `?? 0` defect all over again —
+ * "no volume traded" is a different claim from "this source does not report
+ * volume".
+ */
 export interface SpotQuote {
   symbol: string;
   price: number;
   change: number;
   changePct: number;
-  volume: number;
+  volume: number | null;
   timestamp: number;
-  source: 'twelvedata';
+  source: 'twelvedata' | 'finnhub';
 }
 
 /**

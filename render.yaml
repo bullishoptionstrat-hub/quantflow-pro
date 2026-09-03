@@ -28,6 +28,12 @@ services:
         sync: false
       - key: POLYGON_API_KEY
         sync: false
+      # Spot quotes for the display board only. Finnhub's terms forbid sharing
+      # data "or derived results" with a third party, so it is PROHIBITED for
+      # PERSIST and never reaches the grader — see FINNHUB_QUOTES in
+      # src/provenance/rights.ts.
+      - key: FINNHUB_API_KEY
+        sync: false
       # ALPACA_KEY / ALPACA_SECRET were declared here and read by nothing —
       # there is no Alpaca connector in `backend/src`. Removed rather than
       # left as a slot an operator might fill.

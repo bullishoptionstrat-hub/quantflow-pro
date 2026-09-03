@@ -35,11 +35,13 @@ import { startSchwab, onSchwabFlow } from './connectors/schwab';
 import { startTastytrade, onTastytradeFlow } from './connectors/tastytrade';
 import {
   startTwelveData, onTwelveDataSpot,
-  getSpotQuotes, getSpotPrice,
+  getSpotQuotes as getTwelveDataSpotQuotes, getSpotPrice,
 } from './connectors/twelveData';
 import {
   startFMP, getEarnings, getInsiderTrades, getFMPNews,
 } from './connectors/fmp';
+import { startFinnhub, onFinnhubHealth, getFinnhubSpotQuotes } from './connectors/finnhub';
+import type { SpotQuote } from './connectors/twelveData';
 import {
   startCoinGecko, onCoinGeckoUpdate, onCoinGeckoHealth,
   getCryptoQuotes, getCryptoGlobal,
@@ -68,7 +70,7 @@ import {
 // ─── Re-export all sub-connector getters for route handlers ─────────────────
 export {
   getFlashGEX,
-  getSpotQuotes, getSpotPrice,
+  getSpotPrice,
   getEarnings, getInsiderTrades, getFMPNews,
   getCryptoQuotes, getCryptoGlobal,
   getMacroData, getMacroValue,
@@ -356,6 +358,8 @@ export const CONNECTOR_CREDENTIALS: Readonly<Record<string, readonly string[]>> 
   tradier: ['TRADIER_TOKEN'],
   polygon: ['POLYGON_API_KEY'],
 
+  finnhub: ['FINNHUB_API_KEY'],
+
   flashalpha: ['FLASHALPHA_API_KEY'],
   marketdata: ['MARKETDATA_TOKEN'],
   schwab: ['SCHWAB_APP_KEY', 'SCHWAB_APP_SECRET', 'SCHWAB_REFRESH_TOKEN'],
@@ -491,6 +495,16 @@ export function startIngestion(io: any): void {
     }
   });
 
+  onFinnhubHealth((h) => {
+    if (h.ok) {
+      sources['finnhub'] = 'connected';
+      delete sourceErrors['finnhub'];
+    } else {
+      sources['finnhub'] = 'error';
+      sourceErrors['finnhub'] = h.reason ?? 'Finnhub fetch failed.';
+    }
+  });
+
   // Same reason as Stooq above: `startConnector` records what `start()`
   // returned once, so a CoinGecko that starts clean and is rate-limited an
   // hour later kept reporting `connected` while serving an ageing cache.
@@ -540,6 +554,7 @@ export function startIngestion(io: any): void {
     startConnector('tastytrade', startTastytrade),
     startConnector('twelvedata', startTwelveData),
     startConnector('fmp', startFMP),
+    startConnector('finnhub', startFinnhub),
     startConnector('coingecko', startCoinGecko),
     startConnector('fred', startFRED),
     startConnector('reddit', startReddit),
@@ -1074,28 +1089,33 @@ function startPolygonIngestion(): void {
   poll();
 }
 
+/**
+ * The spot board, from every source that may show one.
+ *
+ * Twelve Data wins where both have a symbol: it is the source `getSpotPrice`
+ * grades against, so a reader comparing the tape to the track record sees the
+ * same number. Finnhub fills the symbols Twelve Data has no quote for —
+ * keyless, rate-limited, or simply not covering it.
+ *
+ * Each quote carries its own `source` and `timestamp`, so the tape's `AS OF`
+ * staleness marking and the provenance stay per-symbol rather than per-board.
+ */
+export function getSpotQuotes(): Map<string, SpotQuote> {
+  const merged = new Map(getFinnhubSpotQuotes());
+  for (const [symbol, quote] of getTwelveDataSpotQuotes()) merged.set(symbol, quote);
+  return merged;
+}
+
 // ─── Finnhub ─────────────────────────────────────────────────────────────────
 //
-// Removed. The connector streamed Finnhub's EQUITY trades and did exactly one
-// thing with them: hand the spot price to `generateFlowFromSpot`, which fed
-// `simulatePrints` and put manufactured OPTION prints on the tape — at random,
-// on roughly 15% of ticks — on a deployment that had paid for a real feed.
+// A spot-quote source for DISPLAY only. See `connectors/finnhub.ts` for the
+// quoted term that keeps it out of the grader, and `rights.ts` for the
+// registry entry that enforces it.
 //
-// They were flagged `synthetic: true` and `rights.ts` mapped the source to the
-// SIMULATION dataset so nothing entered the record under Finnhub's name, so
-// this was honest. It was still a terminal inventing option flow for a reader
-// who had every reason to think a configured vendor meant observed data.
-//
-// The equity stream itself was consumed for nothing else, so the connector had
-// no remaining purpose. `FINNHUB_API_KEY` goes with it: a variable read by no
-// code is a `renderBlueprint.test.ts` failure, and a dashboard slot for a
-// credential that turns nothing on is worse than no slot at all.
-//
-// Finnhub's ticks *could* be a second underlying-mark source — `getSpotPrice`
-// is TwelveData alone today, and CLAUDE.md names that as the single reason a
-// credentialed deployment can still grade nothing. That is a new integration
-// with a rights question attached (the registry has no Finnhub dataset,
-// because until now it published none of their data), not a rescue of this one.
+// The previous connector of this name streamed EQUITY trades and handed each
+// price to `simulatePrints`, putting manufactured OPTION prints on the tape of
+// a deployment that had paid for a real feed. It was deleted; this one
+// publishes what Finnhub actually sends.
 
 // ─── Simulation feed (fallback) ──────────────────────────────────────────────
 
@@ -1238,10 +1258,25 @@ let grader: SignalGrader | undefined;
 function startSignalHistory(): void {
   const { store, recorder } = initPersistence();
 
-  // Underlying marks come from TwelveData's spot cache. Yahoo is deliberately
-  // NOT consulted as a fallback: its terms prohibit automated access for any
-  // purpose, so it is refused in the rights registry, and reaching for it here
-  // would route around that refusal.
+  // Underlying marks come from Twelve Data's spot cache, and from nowhere else.
+  //
+  // Two sources are refused here for two different reasons, and both refusals
+  // would be undone by "just add a fallback":
+  //
+  //   - Yahoo's terms prohibit automated access for any purpose, so it is
+  //     PROHIBITED for DISPLAY and its connector never starts.
+  //   - Finnhub fills the *display* board (see `getSpotQuotes`), but its terms
+  //     forbid sharing "data or derived results from the data" with any third
+  //     party without written approval. A graded outcome is a derived result
+  //     and `/api/track-record` publishes it, so `FINNHUB_QUOTES` is
+  //     PROHIBITED for PERSIST and must not be read here.
+  //
+  // Twelve Data itself is `UNVERIFIED` for PERSIST — its retention is capped
+  // at "duration permitted by subscription", which this deployment has not
+  // established. That is reported by `tools/collection/doctor.ts` rather than
+  // enforced, because the connector gate deliberately refuses PROHIBITED only
+  // and widening it would collapse the DISPLAY/PERSIST distinction the
+  // registry exists to draw.
   grader = new SignalGrader(store, (underlying) => {
     const px = getSpotPrice(underlying);
     return px > 0 ? px : undefined;

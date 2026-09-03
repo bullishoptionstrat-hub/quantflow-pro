@@ -248,9 +248,17 @@ export interface SpotQuote {
   price: number
   change: number
   changePct: number
-  volume: number
+  /**
+   * `null` where the source does not report one.
+   *
+   * Finnhub's `/quote` carries current, change, percent change, high, low,
+   * open and previous close — and no volume. Zero there would claim none
+   * traded, which is a different statement from "this source does not say".
+   */
+  volume: number | null
   timestamp: number
-  source: 'twelvedata'
+  /** Which board this symbol came from. Twelve Data wins where both have it. */
+  source: 'twelvedata' | 'finnhub'
 }
 
 /**

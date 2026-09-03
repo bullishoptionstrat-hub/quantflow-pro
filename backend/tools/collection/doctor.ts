@@ -43,13 +43,37 @@ export interface Check {
 /**
  * The grader's only source of an underlying mark.
  *
- * `startSignalHistory` passes it `getSpotPrice`, which reads TwelveData's
- * cache and nothing else — Yahoo is deliberately not consulted as a fallback
- * because the rights registry refuses it. So without this key every outcome
- * comes back UNGRADED with "No usable entry mark", which is honest and
- * completely opaque if you do not know where the mark comes from.
+ * `startSignalHistory` passes it `getSpotPrice`, which reads Twelve Data's
+ * cache and nothing else. Two other spot sources exist and neither may stand
+ * in: Yahoo prohibits automated access outright, and Finnhub — which does fill
+ * the *display* board — forbids sharing "data or derived results" with a third
+ * party, which is what a published track record is. Adding either as a
+ * fallback would route around a quoted restriction.
+ *
+ * So without this key every outcome comes back UNGRADED with "No usable entry
+ * mark", which is honest and completely opaque if you do not know where the
+ * mark comes from.
  */
 const SPOT_SOURCE_VAR = 'TWELVE_DATA_API_KEY';
+
+/**
+ * The rights question the doctor reports and does not enforce.
+ *
+ * `TWELVEDATA_QUOTES` is UNVERIFIED for PERSIST: its terms cap retention at
+ * "duration permitted by subscription", and what this deployment's
+ * subscription permits is not established. Every persisted outcome derives
+ * from that source, so the whole track record rests on it.
+ *
+ * It is reported rather than refused because the connector gate deliberately
+ * refuses PROHIBITED only — widening it to UNVERIFIED would collapse DISPLAY
+ * and PERSIST into one decision, which `connectorGate.test.ts` keeps a canary
+ * against. An operator can answer this; the code cannot.
+ */
+const MARK_SOURCE_RIGHTS_NOTE =
+  'Twelve Data is UNVERIFIED for PERSIST: retention is capped at "duration ' +
+  'permitted by subscription" (terms read 2026-09-03), and this deployment\'s ' +
+  'subscription is not established here. Every graded outcome derives from it. ' +
+  'Establish what your plan permits before publishing a track record.';
 
 /** Connector source strings that could ever be recorded, per the registry. */
 const RECORDABLE_SOURCES = [
@@ -149,6 +173,21 @@ export function runChecks(env: NodeJS.ProcessEnv = process.env): Check[] {
     fix: `Set ${SPOT_SOURCE_VAR}. This one is easy to miss: a deployment can have a ` +
          `licensed options feed and durable storage and still grade nothing, because ` +
          `the mark comes from a different connector entirely.`,
+  });
+
+  // ── 4b. Whether the mark source may be kept at all ────────────────────────
+  //
+  // Not a blocker: it is a question only the operator can answer, and the code
+  // deliberately does not refuse on it. But a track record published from a
+  // source whose retention terms are unestablished is the kind of thing this
+  // tool exists to surface before it matters.
+  checks.push({
+    name: 'Mark source retention rights',
+    status: 'warn',
+    detail: MARK_SOURCE_RIGHTS_NOTE,
+    fix: 'Check your Twelve Data plan against Section 16.1 (Retention Limits) at ' +
+         'https://twelvedata.com/terms. If it does not permit indefinite retention, ' +
+         'the outcomes table needs a retention policy — the code has none.',
   });
 
   // ── 5. Long enough to see the shortest horizon ────────────────────────────

@@ -127,11 +127,18 @@ test('DISPLAY and PERSIST still resolve differently somewhere', () => {
 });
 
 test('an unregistered connector is not stopped by the gate', () => {
-  // FRED, CoinGecko, Reddit, NewsAPI, Stooq, TwelveData, FMP and FlashAlpha
-  // emit no prints and have no dataset entry. Refusing them here would take
-  // out the macro, news and sentiment pages over a registry coverage gap
-  // rather than over a rights finding — which reads as the gate malfunctioning.
-  for (const source of ['fred', 'coingecko', 'reddit', 'newsapi', 'stooq', 'twelvedata', 'fmp', 'flashalpha']) {
+  // FRED, CoinGecko, Reddit, NewsAPI, Stooq, FMP and FlashAlpha emit no prints
+  // and have no dataset entry. Refusing them here would take out the macro,
+  // news and sentiment pages over a registry coverage gap rather than over a
+  // rights finding — which reads as the gate malfunctioning.
+  //
+  // Twelve Data left this list when it was registered: it is the grader's only
+  // mark source, so every persisted outcome derives from it, and leaving the
+  // source of the track record unclassified was the coverage gap that mattered
+  // most. It is PERMITTED for display and UNVERIFIED for persistence, so the
+  // gate still lets it run — for a stated reason now rather than for want of
+  // an entry.
+  for (const source of ['fred', 'coingecko', 'reddit', 'newsapi', 'stooq', 'fmp', 'flashalpha']) {
     assert.equal(datasetIdForSource(source), undefined, `${source} is unmapped today`);
     const d = mayOperateConnector(source, 'PRIVATE_RESEARCH');
     assert.equal(d.allowed, true, `${source} should not be stopped by the gate`);
@@ -222,6 +229,7 @@ test('Yahoo\'s non-print publication path is gated as well', () => {
 const MAPPED_SOURCES = [
   'tradier', 'polygon', 'cboe', 'cboe_options', 'cboeOptions', 'occ', 'yahoo',
   'finra', 'marketdata', 'schwab', 'tastytrade', 'simulation', 'seed',
+  'finnhub', 'twelvedata',
 ].filter((s) => datasetIdForSource(s));
 
 test('MAPPED_SOURCES has not drifted from the registry', () => {
@@ -230,11 +238,12 @@ test('MAPPED_SOURCES has not drifted from the registry', () => {
   const mapped = MAPPED_SOURCES.length;
   const known = new Set(
     ['tradier', 'polygon', 'cboe', 'cboe_options', 'cboeOptions', 'occ', 'yahoo',
-     'finra', 'marketdata', 'schwab', 'tastytrade', 'simulation', 'seed']
+     'finra', 'marketdata', 'schwab', 'tastytrade', 'simulation', 'seed',
+     'finnhub', 'twelvedata']
       .filter((s) => datasetIdForSource(s)),
   ).size;
   assert.equal(mapped, known);
-  assert.equal(mapped, 13, 'SOURCE_TO_DATASET changed — update MAPPED_SOURCES');
+  assert.equal(mapped, 15, 'SOURCE_TO_DATASET changed — update MAPPED_SOURCES');
 });
 
 /** One representative source per dataset, for the divergence canary. */
@@ -249,6 +258,8 @@ const SOURCE_FOR_DATASET: Record<string, string> = {
   SCHWAB_API: 'schwab',
   TASTYTRADE_API: 'tastytrade',
   SIMULATION: 'simulation',
+  FINNHUB_QUOTES: 'finnhub',
+  TWELVEDATA_QUOTES: 'twelvedata',
 };
 
 test('every dataset has a representative source for the canary', () => {
