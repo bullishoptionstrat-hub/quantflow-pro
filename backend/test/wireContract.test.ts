@@ -864,3 +864,25 @@ test('the optimizer claims neither AI nor live data', () => {
   assert.ok(!/current conditions/.test(rendered), 'none of the inputs comes from a feed');
   assert.ok(!/useState\(557\)/.test(rendered), 'the 2024 spot default survives');
 });
+
+test('a published score breakdown adds up to the score beside it', () => {
+  // `scoreBreakdown` crosses the wire as `score_breakdown` and the power
+  // alerts page renders it term by term under the heat number. The clamp used
+  // to be applied silently: components floor at `premium: 3` against an
+  // `ambiguousPenalty` of -15, so a low-premium signal with no inferable side
+  // published a breakdown summing to -12 against a score of 0.
+  const { scoreSignal } = require('../src/flow-engine/score') as typeof import('../src/flow-engine/score');
+  const contract = {
+    symbol: 'SPY_C610', underlying: 'SPY', right: 'C' as const,
+    strike: 610, expiry: '2027-06-18',
+  };
+  const { score, breakdown } = scoreSignal({
+    kind: 'LARGE', totalPremium: 1_000, totalSize: 1, iso: false,
+    sideAmbiguous: true, exchanges: 1, prints: 1, contract,
+    signalTs: Date.parse('2026-12-17T15:00:00Z'),
+  });
+  assert.equal(score, 0);
+  assert.equal(Object.values(breakdown).reduce((a, v) => a + v, 0), score,
+    'the terms a reader can see must reconcile with the number beside them');
+  assert.equal(breakdown.clamp, 12, 'and the clamp is named rather than swallowed');
+});

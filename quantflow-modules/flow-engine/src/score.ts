@@ -80,6 +80,21 @@ export function scoreSignal(input: ScoreInput): {
 
   const raw = Object.values(b).reduce((a, v) => a + v, 0);
   const score = Math.max(0, Math.min(100, raw));
+
+  // The clamp is published as a term, so the breakdown always sums to the
+  // score beside it.
+  //
+  // It was applied silently. The components floor at `premium: 3` and the
+  // ambiguous penalty is -15, so raw reaches **-12** on a low-premium signal
+  // whose side could not be inferred — while the score reads 0. Every consumer
+  // of `scoreBreakdown` is invited to add it up (the power alerts page renders
+  // each term under the heat number), and it would not have reconciled.
+  //
+  // The upper bound cannot bite today — the six components sum to exactly 100
+  // — but if a threshold is ever raised past that, this makes the overflow
+  // visible rather than swallowing it.
+  if (score !== raw) b.clamp = score - raw;
+
   return { score, breakdown: b };
 }
 
