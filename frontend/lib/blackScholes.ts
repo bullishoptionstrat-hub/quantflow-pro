@@ -21,7 +21,11 @@ export function blackScholes(
   const { S, K, T, r, sigma } = params
   if (T <= 0) {
     const intrinsic = type === 'C' ? Math.max(S - K, 0) : Math.max(K - S, 0)
-    return { price: intrinsic, delta: type === 'C' ? (S > K ? 1 : 0) : (S < K ? -1 : 0), gamma: 0, theta: 0, vega: 0, rho: 0 }
+    const itm = type === 'C' ? S > K : S < K
+    return {
+      price: intrinsic, delta: type === 'C' ? (S > K ? 1 : 0) : (S < K ? -1 : 0),
+      gamma: 0, theta: 0, vega: 0, rho: 0, probItm: itm ? 1 : 0,
+    }
   }
   const sqrtT = Math.sqrt(T)
   const d1 = (Math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * sqrtT)
@@ -40,7 +44,12 @@ export function blackScholes(
   const rho = type === 'C'
     ? K * T * Math.exp(-r * T) * cdf(d2) / 100
     : -K * T * Math.exp(-r * T) * cdf(-d2) / 100
-  return { price, delta, gamma, theta, vega, rho }
+  // `nd2` is already the risk-neutral probability of finishing in the money:
+  // N(d2) for a call, N(-d2) for a put. It is returned rather than recomputed
+  // by callers, and it is *not* delta — the optimizer used `delta` as a stand
+  // -in for it, and on a put (delta is negative here) `1 - delta` produced
+  // probabilities of 142%.
+  return { price, delta, gamma, theta, vega, rho, probItm: nd2 }
 }
 
 export function impliedVolatility(
