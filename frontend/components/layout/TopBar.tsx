@@ -5,6 +5,7 @@ import { useStore } from '@/store/useStore'
 import { apiFetch } from '@/lib/apiFetch'
 import { formatPremium } from '@/lib/utils'
 import { pctColor, spotPrice, signedPct } from '@/lib/format'
+import { POLL_MS, STALE_MS } from '@/lib/spotQuotes'
 import type { SpotQuote } from '@/lib/types'
 
 /**
@@ -31,17 +32,11 @@ import type { SpotQuote } from '@/lib/types'
  * it is the same defect the settings page retired three lists over.
  */
 
-/** How often to re-read the tape. Matches the macro page's poll. */
-const POLL_MS = 30_000
-
-/**
- * Older than this and the tape says when the prices are from instead of
- * presenting them as current. The connector refreshes on a 60s REST fallback
- * beneath its stream, so five minutes without a newer quote means the feed has
- * stopped, the session has closed, or the vendor is refusing — three different
- * causes with one honest reading: these are not live prices.
- */
-const STALE_MS = 5 * 60_000
+// The poll interval and the staleness threshold live in `lib/spotQuotes.ts`
+// with the feed itself. They were declared here first; the watchlist and the
+// strategy builder read the same board and need the same rule, and a second
+// copy of "five minutes" is a second copy to keep correct — the finding that
+// retired three hand-maintained lists from the settings page.
 
 type Tape =
   /** Nothing fetched yet. Renders empty rather than guessing. */

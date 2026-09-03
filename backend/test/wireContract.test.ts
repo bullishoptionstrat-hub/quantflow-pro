@@ -463,3 +463,64 @@ test('the frontend news types match what the sentiment route sends', () => {
     );
   }
 });
+
+// ─── The 2024 price map, in the two files it survived in ────────────────────
+
+/**
+ * `TopBar` lost its hardcoded base map when the tape stopped inventing its
+ * prices. Two copies were left behind, and neither was flagged by anything:
+ *
+ *   - `app/watchlist/page.tsx` held fifteen 2024 levels in `SPOT_PRICES` and
+ *     rendered them under each ticker as the card's price — the tape's map
+ *     with the `Math.random()` jitter left off. Five of the fifteen (MU, MRVL,
+ *     IWM, GLD, SOXL) are not symbols the spot connector covers at all, so
+ *     they could not have been right even in 2024: a hand-maintained list in
+ *     front of a feed, which is the defect that retired three lists from the
+ *     settings page and seven tickers from the tape.
+ *   - `components/calculator/StrategyBuilder.tsx` held eight in `SPOTS` and
+ *     priced every Black-Scholes leg off them.
+ *
+ * The render-level assertions are in `frontend/test/spotSeed.test.tsx`.
+ */
+
+const WATCHLIST = join(FRONTEND, 'app', 'watchlist', 'page.tsx');
+const BUILDER = join(FRONTEND, 'components', 'calculator', 'StrategyBuilder.tsx');
+
+test('no page carries its own price map', () => {
+  for (const path of [WATCHLIST, BUILDER, join(FRONTEND, 'components', 'layout', 'TopBar.tsx')]) {
+    const code = readFileSync(path, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+    // The 2024 levels themselves, which is what a revived map would carry.
+    for (const level of ['5587', '557', '942', '472', '376', '428']) {
+      assert.ok(!new RegExp(`:\\s*${level}\\b`).test(code),
+        `${path} still maps a symbol to ${level}`);
+    }
+    assert.ok(!/SPOT_PRICES|const SPOTS\b/.test(code), `${path} still declares a price map`);
+  }
+});
+
+test('both pages read the spot feed rather than a constant', () => {
+  for (const path of [WATCHLIST, BUILDER]) {
+    assert.match(readFileSync(path, 'utf8'), /useSpotQuotes/,
+      `${path} should read /api/macro/quotes through the shared feed`);
+  }
+});
+
+test('the staleness rule has one copy', () => {
+  // The tape declared `STALE_MS` locally. Three components now date a quote
+  // the feed has stopped refreshing, and "five minutes" living in three files
+  // is three places for it to drift.
+  const feed = readFileSync(join(FRONTEND, 'lib', 'spotQuotes.ts'), 'utf8');
+  assert.match(feed, /export const STALE_MS/, 'the threshold belongs with the feed');
+  for (const path of [WATCHLIST, BUILDER, join(FRONTEND, 'components', 'layout', 'TopBar.tsx')]) {
+    const code = readFileSync(path, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+    assert.ok(!/const STALE_MS/.test(code), `${path} declares a second staleness threshold`);
+  }
+});
+
+test('the builder does not price a leg against a spot it does not have', () => {
+  // It was `SPOTS[selectedTicker] || 100`: an unknown ticker priced every leg
+  // at 100 and said nothing about where 100 came from.
+  const code = readFileSync(BUILDER, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  assert.ok(!/\|\| 100/.test(code), 'the fallback spot survives');
+  assert.match(code, /useSpot === null/, 'the no-spot case needs a rendered state');
+});
