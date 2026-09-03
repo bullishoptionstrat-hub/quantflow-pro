@@ -250,7 +250,20 @@ export function getFlowStats() {
     totalPremium,
     callPremium,
     putPremium,
-    callPutRatio: puts.length > 0 ? parseFloat((calls.length / puts.length).toFixed(2)) : 0,
+    /**
+     * Calls per put, by **contract count** — not by premium, and not the way
+     * up the terminal's tile reads.
+     *
+     * It was `callPutRatio`, and the flow page's tile was labelled `P/C RATIO`
+     * while computing `putPremium / callPremium`: the other direction, on a
+     * different basis, under a name a reader would match to this one. The
+     * macro page's Cboe put/call is a third quantity again (exchange volume).
+     * Nothing consumes this endpoint today, which is exactly when a name is
+     * cheap to fix.
+     *
+     * `null` rather than `0` when there are no puts: zero reads as "no calls".
+     */
+    callPutCountRatio: puts.length > 0 ? parseFloat((calls.length / puts.length).toFixed(2)) : null,
     sweepCount: events.filter((e) => e.order_type === 'SWEEP').length,
     blockCount: events.filter((e) => e.order_type === 'BLOCK').length,
     splitCount: events.filter((e) => e.order_type === 'SPLIT').length,

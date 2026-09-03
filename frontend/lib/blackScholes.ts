@@ -71,19 +71,35 @@ export function impliedVolatility(
   return sigma
 }
 
+/**
+ * The position's P/L across spot prices, `daysToExpiry` from now.
+ *
+ * This is the value *today* under the model, not the payoff at expiry — see
+ * `payoff.ts` for that. The calculator drew this curve under a heading that
+ * said **P/L AT EXPIRY**, so the two are now computed and labelled separately.
+ * Passing `daysToExpiry: 0` does give the expiry payoff (the `T <= 0` branch
+ * above returns intrinsic), but `expiryPayoff` states it directly.
+ *
+ * Direction comes from `leg.action`. It used to come from `leg.qty > 0`, while
+ * the quantity input clamped to `Math.max(1, …)` — so the test was true for
+ * every leg that could be built and selecting `SELL` changed nothing.
+ *
+ * `r` is required. It was a default parameter of `0.05`, which is a hardcoded
+ * interest rate that no caller had to acknowledge and nothing on screen named.
+ */
 export function computePLCurve(
   legs: StrategyLeg[],
   priceRange: number[],
   daysToExpiry: number,
-  r = 0.05
+  r: number
 ): number[] {
+  const T = Math.max(daysToExpiry / 365, 0)
   return priceRange.map(price =>
     legs.reduce((total, leg) => {
-      const T = Math.max(daysToExpiry / 365, 0)
       const bs = blackScholes(leg.optionType, { S: price, K: leg.strike, T, r, sigma: leg.iv / 100 })
-      const curr = bs.price * 100 * Math.abs(leg.qty)
-      const entry = leg.entryPrice * 100 * Math.abs(leg.qty)
-      return total + (leg.qty > 0 ? curr - entry : entry - curr)
+      const qty = Math.abs(leg.qty)
+      const dir = leg.action === 'BUY' ? 1 : -1
+      return total + dir * (bs.price - leg.entryPrice) * 100 * qty
     }, 0)
   )
 }

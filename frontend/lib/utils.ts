@@ -33,7 +33,17 @@ export function formatExpiry(expiry: string): string {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
-export function isMarketOpen(): boolean {
+/**
+ * Is it a weekday between 09:30 and 16:00 New York time?
+ *
+ * That is all this checks, and it is not the same question as "is the market
+ * open" — which is what it was called, and what the sidebar asserted with a
+ * green dot. There is no holiday calendar here, so Thanksgiving, Good Friday
+ * and every other full closure read as open, and half-days read as open past
+ * the 13:00 close. Adding a calendar means maintaining one; naming the
+ * function for what it computes costs nothing and stops the UI claiming more.
+ */
+export function isRegularHours(): boolean {
   const et = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }))
   const d = et.getDay()
   const t = et.getHours() * 60 + et.getMinutes()
