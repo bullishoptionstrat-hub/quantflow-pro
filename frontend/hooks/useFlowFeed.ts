@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useCallback } from 'react'
 import { useStore } from '@/store/useStore'
+import { isPowerAlert } from '@/lib/flowFilter'
 import type { FlowEvent } from '@/lib/types'
 
 /**
@@ -44,7 +45,13 @@ function speakAlert(event: FlowEvent) {
 }
 
 function pushNotification(event: FlowEvent) {
-  if (typeof window === 'undefined' || Notification.permission !== 'granted') return
+  // `typeof window === 'undefined' || Notification.permission !== 'granted'`
+  // was the guard, and it throws a ReferenceError wherever the Notifications
+  // API is absent but `window` is not — iOS Safari, any embedded webview, and
+  // jsdom. The throw lands inside the socket's batch handler, so one heat-86
+  // print took the whole feed down on those browsers.
+  if (typeof window === 'undefined' || typeof Notification === 'undefined') return
+  if (Notification.permission !== 'granted') return
   new Notification(`⚡ ${event.underlying} ${event.option_type === 'C' ? 'CALL' : 'PUT'} SWEEP`, {
     body: `${event.total_premium >= 1_000_000 ? (event.total_premium / 1_000_000).toFixed(1) + 'M' : Math.round(event.total_premium / 1000) + 'K'} | Heat: ${event.heat_score} | ${event.sentiment}`,
     icon: '/favicon.ico',
@@ -53,39 +60,53 @@ function pushNotification(event: FlowEvent) {
   })
 }
 
+/** Spoken aloud above this heat, when voice is on. */
+const SPEAK_ABOVE = 80
+/** Pushed to the desktop above this heat. */
+const PUSH_ABOVE = 85
+
 export function useFlowFeed() {
-  const { filters, voiceEnabled, addFlowEvent, addPowerAlert, setConnected, flowEvents } = useStore()
+  const { voiceEnabled, addFlowEvent, addPowerAlert, setConnected, flowEvents } = useStore()
 
-  const passesFilters = useCallback((e: FlowEvent) => {
-    if (filters.ticker && !e.underlying.includes(filters.ticker.toUpperCase())) return false
-    if (e.total_premium < filters.minPremium) return false
-    if (filters.optionType !== 'ALL' && e.option_type !== filters.optionType) return false
-    if (filters.orderType !== 'ALL' && e.order_type !== filters.orderType) return false
-    if (filters.sentiment !== 'ALL' && e.sentiment !== filters.sentiment) return false
-    if (e.heat_score < filters.minHeat) return false
-    if (filters.unusualOnly && !e.is_unusual) return false
-    return true
-  }, [filters])
-
+  /**
+   * Every signal that arrives is stored. Nothing here consults the filters.
+   *
+   * `handleEvent` used to begin `if (!passesFilters(event)) return`, so the
+   * store held only what matched the filters *at the moment each signal
+   * arrived* — and the filters are a view control the reader moves. Raising
+   * `minPremium` to $1M for a minute and putting it back deleted every
+   * sub-$1M print from that minute, permanently, while the control said they
+   * were admitted again. Widening a filter cannot recover data that was never
+   * kept. `FlowFeed` filters for display, which is where a view control
+   * belongs.
+   *
+   * The alert path no longer runs behind that gate either — see
+   * `isPowerAlert`. The speech and push thresholds are unchanged; what is gone
+   * is a display filter deciding what the terminal says out loud.
+   */
   const handleEvent = useCallback((event: FlowEvent) => {
-    if (!passesFilters(event)) return
     addFlowEvent(event)
-    if (event.heat_score >= 75 || event.order_type === 'SWEEP') {
-      if (voiceEnabled && event.heat_score > 80) speakAlert(event)
-      if (event.heat_score > 85) pushNotification(event)
-      if (event.is_unusual && event.heat_score >= 75) {
-        addPowerAlert({
-          id: `alert-${event.id}`,
-          underlying: event.underlying,
-          alert_type: event.order_type as any,
-          message: `${event.underlying} ${event.option_type === 'C' ? 'CALL' : 'PUT'} ${event.order_type} — $${event.total_premium >= 1e6 ? (event.total_premium / 1e6).toFixed(1) + 'M' : Math.round(event.total_premium / 1000) + 'K'} premium`,
-          heat_score: event.heat_score,
-          created_at: event.created_at,
-          flow_event_id: event.id,
-        })
-      }
+
+    if (voiceEnabled && event.heat_score > SPEAK_ABOVE) speakAlert(event)
+    if (event.heat_score > PUSH_ABOVE) pushNotification(event)
+
+    if (isPowerAlert(event)) {
+      addPowerAlert({
+        id: `alert-${event.id}`,
+        underlying: event.underlying,
+        // Was `event.order_type as any`. `PowerAlert.alert_type` declared
+        // SWEEP/BLOCK/DARK_POOL/GEX_FLIP/ML_SIGNAL while the values arriving
+        // are `OrderType` — SPLIT, MULTI_LEG and LARGE were not in the union
+        // and three of the union's members were produced by nothing. The cast
+        // was what let the two disagree; the type now says what arrives.
+        alert_type: event.order_type,
+        message: `${event.underlying} ${event.option_type === 'C' ? 'CALL' : 'PUT'} ${event.order_type} — $${event.total_premium >= 1e6 ? (event.total_premium / 1e6).toFixed(1) + 'M' : Math.round(event.total_premium / 1000) + 'K'} premium`,
+        heat_score: event.heat_score,
+        created_at: event.created_at,
+        flow_event_id: event.id,
+      })
     }
-  }, [passesFilters, voiceEnabled, addFlowEvent, addPowerAlert])
+  }, [voiceEnabled, addFlowEvent, addPowerAlert])
 
   useEffect(() => {
     let socket: any = null

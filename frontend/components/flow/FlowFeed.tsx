@@ -8,6 +8,7 @@ import { FlowFilters } from './FlowFilters'
 import { FlowStats } from './FlowStats'
 import { TableSkeleton } from '@/components/ui/Skeleton'
 import { formatTime, formatExpiry } from '@/lib/utils'
+import { matchesFilters } from '@/lib/flowFilter'
 import type { FlowEvent } from '@/lib/types'
 
 const COL_HEADERS = [
@@ -43,16 +44,9 @@ export function FlowFeed() {
   const [isLoading] = useState(false)
   const parentRef = useRef<HTMLDivElement>(null)
 
-  const filtered = flowEvents.filter(e => {
-    if (filters.ticker && !e.underlying.includes(filters.ticker.toUpperCase())) return false
-    if (e.total_premium < filters.minPremium) return false
-    if (filters.optionType !== 'ALL' && e.option_type !== filters.optionType) return false
-    if (filters.orderType !== 'ALL' && e.order_type !== filters.orderType) return false
-    if (filters.sentiment !== 'ALL' && e.sentiment !== filters.sentiment) return false
-    if (e.heat_score < filters.minHeat) return false
-    if (filters.unusualOnly && !e.is_unusual) return false
-    return true
-  })
+  // The only place the filters are applied. They used to be applied here *and*
+  // at ingest, and the ingest copy dropped signals before they were stored.
+  const filtered = flowEvents.filter(e => matchesFilters(e, filters))
 
   const sorted = [...filtered].sort((a, b) => {
     const dir = sort[1] === 'asc' ? 1 : -1
@@ -76,13 +70,25 @@ export function FlowFeed() {
   }, [])
 
   const csvExport = () => {
-    const header = 'Time,Ticker,Expiry,Strike,Type,Order,Size,Premium,Heat,Sentiment\n'
+    // The export is the filtered view, and the file has to say so — a CSV that
+    // is a subset and does not name the subset is a tile labelled TOTAL. The
+    // `synthetic` column comes along for the same reason it is shown per row:
+    // a credentialed deployment can have observed and constructed prints side
+    // by side, and a spreadsheet cannot see the badge.
+    const meta = [
+      `# quantflow flow export — ${sorted.length} of ${flowEvents.length} signals held this session`,
+      `# filters: ticker=${filters.ticker || 'any'} premium>=${filters.minPremium} type=${filters.optionType} order=${filters.orderType} sentiment=${filters.sentiment} heat>=${filters.minHeat}${filters.unusualOnly ? ' unusualOnly' : ''}`,
+    ].join('\n') + '\n'
+    const header = 'Time,Ticker,Expiry,Strike,Type,Order,Size,Premium,Heat,Sentiment,Synthetic\n'
     const rows = sorted.map(e =>
-      [formatTime(e.created_at),e.underlying,e.expiry,e.strike,e.option_type,e.order_type,e.total_size,e.total_premium,e.heat_score,e.sentiment].join(',')
+      [formatTime(e.created_at),e.underlying,e.expiry,e.strike,e.option_type,e.order_type,e.total_size,e.total_premium,e.heat_score,e.sentiment,e.synthetic ? 'yes' : 'no'].join(',')
     ).join('\n')
-    const blob = new Blob([header + rows], { type: 'text/csv' })
+    const blob = new Blob([meta + header + rows], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
-    const a = document.createElement('a'); a.href = url; a.download = 'quantflow-export.csv'; a.click()
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `quantflow-flow-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')}.csv`
+    a.click()
     URL.revokeObjectURL(url)
   }
 
@@ -94,7 +100,11 @@ export function FlowFeed() {
           <span style={{ fontWeight: 700, fontSize: 13, color: '#fafafa' }}>
             ⚡ LIVE OPTIONS FLOW
             <span style={{ marginLeft: 10, fontSize: 11, color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
-              {sorted.length} trades
+              {/* Both numbers, because the filters no longer decide what is
+                  kept — only what is shown. */}
+              {sorted.length === flowEvents.length
+                ? `${sorted.length} signals`
+                : `${sorted.length} of ${flowEvents.length} signals`}
             </span>
           </span>
           <button onClick={csvExport} style={{
