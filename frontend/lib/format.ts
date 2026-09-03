@@ -61,6 +61,13 @@ export function cryptoPrice(v: number): string {
  * with the separator and as a serial number without it.
  */
 export function spotPrice(v: number): string {
+  // Below a dollar this hands off to `cryptoPrice`, because the SHIB defect
+  // above is not a fact about crypto — it is what two fixed decimals do to a
+  // small number, and `toFixed(2)` on a sub-cent price prints $0.00 whatever
+  // the asset is. The tape renders whichever symbols the feed carries rather
+  // than a list we control, so "no equity trades under a dollar" is not ours
+  // to assume. The two agree above a dollar by construction.
+  if (v < 1) return cryptoPrice(v)
   return v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 

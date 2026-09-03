@@ -94,9 +94,18 @@ describe('spotPrice', () => {
     expect(spotPrice(1204.5)).toBe('1,204.50')
   })
 
-  test('two decimals always, so the tape does not jitter in width', () => {
+  test('two decimals above a dollar, so the tape does not jitter in width', () => {
     expect(spotPrice(22)).toBe('22.00')
     expect(spotPrice(612.4)).toBe('612.40')
+  })
+
+  test('never renders a live price as zero, on any symbol the feed sends', () => {
+    // The same property `cryptoPrice` is held to, and for the same reason: the
+    // tape shows whatever symbols the response carries, not a list we control,
+    // so a sub-dollar one must not print as $0.00 here either.
+    for (const v of [0.0000058, 1.234e-8, 0.004, 0.5, 22, 5587]) {
+      expect(spotPrice(v)).toMatch(/[1-9]/)
+    }
   })
 })
 
