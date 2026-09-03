@@ -17,6 +17,13 @@ services:
       # throws at startup rather than being guessed. See provenance/rights.ts.
       - key: BUSINESS_MODE
         value: PRIVATE_RESEARCH
+      # How many proxies sit in front of this service. Render puts exactly one
+      # there, and the rate limiter reads the client address that many entries
+      # from the RIGHT of `X-Forwarded-For` — the leftmost entry is whatever
+      # the caller sent, and reading it let any caller mint a fresh bucket per
+      # request. Raise this only if another proxy is added in front of Render.
+      - key: TRUST_PROXY_HOPS
+        value: "1"
       - key: TRADIER_TOKEN
         sync: false
       - key: POLYGON_API_KEY
