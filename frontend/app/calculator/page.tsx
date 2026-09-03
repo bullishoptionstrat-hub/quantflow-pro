@@ -6,7 +6,9 @@ export default function CalculatorPage() {
     <div>
       <div style={{ marginBottom: 16 }}>
         <h1 style={{ fontSize: 18, fontWeight: 700, color: '#fafafa', marginBottom: 4 }}>🧮 Options P/L Calculator</h1>
-        <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>Black-Scholes pricing · Multi-leg strategy builder · Greeks panel · P/L at expiry curve</p>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+          Black-Scholes pricing · Multi-leg strategy builder · Greeks panel · payoff at expiry and model value today
+        </p>
       </div>
       <StrategyBuilder />
     </div>
