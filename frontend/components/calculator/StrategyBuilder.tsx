@@ -1,51 +1,96 @@
 'use client'
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer } from 'recharts'
 import { blackScholes, computePLCurve } from '@/lib/blackScholes'
 import { useStore } from '@/store/useStore'
+import { useSpotQuotes, isStale, asOf } from '@/lib/spotQuotes'
+import { spotPrice as fmtSpot } from '@/lib/format'
 import type { StrategyLeg } from '@/lib/types'
 
-const SPOTS: Record<string, number> = {
-  SPY: 557, QQQ: 472, NVDA: 942, MSFT: 428, AAPL: 212, MSTR: 376, SPX: 5587, META: 503
+/**
+ * Every strategy was priced off a hardcoded 2024 price map.
+ *
+ * `SPOTS` held SPY 557, NVDA 942, SPX 5587 — the ticker tape's base map again,
+ * a third copy after the tape's and the watchlist's — and seeded both the spot
+ * input and the first leg's strike from it. A user switching to NVDA got a
+ * Black-Scholes price computed at 942 with nothing on screen saying where 942
+ * came from or when.
+ *
+ * It was also read **once**, into `useState`'s initial value, so changing the
+ * selected ticker afterwards left the previous underlying's spot and strike in
+ * place. The builder said NVDA at the top and priced SPY underneath.
+ *
+ * The spot now seeds from `/api/macro/quotes`, is re-seeded when the ticker
+ * changes, and says which quote it came from and when. With no quote there is
+ * no substitute: the builder asks for a spot rather than supplying one, and
+ * holds off creating a leg until it has a strike to put on it.
+ */
+
+/** A round starting strike. The connector's symbols are all above $1. */
+const STRIKE_STEP = 5
+
+function defaultLeg(spot: number, dte: number): StrategyLeg {
+  return {
+    optionType: 'C', action: 'BUY',
+    strike: Math.max(STRIKE_STEP, Math.round(spot / STRIKE_STEP) * STRIKE_STEP),
+    expiry: new Date(Date.now() + dte * 86400000).toISOString().slice(0, 10),
+    iv: 30, entryPrice: 0, qty: 1,
+  }
 }
 
 export function StrategyBuilder() {
   const { selectedTicker } = useStore()
-  const spotPrice = SPOTS[selectedTicker] || 100
+  const { quote } = useSpotQuotes()
+  const live = quote(selectedTicker)
 
-  const [legs, setLegs] = useState<StrategyLeg[]>([{
-    optionType: 'C', action: 'BUY', strike: Math.round(spotPrice / 5) * 5,
-    expiry: new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10),
-    iv: 30, entryPrice: 0, qty: 1,
-  }])
+  const [legs, setLegs] = useState<StrategyLeg[]>([])
   const [daysToExpiry, setDaysToExpiry] = useState(30)
-  const [useSpot, setUseSpot] = useState(spotPrice)
+  /** `null` until a quote arrives or the reader types one. Never a stand-in. */
+  const [useSpot, setUseSpot] = useState<number | null>(null)
+  /** Set once the reader edits the spot, so a poll does not overwrite them. */
+  const edited = useRef(false)
+  const seededFor = useRef<string | null>(null)
 
-  const addLeg = () => setLegs(l => [...l, {
-    optionType: 'C', action: 'BUY', strike: Math.round(useSpot / 5) * 5,
-    expiry: new Date(Date.now() + daysToExpiry * 86400000).toISOString().slice(0, 10),
-    iv: 30, entryPrice: 0, qty: 1,
-  }])
+  // Re-seed when the underlying changes, and adopt the first quote that
+  // arrives for it. A strategy is built on one underlying, so the legs go with
+  // the spot rather than carrying SPY strikes onto an NVDA price.
+  useEffect(() => {
+    if (seededFor.current !== selectedTicker) {
+      seededFor.current = selectedTicker
+      edited.current = false
+      setUseSpot(live ? live.price : null)
+      setLegs(live ? [defaultLeg(live.price, daysToExpiry)] : [])
+      return
+    }
+    if (!edited.current && live && useSpot === null) {
+      setUseSpot(live.price)
+      setLegs(l => (l.length === 0 ? [defaultLeg(live.price, daysToExpiry)] : l))
+    }
+  }, [selectedTicker, live, useSpot, daysToExpiry])
+
+  const addLeg = () => setLegs(l => [...l, defaultLeg(useSpot ?? 0, daysToExpiry)])
   const removeLeg = (i: number) => setLegs(l => l.filter((_, j) => j !== i))
   const updateLeg = (i: number, k: keyof StrategyLeg, v: any) =>
     setLegs(l => l.map((leg, j) => j === i ? { ...leg, [k]: v } : leg))
 
   // Compute greeks for first leg
   const greeks = useMemo(() => {
-    if (!legs[0]) return null
+    if (!legs[0] || useSpot === null) return null
     const T = Math.max(daysToExpiry / 365, 0.001)
     return blackScholes(legs[0].optionType, { S: useSpot, K: legs[0].strike, T, r: 0.05, sigma: legs[0].iv / 100 })
   }, [legs, useSpot, daysToExpiry])
 
-  // P/L curve
+  // P/L curve. Empty until there is a spot to centre it on — a curve drawn
+  // around a stand-in price is a picture of a position nobody holds.
   const plData = useMemo(() => {
+    if (useSpot === null) return []
     const range = Array.from({ length: 60 }, (_, i) => useSpot * (0.7 + i * 0.01))
     const pl = computePLCurve(legs, range, daysToExpiry)
     return range.map((price, i) => ({ price: Math.round(price), pl: Math.round(pl[i]) }))
   }, [legs, useSpot, daysToExpiry])
 
-  const maxProfit = Math.max(...plData.map(d => d.pl))
-  const maxLoss = Math.min(...plData.map(d => d.pl))
+  const maxProfit = plData.length > 0 ? Math.max(...plData.map(d => d.pl)) : 0
+  const maxLoss = plData.length > 0 ? Math.min(...plData.map(d => d.pl)) : 0
   const breakevens = plData.filter((d, i) => {
     const prev = plData[i - 1]
     return prev && Math.sign(prev.pl) !== Math.sign(d.pl)
@@ -78,16 +123,42 @@ export function StrategyBuilder() {
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="card-header">
             <span style={{ fontWeight: 700, fontSize: 13 }}>STRATEGY BUILDER</span>
-            <button onClick={addLeg} style={{ background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.3)', color: '#a78bfa', fontSize: 11, padding: '4px 10px', borderRadius: 5, cursor: 'pointer' }}>
+            {/* A leg needs a strike, and a strike is chosen around the spot.
+                With no spot there is nothing to centre it on, and defaulting
+                is how `SPOTS[selectedTicker] || 100` came about. */}
+            <button
+              onClick={addLeg}
+              disabled={useSpot === null}
+              title={useSpot === null ? 'Set an underlying spot first' : undefined}
+              style={{ background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.3)', color: '#a78bfa', fontSize: 11, padding: '4px 10px', borderRadius: 5, cursor: useSpot === null ? 'not-allowed' : 'pointer', opacity: useSpot === null ? 0.4 : 1 }}
+            >
               + Add Leg
             </button>
           </div>
           <div style={{ padding: 14 }}>
             <div style={{ marginBottom: 12 }}>
-              <label style={{ display: 'block', fontSize: 10, color: 'var(--text-muted)', marginBottom: 4, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' }}>UNDERLYING SPOT</label>
+              <label style={{ display: 'block', fontSize: 10, color: 'var(--text-muted)', marginBottom: 4, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' }}>UNDERLYING SPOT · {selectedTicker}</label>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <input type="number" value={useSpot} onChange={e => setUseSpot(Number(e.target.value))} style={inputStyle} />
+                <input
+                  type="number"
+                  value={useSpot ?? ''}
+                  placeholder="enter a spot"
+                  onChange={e => {
+                    edited.current = true
+                    setUseSpot(e.target.value === '' ? null : Number(e.target.value))
+                  }}
+                  style={inputStyle}
+                />
                 <span style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>DTE: {daysToExpiry}</span>
+              </div>
+              {/* Where the number came from. `SPOTS[selectedTicker] || 100`
+                  said nothing, and what it seeded was a 2024 price. */}
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, fontFamily: "'JetBrains Mono', monospace" }}>
+                {edited.current && useSpot !== null
+                  ? 'YOUR OWN ASSUMPTION'
+                  : live
+                    ? `FROM ${live.symbol} ${fmtSpot(live.price)}${isStale(live) ? ` · AS OF ${asOf(live)} ET` : ''}`
+                    : `NO LIVE QUOTE FOR ${selectedTicker} — enter a spot to price against`}
               </div>
             </div>
             <div style={{ marginBottom: 12 }}>
@@ -186,6 +257,13 @@ export function StrategyBuilder() {
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 12, fontFamily: "'JetBrains Mono', monospace" }}>
               P/L AT EXPIRY — {selectedTicker} · {legs.length} LEG{legs.length > 1 ? 'S' : ''}
             </div>
+            {plData.length === 0 ? (
+              <div style={{ height: 280, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', fontSize: 11, color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
+                {legs.length === 0
+                  ? `NO SPOT FOR ${selectedTicker} — enter one on the left to build a strategy`
+                  : 'NO SPOT — the curve has nothing to centre on'}
+              </div>
+            ) : (
             <ResponsiveContainer width="100%" height={280}>
               <AreaChart data={plData} margin={{ top: 10, right: 20, left: 0, bottom: 5 }}>
                 <defs>
@@ -203,7 +281,9 @@ export function StrategyBuilder() {
                 <YAxis tick={{ fill: '#71717a', fontSize: 10, fontFamily: 'JetBrains Mono' }} tickFormatter={v => v >= 1000 || v <= -1000 ? `${v/1000}K` : `${v}`} />
                 <Tooltip content={<CustomTooltip />} />
                 <ReferenceLine y={0} stroke="#52525b" strokeWidth={1.5} />
-                <ReferenceLine x={useSpot} stroke="#a78bfa" strokeDasharray="4 4" label={{ value: 'SPOT', fill: '#a78bfa', fontSize: 10 }} />
+                {useSpot !== null && (
+                  <ReferenceLine x={useSpot} stroke="#a78bfa" strokeDasharray="4 4" label={{ value: 'SPOT', fill: '#a78bfa', fontSize: 10 }} />
+                )}
                 {breakevens.map((be, i) => (
                   <ReferenceLine key={i} x={be} stroke="#fbbf24" strokeDasharray="3 3" />
                 ))}
@@ -214,6 +294,7 @@ export function StrategyBuilder() {
                 />
               </AreaChart>
             </ResponsiveContainer>
+            )}
           </div>
         </div>
       </div>

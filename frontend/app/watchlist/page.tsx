@@ -2,15 +2,34 @@
 import { useState } from 'react'
 import { useStore } from '@/store/useStore'
 import { formatPremium, heatColor } from '@/lib/utils'
+import { pctColor, spotPrice, signedPct } from '@/lib/format'
+import { useSpotQuotes, isStale, asOf } from '@/lib/spotQuotes'
 
-const SPOT_PRICES: Record<string, number> = {
-  SPX: 5587, SPY: 557, QQQ: 472, NVDA: 942, MSTR: 376, MSFT: 428, AAPL: 212,
-  META: 503, TSLA: 182, AMD: 155, MU: 94, MRVL: 71, IWM: 198, GLD: 235, SOXL: 22,
-}
+/**
+ * The card price came from a hardcoded 2024 map.
+ *
+ * `SPOT_PRICES` held fifteen levels — SPX 5587, SPY 557, NVDA 942, TSLA 182 —
+ * and rendered them under each ticker in the same monospace as the flow
+ * statistics beside them, with nothing marking them as anything but the
+ * current price. It was the ticker tape's base map with the `Math.random()`
+ * jitter left off, surviving in a second file after the tape lost its own.
+ *
+ * A hand-maintained list in front of a feed also drifts from it: this one
+ * carried MU, MRVL, IWM, GLD and SOXL, which the spot connector does not
+ * cover, so those five could never have been right even in 2024 — the same
+ * defect that retired the tape's fifteen-entry `TICKERS` const.
+ *
+ * Prices now come from `/api/macro/quotes`, and a ticker with no quote behind
+ * it shows no price. The feed's own state is not reported here: `TopBar` is
+ * mounted in `app/layout.tsx` and already says whether the tape is empty,
+ * refused or unreachable, above the fold of this page. A second copy of that
+ * message is a second copy to keep correct.
+ */
 
 export default function WatchlistPage() {
   const { watchlist, addToWatchlist, removeFromWatchlist, flowEvents } = useStore()
   const [input, setInput] = useState('')
+  const { quote } = useSpotQuotes()
 
   const handleAdd = () => {
     if (!input.trim()) return
@@ -59,13 +78,20 @@ export default function WatchlistPage() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
         {watchlist.map(ticker => {
           const stats = getTickerStats(ticker)
-          const spot = SPOT_PRICES[ticker]
+          const q = quote(ticker)
+          const stale = q ? isStale(q) : false
           return (
             <div key={ticker} className="card" style={{ padding: 16 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
                 <div>
                   <div style={{ fontSize: 18, fontWeight: 700, color: '#fafafa', fontFamily: "'JetBrains Mono', monospace" }}>{ticker}</div>
-                  {spot && <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: "'JetBrains Mono', monospace', marginTop: 2" }}>${spot.toLocaleString()}</div>}
+                  {q && (
+                    <div style={{ fontSize: 12, fontFamily: "'JetBrains Mono', monospace", marginTop: 2, opacity: stale ? 0.6 : 1, display: 'flex', gap: 6, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                      <span style={{ color: 'var(--text-secondary)' }}>${spotPrice(q.price)}</span>
+                      <span style={{ color: pctColor(q.changePct) }}>{signedPct(q.changePct)}</span>
+                      {stale && <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>AS OF {asOf(q)} ET</span>}
+                    </div>
+                  )}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   {stats.maxHeat > 0 && (
