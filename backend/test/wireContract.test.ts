@@ -784,3 +784,18 @@ test('the unusual-activity route still publishes what the panel now renders', ()
   assert.match(route, /note: 'Daily cumulative volume per contract/,
     'the panel renders this string rather than its own copy');
 });
+
+test('the filter option lists are checked against the filters they set', () => {
+  // They were `string[][]`, narrowed at each `onChange` with `as any`, so
+  // nothing compared a list against the union it feeds. An order type added to
+  // the engine and missing from `ORDER_TYPES` is invisible — and a typo writes
+  // a value no signal can match into the store, which empties the feed while
+  // the control still shows a plausible label. Same hazard as
+  // `PowerAlert.alert_type`, where a cast was the only reason a union missing
+  // SPLIT, MULTI_LEG and LARGE compiled.
+  const code = readFileSync(join(FRONTEND, 'components', 'flow', 'FlowFilters.tsx'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  assert.ok(!/as any/.test(code), 'a cast over a filter value survives');
+  assert.match(code, /Choice<Filters\['orderType'\]>/,
+    'the order-type list must be typed by the filter it sets');
+});
