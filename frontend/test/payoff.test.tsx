@@ -128,7 +128,14 @@ async function renderBuilder() {
   useStore.setState({ selectedTicker: 'SPY' } as never)
   const { StrategyBuilder } = await import('@/components/calculator/StrategyBuilder')
   const view = render(<StrategyBuilder />)
-  await waitFor(() => expect(screen.getByText(/FROM SPY/)).toBeDefined())
+  // Wait for the seeded leg, not for the label. `FROM SPY` renders as soon as
+  // the quote arrives, which is one render before the effect that adopts it
+  // sets the spot and creates the first leg — so waiting on the label returns
+  // in a window where the position does not exist yet, and every assertion
+  // after it is a race. (This suite runs `singleFork`, so the window is only
+  // sometimes wide enough to lose.)
+  await waitFor(() => expect(screen.getByText(/debit|credit/)).toBeDefined())
+  expect(screen.getByText(/FROM SPY/)).toBeDefined()
   return view
 }
 

@@ -722,3 +722,65 @@ test('the alerts page distinguishes a dead feed from a quiet one', () => {
   assert.match(code, /Not connected to the flow feed/, 'an outage is not a quiet tape');
   assert.match(code, /score_breakdown/, 'the heat score must not be opaque');
 });
+
+// ─── Status indicators ──────────────────────────────────────────────────────
+
+/**
+ * Three indicators that asserted more than they had checked.
+ *
+ *   - `connected ? '● LIVE DATA' : '◌ SIMULATION'` in the sidebar. `connected`
+ *     is the socket's transport state: a keyless deployment's backend
+ *     simulates prints and sends them down a perfectly healthy socket, so this
+ *     said LIVE DATA over a simulated tape — and nothing in the browser
+ *     simulates anything since `generateSeedFlow` was deleted, so a dead
+ *     socket said SIMULATION while no data existed at all. One flag, asked two
+ *     questions, wrong on both.
+ *   - `MARKET OPEN`, from a weekday-and-clock check with no holiday calendar.
+ *   - `CBOE · ~15 MIN DELAYED`, hardcoded in a panel whose rows each carry
+ *     `delayedMinutes` and whose route publishes its own `note`. The dark pool
+ *     page's hand-written **⚠ 24-HOUR DELAY** badge, in a second component.
+ */
+
+const SIDEBAR = join(FRONTEND, 'components', 'layout', 'Sidebar.tsx');
+const HEATMAP = join(FRONTEND, 'app', 'heat-map', 'page.tsx');
+const UNUSUAL = join(FRONTEND, 'components', 'flow', 'UnusualActivity.tsx');
+
+test('the socket flag is not read as a claim about the data', () => {
+  const code = readFileSync(SIDEBAR, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  assert.ok(!/LIVE DATA/.test(code), 'a connected socket can carry simulated prints');
+  assert.ok(!/◌ SIMULATION/.test(code), 'nothing in the browser simulates anything');
+  assert.match(code, /synthetic/, 'whether a print is constructed is per print');
+});
+
+test('the session indicator claims only the window it checks', () => {
+  const utils = readFileSync(join(FRONTEND, 'lib', 'utils.ts'), 'utf8');
+  assert.ok(!/export function isMarketOpen/.test(utils),
+    'there is no holiday calendar behind it');
+  assert.match(utils, /export function isRegularHours/, 'name it for what it computes');
+  const code = readFileSync(SIDEBAR, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  assert.ok(!/MARKET OPEN|MARKET CLOSED/.test(code), 'the sidebar must not assert it either');
+});
+
+test('the heat map does not describe a window as the whole tape', () => {
+  const code = readFileSync(HEATMAP, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  assert.ok(!/all tickers/i.test(code), 'the store holds a 500-signal session window');
+  assert.ok(!/TOTAL PREMIUM/.test(code), 'and the same word as the flow tiles used');
+  assert.ok(!/Premium-weighted heat/i.test(code), 'the printed score is Math.max, not a weighting');
+  assert.match(code, /received this session/, 'say what the map is over');
+  assert.match(code, /d\.synthetic/, 'and how much of it is constructed');
+});
+
+test('the delay is rendered, not asserted', () => {
+  const code = readFileSync(UNUSUAL, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  assert.ok(!/~15 MIN DELAYED/.test(code), 'the rows carry their own delayedMinutes');
+  assert.match(code, /delayedMinutes/, 'read it');
+  assert.match(code, /setNote\(/, "and render the route's own note, as the dark pool page does");
+  // `asOf.slice(11, 16)` is the UTC hour, printed beside New York clocks.
+  assert.ok(!/asOf\.slice\(11, 16\)/.test(code), 'that is a UTC substring, not ET');
+});
+
+test('the unusual-activity route still publishes what the panel now renders', () => {
+  const route = readFileSync(join(__dirname, '..', 'src', 'routes', 'flow.ts'), 'utf8');
+  assert.match(route, /note: 'Daily cumulative volume per contract/,
+    'the panel renders this string rather than its own copy');
+});

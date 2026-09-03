@@ -2,6 +2,20 @@
 import { useState, useEffect } from 'react'
 import { apiFetch } from '@/lib/apiFetch'
 
+/**
+ * The panel asserted the delay instead of rendering the one it was sent.
+ *
+ * `CBOE · ~15 MIN DELAYED` was hardcoded in the markup while every row carries
+ * its own `delayedMinutes` and the route publishes its own `note` — "Daily
+ * cumulative volume per contract, delayed ~15 minutes. Not a trade tape." A
+ * hand-written badge stating a fact about someone else's data is the dark pool
+ * page's **⚠ 24-HOUR DELAY** again, and the fix there was the same: stop
+ * asserting, render what the backend publishes.
+ *
+ * `asOf` was also sliced straight out of the ISO string (`asOf.slice(11, 16)`),
+ * which prints the **UTC** hour beside `formatTime` values elsewhere in the
+ * terminal that are New York. Two clocks, no labels, four hours apart.
+ */
 interface UnusualContract {
   symbol: string
   expiry: string
@@ -22,9 +36,18 @@ const fmtNotional = (n: number) =>
 
 const mono = "'JetBrains Mono', monospace"
 
+/** `HH:MM ET` — the rest of the terminal's clock, not the raw UTC substring. */
+function etTime(iso: string): string {
+  const t = new Date(iso).getTime()
+  if (!Number.isFinite(t)) return ''
+  return `${new Date(t).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' })} ET`
+}
+
 export function UnusualActivity() {
   const [rows, setRows] = useState<UnusualContract[]>([])
   const [asOf, setAsOf] = useState<string>('')
+  const [note, setNote] = useState<string>('')
+  const [delayed, setDelayed] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [failed, setFailed] = useState(false)
 
@@ -36,8 +59,13 @@ export function UnusualActivity() {
         if (!res.ok) throw new Error(String(res.status))
         const j = await res.json()
         if (!alive) return
-        setRows(Array.isArray(j.contracts) ? j.contracts : [])
-        setAsOf(j.contracts?.[0]?.asOf ?? '')
+        const contracts: UnusualContract[] = Array.isArray(j.contracts) ? j.contracts : []
+        setRows(contracts)
+        setAsOf(contracts[0]?.asOf ?? '')
+        // The route's own words and the rows' own delay, rather than a badge
+        // written here that cannot know when either changes.
+        setNote(typeof j.note === 'string' ? j.note : '')
+        setDelayed(typeof contracts[0]?.delayedMinutes === 'number' ? contracts[0].delayedMinutes : null)
         setFailed(false)
       } catch {
         // Show nothing rather than stale or invented rows.
@@ -64,12 +92,16 @@ export function UnusualActivity() {
           </div>
         </div>
         {/* Provenance stated on the panel itself: this is a delayed daily
-            aggregate, and must never read as the live tape beside it. */}
-        <div style={{ fontSize: 10, color: '#fbbf24', fontFamily: mono, textAlign: 'right' }}>
-          CBOE · ~15 MIN DELAYED
-          <div style={{ color: 'var(--text-muted)', marginTop: 2 }}>
-            daily volume aggregate, not a tape{asOf ? ` · as of ${asOf.slice(11, 16)}` : ''}
-          </div>
+            aggregate, and must never read as the live tape beside it. Every
+            part of it comes from the response — the delay from the rows, the
+            wording from the route. */}
+        <div style={{ fontSize: 10, color: '#fbbf24', fontFamily: mono, textAlign: 'right', maxWidth: 320 }}>
+          CBOE{delayed !== null ? ` · ${delayed} MIN DELAYED` : ''}
+          {(note || asOf) && (
+            <div style={{ color: 'var(--text-muted)', marginTop: 2 }}>
+              {note}{asOf ? `${note ? ' · ' : ''}as of ${etTime(asOf)}` : ''}
+            </div>
+          )}
         </div>
       </div>
 
