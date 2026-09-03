@@ -4,6 +4,7 @@
  * Docs: https://docs.coingecko.com
  */
 import axios from 'axios';
+import { describeHttpError } from '../httpError';
 
 const API_KEY = process.env.COINGECKO_API_KEY || '';
 const BASE = API_KEY
@@ -16,30 +17,54 @@ const CRYPTO_SYMBOLS: Record<string, string> = {
   dogecoin: 'DOGE', 'shiba-inu': 'SHIB', microstrategy: 'MSTR',
 };
 
+/**
+ * A quote from CoinGecko's `/coins/markets`.
+ *
+ * Every optional field was `?? 0`, so a coin the vendor had no market data for
+ * came back priced at **$0.00** with a 0.00% change, and the macro page
+ * rendered it through the same markup as a live one. That is the Stooq failure
+ * at field granularity: there, a browser-challenge page became twelve quotes
+ * priced at zero; here, one absent field is enough.
+ *
+ * `price` is non-null because a record without one is not a quote and is not
+ * cached at all. The rest are nullable, and the page renders `—` for a null.
+ */
 export interface CryptoQuote {
   id: string;
   symbol: string;
   name: string;
   price: number;
-  change24h: number;
-  changePct24h: number;
-  marketCap: number;
-  volume24h: number;
-  high24h: number;
-  low24h: number;
-  ath: number;
-  athChangePct: number;
+  change24h: number | null;
+  changePct24h: number | null;
+  marketCap: number | null;
+  volume24h: number | null;
+  high24h: number | null;
+  low24h: number | null;
+  ath: number | null;
+  athChangePct: number | null;
   lastUpdated: string;
   source: 'coingecko';
 }
 
+/** Health of the last fetch cycle, reported to /api/health. */
+export interface CoinGeckoHealth {
+  ok: boolean;
+  /** Operator-facing, and public: this reaches the unauthenticated /api/health. */
+  reason?: string;
+}
+
+/** A number the vendor actually sent, or null. Never a zero standing in. */
+function num(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
 export interface GlobalCryptoData {
-  totalMarketCap: number;
-  totalVolume: number;
-  btcDominance: number;
-  ethDominance: number;
-  activeCurrencies: number;
-  marketCapChangePct24h: number;
+  totalMarketCap: number | null;
+  totalVolume: number | null;
+  btcDominance: number | null;
+  ethDominance: number | null;
+  activeCurrencies: number | null;
+  marketCapChangePct24h: number | null;
   source: 'coingecko';
 }
 
@@ -47,8 +72,13 @@ const cryptoCache = new Map<string, CryptoQuote>();
 let globalData: GlobalCryptoData | null = null;
 let onCryptoUpdate: ((q: CryptoQuote) => void) | null = null;
 
+let onHealth: ((h: CoinGeckoHealth) => void) | null = null;
+
 export function onCoinGeckoUpdate(handler: (q: CryptoQuote) => void): void {
   onCryptoUpdate = handler;
+}
+export function onCoinGeckoHealth(handler: (h: CoinGeckoHealth) => void): void {
+  onHealth = handler;
 }
 export function getCryptoQuotes(): Map<string, CryptoQuote> { return cryptoCache; }
 export function getCryptoGlobal(): GlobalCryptoData | null { return globalData; }
@@ -73,29 +103,53 @@ async function fetchPrices(): Promise<void> {
       timeout: 8000,
     });
 
+    let priced = 0;
+    let unpriced = 0;
+
     for (const coin of (data ?? [])) {
+      const price = num(coin.current_price);
+      if (price === null) {
+        // Not a quote. Caching it as `price: 0` put a $0.00 row in the crypto
+        // table in the same styling as a live one.
+        unpriced++;
+        continue;
+      }
       const quote: CryptoQuote = {
         id: coin.id,
         symbol: CRYPTO_SYMBOLS[coin.id] ?? coin.symbol?.toUpperCase(),
         name: coin.name,
-        price: coin.current_price ?? 0,
-        change24h: coin.price_change_24h ?? 0,
-        changePct24h: coin.price_change_percentage_24h ?? 0,
-        marketCap: coin.market_cap ?? 0,
-        volume24h: coin.total_volume ?? 0,
-        high24h: coin.high_24h ?? 0,
-        low24h: coin.low_24h ?? 0,
-        ath: coin.ath ?? 0,
-        athChangePct: coin.ath_change_percentage ?? 0,
+        price,
+        change24h: num(coin.price_change_24h),
+        changePct24h: num(coin.price_change_percentage_24h),
+        marketCap: num(coin.market_cap),
+        volume24h: num(coin.total_volume),
+        high24h: num(coin.high_24h),
+        low24h: num(coin.low_24h),
+        ath: num(coin.ath),
+        athChangePct: num(coin.ath_change_percentage),
         lastUpdated: coin.last_updated ?? new Date().toISOString(),
         source: 'coingecko',
       };
+      priced++;
       cryptoCache.set(coin.symbol?.toUpperCase(), quote);
       onCryptoUpdate?.(quote);
     }
+
+    if (priced === 0) {
+      onHealth?.({ ok: false, reason: `CoinGecko returned no priced coins${unpriced > 0 ? ` (${unpriced} without a price)` : ''}.` });
+    } else {
+      onHealth?.({ ok: true });
+    }
   } catch (err: any) {
-    if (err.response?.status === 429) console.warn('[coingecko] Rate limited — slowing down');
-    else console.error('[coingecko] prices error:', err.message);
+    // Reported, not just logged. `startConnector` records what `start()`
+    // returned once and never looks again, so a connector that starts clean
+    // and is rate-limited an hour later kept saying `connected` while serving
+    // an ageing cache — the finding that gave Stooq `onStooqHealth`.
+    const reason = err.response?.status === 429
+      ? 'CoinGecko rate limited this deployment (HTTP 429).'
+      : describeHttpError(err);
+    console.warn('[coingecko] prices error:', reason);
+    onHealth?.({ ok: false, reason });
   }
 }
 
@@ -108,12 +162,12 @@ async function fetchGlobal(): Promise<void> {
     const d = data?.data;
     if (!d) return;
     globalData = {
-      totalMarketCap: d.total_market_cap?.usd ?? 0,
-      totalVolume: d.total_volume?.usd ?? 0,
-      btcDominance: d.market_cap_percentage?.btc ?? 0,
-      ethDominance: d.market_cap_percentage?.eth ?? 0,
-      activeCurrencies: d.active_cryptocurrencies ?? 0,
-      marketCapChangePct24h: d.market_cap_change_percentage_24h_usd ?? 0,
+      totalMarketCap: num(d.total_market_cap?.usd),
+      totalVolume: num(d.total_volume?.usd),
+      btcDominance: num(d.market_cap_percentage?.btc),
+      ethDominance: num(d.market_cap_percentage?.eth),
+      activeCurrencies: num(d.active_cryptocurrencies),
+      marketCapChangePct24h: num(d.market_cap_change_percentage_24h_usd),
       source: 'coingecko',
     };
   } catch (err: any) {
@@ -126,7 +180,7 @@ export async function startCoinGecko(): Promise<void> {
   await fetchGlobal();
 
   // Free tier: 100 calls/min — poll every 2 min to stay well under
-  setInterval(fetchPrices, 2 * 60_000);
-  setInterval(fetchGlobal, 5 * 60_000);
+  setInterval(fetchPrices, 2 * 60_000).unref();
+  setInterval(fetchGlobal, 5 * 60_000).unref();
   console.log(`[coingecko] Started — ${API_KEY ? 'Demo API key' : 'public endpoint'} polling every 2min`);
 }

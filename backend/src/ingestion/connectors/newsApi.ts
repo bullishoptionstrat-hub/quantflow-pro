@@ -124,7 +124,7 @@ export async function startNewsAPI(): Promise<void> {
       await new Promise(r => setTimeout(r, i * 3000));
       await fetchHeadlines(QUERIES[i]);
     }
-  }, 30 * 60_000);
+  }, 30 * 60_000).unref();
 
   console.log('[newsapi] Started — financial headlines every 30min');
 }

@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { apiFetch } from '@/lib/apiFetch'
-import { fmt, pctColor, pcrColor, cryptoPrice } from '@/lib/format'
+import { fmt, pctColor, pcrColor, cryptoPrice, signedPct } from '@/lib/format'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 /**
@@ -50,13 +50,23 @@ interface MacroSeries {
  * correctly without fixing the field would have printed BTC "+64.88%" on a
  * 0.4% day.
  */
+/**
+ * `GET /api/macro/crypto` → `quotes[]`.
+ *
+ * Every field but `price` is nullable, because CoinGecko can omit any of them
+ * for a coin it has no market data for. The connector used to write `?? 0`
+ * into each, so an absent value arrived as a real-looking number and rendered
+ * as `$0.00` / `0.00%` through the same markup as a live row — the Stooq
+ * failure at field granularity. A coin with no price is no longer cached at
+ * all; a coin missing a *derived* field renders `—` for that cell.
+ */
 interface CryptoQuote {
   symbol: string
   name: string
   price: number
-  changePct24h: number
-  marketCap: number
-  volume24h: number
+  changePct24h: number | null
+  marketCap: number | null
+  volume24h: number | null
 }
 /**
  * `GET /api/macro` → `futures` / `indices` / `yields`.
@@ -287,14 +297,14 @@ function CryptoPanel({ data }: { data: CryptoQuote[] }) {
                 <td style={{ padding: '8px 12px', textAlign: 'right', fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 }}>
                   ${cryptoPrice(c.price)}
                 </td>
-                <td style={{ padding: '8px 12px', textAlign: 'right', color: pctColor(c.changePct24h), fontFamily: "'JetBrains Mono', monospace", fontWeight: 700 }}>
-                  {c.changePct24h > 0 ? '+' : ''}{c.changePct24h.toFixed(2)}%
+                <td style={{ padding: '8px 12px', textAlign: 'right', color: c.changePct24h === null ? 'var(--text-muted)' : pctColor(c.changePct24h), fontFamily: "'JetBrains Mono', monospace", fontWeight: 700 }}>
+                  {c.changePct24h === null ? '—' : `${signedPct(c.changePct24h)}`}
                 </td>
                 <td style={{ padding: '8px 12px', textAlign: 'right', color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
-                  {fmt(c.marketCap)}
+                  {c.marketCap === null ? '—' : fmt(c.marketCap)}
                 </td>
                 <td style={{ padding: '8px 12px', textAlign: 'right', color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
-                  {fmt(c.volume24h)}
+                  {c.volume24h === null ? '—' : fmt(c.volume24h)}
                 </td>
               </tr>
             ))}

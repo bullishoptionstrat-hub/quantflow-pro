@@ -138,6 +138,6 @@ export async function startTwelveData(): Promise<void> {
   startWebSocket();
 
   // REST fallback every 60s
-  setInterval(fetchQuotesBatch, 60_000);
+  setInterval(fetchQuotesBatch, 60_000).unref();
   console.log('[twelvedata] Started — WebSocket streaming + 60s REST fallback');
 }

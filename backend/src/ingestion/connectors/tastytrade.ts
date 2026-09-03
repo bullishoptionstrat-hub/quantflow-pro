@@ -129,7 +129,7 @@ export async function startTastytrade(): Promise<void> {
   if (!ok) return;
 
   // Re-login every 23h (session expires in 24h)
-  setInterval(login, 23 * 60 * 60_000);
+  setInterval(login, 23 * 60 * 60_000).unref();
 
   startWebSocket();
 
@@ -140,6 +140,6 @@ export async function startTastytrade(): Promise<void> {
     }
   }
   await poll();
-  setInterval(poll, 5 * 60_000);
+  setInterval(poll, 5 * 60_000).unref();
   console.log('[tastytrade] Started — streaming + polling every 5min');
 }
