@@ -22,7 +22,6 @@ Built by Quantum Edge Capital LLC.
 **Data Sources:**
 - Tradier (WebSocket options time & sales)
 - Polygon.io (REST options trades)
-- Finnhub (trade ticks)
 - Simulation fallback (always-on demo mode)
 
 ---
@@ -178,7 +177,6 @@ Open http://localhost:3000
 | `SUPABASE_SERVICE_KEY` | Service role key (server only) |
 | `TRADIER_TOKEN` | [Sign up free](https://developer.tradier.com/user/sign_up) |
 | `POLYGON_API_KEY` | [Sign up free](https://polygon.io/dashboard/signup) |
-| `FINNHUB_API_KEY` | [Sign up free](https://finnhub.io/register) |
 
 ---
 

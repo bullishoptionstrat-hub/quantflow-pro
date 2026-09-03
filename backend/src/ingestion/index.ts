@@ -6,7 +6,7 @@
  * normalizes to a RawPrint and funnels through `ingestPrint()`; the engine
  * emits classified signals on burst close, which are batched to Socket.IO.
  *
- * Sources: Tradier, Polygon, Finnhub + 13 free connectors:
+ * Sources: Tradier, Polygon + 13 free connectors:
  *   FlashAlpha · MarketData.app · Schwab · Tastytrade · TwelveData · FMP
  *   CoinGecko · FRED · Reddit · NewsAPI · CBOE · Yahoo · Stooq
  */
@@ -191,9 +191,9 @@ function markRefused(source: string, d: ConnectorGateDecision): void {
  * A connector that has no key, and which variable would give it one.
  *
  * `startConnector` says this for the thirteen free-tier connectors from
- * `CONNECTOR_CREDENTIALS`. Tradier, Polygon and Finnhub start on their own
+ * `CONNECTOR_CREDENTIALS`. Tradier and Polygon start on their own
  * paths and set `disabled` with no reason at all — so /api/health reported
- * three sources as off and named nothing an operator could act on, which is
+ * those sources as off and named nothing an operator could act on, which is
  * the gap the credentials table was introduced to close everywhere else.
  */
 function markNoCredentials(source: string, vars: string[]): void {
@@ -347,14 +347,14 @@ export function getUnusualActivity(symbol?: string) {
  * names are already documented in `.env.example`. Values never appear here.
  */
 export const CONNECTOR_CREDENTIALS: Readonly<Record<string, readonly string[]>> = {
-  // The three legacy connectors start on their own paths rather than through
-  // `startConnector`, and were left out of this table for that reason. They
+  // These two start on their own paths rather than through `startConnector`,
+  // and were left out of this table for that reason. (Finnhub was the third;
+  // it is gone — see the note where its connector used to be.) They
   // still *need* credentials, and leaving them out meant nothing could answer
   // "which variable turns Tradier on" — `tools/collection/doctor.ts` asked and
   // got "(none listed)" for the two most likely options feeds.
   tradier: ['TRADIER_TOKEN'],
   polygon: ['POLYGON_API_KEY'],
-  finnhub: ['FINNHUB_API_KEY'],
 
   flashalpha: ['FLASHALPHA_API_KEY'],
   marketdata: ['MARKETDATA_TOKEN'],
@@ -442,7 +442,6 @@ export function startIngestion(io: any): void {
   // ── Legacy connectors ──
   startTradierIngestion();
   startPolygonIngestion();
-  startFinnhubIngestion();
 
   // ── 13 New connectors ──
   // The chain-snapshot connectors still build their own camelCase events with
@@ -1075,46 +1074,28 @@ function startPolygonIngestion(): void {
   poll();
 }
 
-// ─── Finnhub trade streaming ─────────────────────────────────────────────────
-
-const FINNHUB_KEY = process.env.FINNHUB_API_KEY || '';
-
-function startFinnhubIngestion(): void {
-  if (!FINNHUB_KEY) {
-    markNoCredentials('finnhub', ['FINNHUB_API_KEY']);
-    return;
-  }
-
-  const ws = new WebSocket(`wss://ws.finnhub.io?token=${FINNHUB_KEY}`);
-
-  ws.on('open', () => {
-    sources['finnhub'] = 'connected';
-    WATCHED_SYMBOLS.slice(0, 5).forEach((sym) => {
-      ws.send(JSON.stringify({ type: 'subscribe', symbol: sym }));
-    });
-  });
-
-  ws.on('message', (raw: Buffer) => {
-    try {
-      const msg = JSON.parse(raw.toString());
-      if (msg.type === 'trade' && Array.isArray(msg.data)) {
-        for (const t of msg.data) {
-          if (Math.random() > 0.85) {
-            generateFlowFromSpot(t.s, t.p, 'finnhub');
-          }
-        }
-      }
-    } catch {
-      noteUnparsedFrame('finnhub');
-    }
-  });
-
-  ws.on('error', () => { sources['finnhub'] = 'error'; });
-  ws.on('close', () => {
-    sources['finnhub'] = 'error';
-    setTimeout(startFinnhubIngestion, 10_000);
-  });
-}
+// ─── Finnhub ─────────────────────────────────────────────────────────────────
+//
+// Removed. The connector streamed Finnhub's EQUITY trades and did exactly one
+// thing with them: hand the spot price to `generateFlowFromSpot`, which fed
+// `simulatePrints` and put manufactured OPTION prints on the tape — at random,
+// on roughly 15% of ticks — on a deployment that had paid for a real feed.
+//
+// They were flagged `synthetic: true` and `rights.ts` mapped the source to the
+// SIMULATION dataset so nothing entered the record under Finnhub's name, so
+// this was honest. It was still a terminal inventing option flow for a reader
+// who had every reason to think a configured vendor meant observed data.
+//
+// The equity stream itself was consumed for nothing else, so the connector had
+// no remaining purpose. `FINNHUB_API_KEY` goes with it: a variable read by no
+// code is a `renderBlueprint.test.ts` failure, and a dashboard slot for a
+// credential that turns nothing on is worse than no slot at all.
+//
+// Finnhub's ticks *could* be a second underlying-mark source — `getSpotPrice`
+// is TwelveData alone today, and CLAUDE.md names that as the single reason a
+// credentialed deployment can still grade nothing. That is a new integration
+// with a rights question attached (the registry has no Finnhub dataset,
+// because until now it published none of their data), not a rescue of this one.
 
 // ─── Simulation feed (fallback) ──────────────────────────────────────────────
 
@@ -1220,17 +1201,6 @@ function simulatePrints(symbol: string, spot: number, ts: number): RawPrint[] {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-/**
- * Synthesize option flow from an equity spot tick (Finnhub streams equity
- * trades, not options tape). Flagged synthetic — it is inference, not tape.
- */
-function generateFlowFromSpot(symbol: string, spotPrice: number, source: string): void {
-  if (!(spotPrice > 0)) return;
-  const prints = simulatePrints(symbol, spotPrice, Date.now())
-    .map((pr) => ({ ...pr, source }));
-  emitSignals(prints.flatMap(ingestPrint));
-}
 
 function isoDatePlusDays(fromTs: number, days: number): string {
   const d = new Date(fromTs);

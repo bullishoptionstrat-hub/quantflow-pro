@@ -27,7 +27,6 @@ const INLINE = '../index.ts';
 const FILES: Record<string, string> = {
   tradier: INLINE,
   polygon: INLINE,
-  finnhub: INLINE,
   flashalpha: 'flashAlpha.ts',
   marketdata: 'marketData.ts',
   schwab: 'schwab.ts',
@@ -140,7 +139,6 @@ test('the legacy connectors name the variable that would enable them', () => {
   const expected: Record<string, string> = {
     tradier: 'TRADIER_TOKEN',
     polygon: 'POLYGON_API_KEY',
-    finnhub: 'FINNHUB_API_KEY',
   };
 
   for (const [connector, variable] of Object.entries(expected)) {
