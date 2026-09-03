@@ -41,7 +41,7 @@ import {
   startFMP, getEarnings, getInsiderTrades, getFMPNews,
 } from './connectors/fmp';
 import {
-  startCoinGecko, onCoinGeckoUpdate,
+  startCoinGecko, onCoinGeckoUpdate, onCoinGeckoHealth,
   getCryptoQuotes, getCryptoGlobal,
 } from './connectors/coinGecko';
 import {
@@ -484,6 +484,19 @@ export function startIngestion(io: any): void {
     } else {
       sources['stooq'] = 'error';
       sourceErrors['stooq'] = h.reason ?? 'Stooq fetch failed.';
+    }
+  });
+
+  // Same reason as Stooq above: `startConnector` records what `start()`
+  // returned once, so a CoinGecko that starts clean and is rate-limited an
+  // hour later kept reporting `connected` while serving an ageing cache.
+  onCoinGeckoHealth((h) => {
+    if (h.ok) {
+      sources['coingecko'] = 'connected';
+      delete sourceErrors['coingecko'];
+    } else {
+      sources['coingecko'] = 'error';
+      sourceErrors['coingecko'] = h.reason ?? 'CoinGecko fetch failed.';
     }
   });
 

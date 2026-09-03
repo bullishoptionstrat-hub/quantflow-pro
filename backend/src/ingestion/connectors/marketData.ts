@@ -123,6 +123,6 @@ export async function startMarketData(): Promise<void> {
   }
 
   await poll();
-  setInterval(poll, 15 * 60_000); // every 15 min — preserve credits
+  setInterval(poll, 15 * 60_000).unref(); // every 15 min — preserve credits
   console.log('[marketdata] Started — polling every 15min (100 credits/day)');
 }

@@ -122,7 +122,7 @@ export async function startSchwab(): Promise<void> {
   if (!ok) return;
 
   // Refresh token every 28 min
-  setInterval(refreshAccessToken, 28 * 60_000);
+  setInterval(refreshAccessToken, 28 * 60_000).unref();
 
   async function poll(): Promise<void> {
     for (const sym of WATCHED) {
@@ -132,6 +132,6 @@ export async function startSchwab(): Promise<void> {
   }
 
   await poll();
-  setInterval(poll, 60_000); // every minute during market hours
+  setInterval(poll, 60_000).unref(); // every minute during market hours
   console.log('[schwab] Started — polling options chains every 60s');
 }

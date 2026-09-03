@@ -132,8 +132,8 @@ export async function startFMP(): Promise<void> {
   await fetchInsiderTrades();
   await fetchNews();
 
-  setInterval(fetchEarningsCalendar, 6 * 60 * 60_000); // every 6h
-  setInterval(fetchInsiderTrades, 60 * 60_000);          // every 1h
-  setInterval(fetchNews, 15 * 60_000);                    // every 15min
+  setInterval(fetchEarningsCalendar, 6 * 60 * 60_000).unref(); // every 6h
+  setInterval(fetchInsiderTrades, 60 * 60_000).unref();          // every 1h
+  setInterval(fetchNews, 15 * 60_000).unref();                    // every 15min
   console.log('[fmp] Started — earnings, insider trades, news');
 }

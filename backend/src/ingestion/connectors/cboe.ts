@@ -122,6 +122,18 @@ type PutCallBlock =
   | { ok: true; values: PutCallValues }
   | { ok: false; reason: string };
 
+/**
+ * A number the response actually carried, or null.
+ *
+ * `parseFloat(undefined ?? 0)` is `0`, not `NaN` — the coercion is what made
+ * an absent field indistinguishable from a real zero.
+ */
+function numeric(v: unknown): number | null {
+  if (v === null || v === undefined || v === '') return null;
+  const n = typeof v === 'number' ? v : parseFloat(String(v));
+  return Number.isFinite(n) ? n : null;
+}
+
 async function fetchPutCallRatios(): Promise<PutCallBlock> {
   try {
     const { data } = await axios.get(PCR_URL, {
@@ -134,15 +146,35 @@ async function fetchPutCallRatios(): Promise<PutCallBlock> {
       return { ok: false, reason: 'options_volume.json returned no rows.' };
     }
 
+    // Each field parsed on its own terms. The outer failure was handled, but
+    // a *present* row missing a field fell to `parseFloat(undefined ?? 0)` —
+    // which is 0 — inside an `ok: true` block. That is the defect this file's
+    // own header describes, surviving at field granularity: a put/call ratio
+    // of 0.00, coloured green, from a response that simply did not carry one.
+    const ratios = {
+      putCallRatioEquity: numeric(today.equity_put_call_ratio),
+      putCallRatioIndex: numeric(today.index_put_call_ratio),
+      putCallRatioTotal: numeric(today.total_put_call_ratio),
+    };
+    const missing = Object.entries(ratios)
+      .filter(([, v]) => v === null)
+      .map(([k]) => k);
+    if (missing.length > 0) {
+      return {
+        ok: false,
+        reason: `options_volume.json carried no ${missing.join(', ')}.`,
+      };
+    }
+
     return { ok: true, values: {
-      putCallRatioEquity: parseFloat(today.equity_put_call_ratio ?? 0),
-      putCallRatioIndex: parseFloat(today.index_put_call_ratio ?? 0),
-      putCallRatioTotal: parseFloat(today.total_put_call_ratio ?? 0),
-      equityCallVolume: parseInt(today.equity_call_volume ?? 0),
-      equityPutVolume: parseInt(today.equity_put_volume ?? 0),
-      indexCallVolume: parseInt(today.index_call_volume ?? 0),
-      indexPutVolume: parseInt(today.index_put_volume ?? 0),
-      totalOptionsVolume: parseInt(today.total_volume ?? 0),
+      putCallRatioEquity: ratios.putCallRatioEquity!,
+      putCallRatioIndex: ratios.putCallRatioIndex!,
+      putCallRatioTotal: ratios.putCallRatioTotal!,
+      equityCallVolume: numeric(today.equity_call_volume) ?? 0,
+      equityPutVolume: numeric(today.equity_put_volume) ?? 0,
+      indexCallVolume: numeric(today.index_call_volume) ?? 0,
+      indexPutVolume: numeric(today.index_put_volume) ?? 0,
+      totalOptionsVolume: numeric(today.total_volume) ?? 0,
     } };
   } catch (err: any) {
     // Reported, not swallowed. This is currently a 403, and for a long time it

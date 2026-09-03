@@ -156,6 +156,6 @@ export async function startReddit(): Promise<void> {
   }
 
   await analyzeSentiment();
-  setInterval(analyzeSentiment, 15 * 60_000); // every 15 min
+  setInterval(analyzeSentiment, 15 * 60_000).unref(); // every 15 min
   console.log('[reddit] Started — WSB/options sentiment every 15min');
 }

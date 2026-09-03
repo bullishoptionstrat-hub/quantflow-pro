@@ -112,7 +112,7 @@ export async function startYahoo(): Promise<void> {
   if (!ENABLED) { console.log('[yahoo] Disabled'); return; }
 
   await fetchQuotes();
-  setInterval(fetchQuotes, 30_000);
+  setInterval(fetchQuotes, 30_000).unref();
 
   // Fetch options for top symbols every 3 min (stagger to avoid rate limiting)
   let idx = 0;
@@ -120,7 +120,7 @@ export async function startYahoo(): Promise<void> {
     const sym = WATCHED[idx % WATCHED.length];
     fetchOptionFlow(sym);
     idx++;
-  }, 15_000);
+  }, 15_000).unref();
 
   console.log('[yahoo] Started — quotes every 30s, options chain cycling every 15s per symbol');
 }
