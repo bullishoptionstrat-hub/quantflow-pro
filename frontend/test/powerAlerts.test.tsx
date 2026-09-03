@@ -45,11 +45,15 @@ describe('the page describes the trigger it has', () => {
     expect(screen.getByText(/deterministic score, not a model/i)).toBeDefined()
   })
 
-  test('the stated condition is the conjunction the code applies', () => {
+  test('the stated condition is the single test the code applies', () => {
+    // It said "flags a signal unusual **and** scores it 75 or above" — true,
+    // and misleading: the backend sets `is_unusual` to exactly
+    // `heat_score >= 75`, so the pair is one condition and stating two implied
+    // a test that does not exist.
     const { container } = render(<PowerAlertsPage />)
-    expect(container.textContent).toMatch(/unusual and scores it 75 or above/i)
-    // The three claims that were not true: a SWEEP/BLOCK special case, and an
-    // "or" where the code has an "and".
+    expect(container.textContent).toMatch(/scores a signal 75 or above/i)
+    expect(container.textContent).not.toMatch(/unusual and scores/i)
+    // The three claims that were never true.
     expect(container.textContent).not.toMatch(/SWEEP \+ Block/i)
     expect(container.textContent).not.toMatch(/Heat ≥75 or/i)
   })

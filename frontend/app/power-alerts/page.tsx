@@ -36,7 +36,15 @@ const ALERT_TYPE_COLORS: Record<OrderType, string> = {
 const alertColor = (t: OrderType) => ALERT_TYPE_COLORS[t] || DEFAULT_ALERT_COLOR
 
 /** What actually raises an alert, in words, kept next to the predicate's home. */
-const TRIGGER = 'Raised when the engine flags a signal unusual and scores it 75 or above — any order type.'
+/**
+ * What actually raises an alert, in words.
+ *
+ * This read "flags a signal unusual **and** scores it 75 or above", which was
+ * true and misleading at once: the backend sets `is_unusual` to exactly
+ * `heat_score >= 75`, so the two conditions are one, and stating them as a
+ * pair implied a second test that does not exist. One condition, named once.
+ */
+const TRIGGER = 'Raised when the engine scores a signal 75 or above — its unusual threshold, on any order type.'
 
 export default function PowerAlertsPage() {
   const { powerAlerts, voiceEnabled, setVoiceEnabled, connected } = useStore()

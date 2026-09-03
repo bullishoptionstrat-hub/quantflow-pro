@@ -886,3 +886,59 @@ test('a published score breakdown adds up to the score beside it', () => {
     'the terms a reader can see must reconcile with the number beside them');
   assert.equal(breakdown.clamp, 12, 'and the clamp is named rather than swallowed');
 });
+
+// ─── The wire's own defaults ────────────────────────────────────────────────
+
+/**
+ * `toWireEvent` filled four fields with zero when it had no data for them.
+ *
+ * A print arriving without a chain snapshot published `iv: 0`, `delta: 0`,
+ * `open_interest: 0` and `spot_price: 0` — and `moneynessOf` opened with
+ * `if (!(spot > 0)) return 'OTM'`, so the strike was *classified* against that
+ * zero and the signal was labelled OTM on no evidence.
+ *
+ * Nothing in the terminal renders these today, which is the hazard rather than
+ * the consolation: a field carrying a fabricated default is one binding away
+ * from showing a zero as a fact. That is precisely what `ml_score` was.
+ */
+
+const ADAPTER = join(__dirname, '..', 'src', 'ingestion', 'flowEngineAdapter.ts');
+
+test('the wire carries null, not zero, for a figure it does not have', () => {
+  const code = readFileSync(ADAPTER, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  for (const field of ['spot_price', 'open_interest']) {
+    assert.ok(!new RegExp(`${field}:[^,\\n]*\\?\\?\\s*0`).test(code), `${field} still defaults to 0`);
+  }
+  assert.ok(!/\biv\s*=\s*[^;]*\?\?\s*0/.test(code), 'iv still defaults to 0');
+  assert.ok(!/\bdelta\s*=\s*[^;]*\?\?\s*0/.test(code), 'delta still defaults to 0');
+});
+
+test('moneyness has a state for not knowing', () => {
+  const code = readFileSync(ADAPTER, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  assert.ok(!/if \(!\(spot > 0\)\) return 'OTM'/.test(code),
+    'a strike must not be classified against a spot price of zero');
+  assert.match(code, /return 'UNKNOWN'/, 'three states could not express "we do not know"');
+
+  // And the frontend's union has to admit it, or a real UNKNOWN renders as a
+  // value the page has no branch for.
+  const declared = fieldsOf('FlowEvent');
+  assert.ok(declared.has('moneyness'));
+  const types = readFileSync(TYPES, 'utf8');
+  assert.match(types, /'ITM' \| 'ATM' \| 'OTM' \| 'UNKNOWN'/,
+    'frontend FlowEvent.moneyness must carry the fourth state');
+});
+
+test('the unusual threshold has exactly one home', () => {
+  // `is_unusual` was `sig.score >= 75` in the adapter, and `isPowerAlert` read
+  // `e.is_unusual && e.heat_score >= 75` — a conjunction whose second term is
+  // implied by the first, restating the threshold in a second place while
+  // looking like an independent condition.
+  const adapter = readFileSync(ADAPTER, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  assert.match(adapter, /export const UNUSUAL_SCORE = 75/, 'the threshold is named here');
+  assert.match(adapter, /sig\.score >= UNUSUAL_SCORE/, 'and used through its name');
+
+  const filter = readFileSync(join(FRONTEND, 'lib', 'flowFilter.ts'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  assert.ok(!/heat_score >= 75/.test(filter), 'the frontend must not restate the threshold');
+  assert.match(filter, /return e\.is_unusual/, 'it reads the flag the backend publishes');
+});

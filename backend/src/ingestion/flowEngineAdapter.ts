@@ -90,15 +90,35 @@ export interface WireFlowEvent {
   total_premium: number;
   heat_score: number;
   sentiment: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  /** `heat_score >= UNUSUAL_SCORE`. The threshold lives here and nowhere else. */
   is_unusual: boolean;
   exchange_count: number;
   avg_price: number;
-  iv: number;
-  delta: number;
-  open_interest: number;
+  /**
+   * Contract greeks and chain figures as the *source* reported them, or null.
+   *
+   * These were `?? 0`. A print arriving without a chain snapshot — every
+   * Polygon trade whose NBBO lookup was budgeted out, for one — published
+   * `iv: 0`, `delta: 0`, `open_interest: 0` and `spot_price: 0` on the wire.
+   * Nothing in the terminal renders them today, which is exactly the
+   * `MarketSnapshot` hazard: a field carrying a fabricated default, waiting
+   * for its first consumer to bind to it and show a zero as a fact.
+   */
+  iv: number | null;
+  delta: number | null;
+  open_interest: number | null;
   days_to_expiry: number;
-  moneyness: 'ITM' | 'ATM' | 'OTM';
-  spot_price: number;
+  /**
+   * `UNKNOWN` where the underlying's price is not known.
+   *
+   * `moneynessOf` opened with `if (!(spot > 0)) return 'OTM'` — a
+   * classification asserted from no data, on every signal whose contract had
+   * no stats. Three states could not express "we do not know", so it picked
+   * one and stated it with the same confidence as a computed answer.
+   */
+  moneyness: 'ITM' | 'ATM' | 'OTM' | 'UNKNOWN';
+  /** The underlying's price when the signal formed, or null. Was `?? 0`. */
+  spot_price: number | null;
   created_at: string;
   source: string;
 
@@ -376,18 +396,32 @@ export function resetDaily(): void {
   // The map is bounded by eviction in `ingestPrint`.
 }
 
+/**
+ * The score at or above which a signal is `is_unusual`.
+ *
+ * One home. `is_unusual` was `sig.score >= 75` here, and the frontend's
+ * `isPowerAlert` read `e.is_unusual && e.heat_score >= 75` — a conjunction
+ * whose second term is implied by the first, restating the threshold in a
+ * second place while looking like an independent condition. The power alerts
+ * page then described its trigger as two conditions, which was true and
+ * misleading at once.
+ */
+export const UNUSUAL_SCORE = 75;
+
 // ─── Signal → wire ──────────────────────────────────────────────────────────
 
 function toWireEvent(sig: ClassifiedSignal): WireFlowEvent {
   const dominant = [...sig.legs].sort((a, b) => b.totalPremium - a.totalPremium)[0];
   const leg = dominant ?? sig.legs[0]!;
   const stats = contractStats.get(leg.contract.symbol);
-  const spot = stats?.underlyingPrice ?? 0;
+  // `?? 0` here put a spot price of zero on the wire — and fed `moneynessOf`,
+  // which then classified the strike against it.
+  const spot = stats?.underlyingPrice ?? null;
 
   const origins = sig.printIds.map((id) => printSource.get(id)).filter(Boolean);
   const { source, synthetic } = originOf(sig);
-  const iv = origins.find((o) => o?.iv !== undefined)?.iv ?? 0;
-  const delta = origins.find((o) => o?.delta !== undefined)?.delta ?? 0;
+  const iv = origins.find((o) => o?.iv !== undefined)?.iv ?? null;
+  const delta = origins.find((o) => o?.delta !== undefined)?.delta ?? null;
 
   const exchanges = new Set<string>();
   sig.legs.forEach((l) => l.exchanges.forEach((e) => exchanges.add(e)));
@@ -403,12 +437,12 @@ function toWireEvent(sig: ClassifiedSignal): WireFlowEvent {
     total_premium: Math.round(sig.totalPremium),
     heat_score: sig.score,
     sentiment: sentimentOf(sig.side, leg.contract.right),
-    is_unusual: sig.score >= 75,
+    is_unusual: sig.score >= UNUSUAL_SCORE,
     exchange_count: exchanges.size,
     avg_price: parseFloat(leg.vwap.toFixed(4)),
     iv,
     delta,
-    open_interest: stats?.openInterest ?? 0,
+    open_interest: stats?.openInterest ?? null,
     days_to_expiry: daysToExpiry(sig.ts, leg.contract.expiry),
     moneyness: moneynessOf(leg.contract.right, leg.contract.strike, spot),
     spot_price: spot,
@@ -455,10 +489,17 @@ function daysToExpiry(tsMs: number, expiry: string): number {
   return Math.max(0, Math.round((exp - tsMs) / 86_400_000));
 }
 
+/**
+ * Where the strike sits against the underlying — or `UNKNOWN`.
+ *
+ * This returned `'OTM'` when the spot was not known, which is a classification
+ * asserted from no data. It reached the wire on every signal whose contract
+ * had no chain snapshot behind it.
+ */
 function moneynessOf(
-  right: 'C' | 'P', strike: number, spot: number,
-): 'ITM' | 'ATM' | 'OTM' {
-  if (!(spot > 0)) return 'OTM';
+  right: 'C' | 'P', strike: number, spot: number | null,
+): 'ITM' | 'ATM' | 'OTM' | 'UNKNOWN' {
+  if (spot === null || !(spot > 0)) return 'UNKNOWN';
   if (Math.abs(strike - spot) / spot <= 0.01) return 'ATM';
   const itm = right === 'C' ? spot > strike : spot < strike;
   return itm ? 'ITM' : 'OTM';
