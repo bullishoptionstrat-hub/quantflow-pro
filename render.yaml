@@ -42,6 +42,12 @@ services:
       # src/provenance/rights.ts.
       - key: FINNHUB_API_KEY
         sync: false
+      # Event Registry (newsapi.ai) — financial headlines, and a DIFFERENT
+      # vendor from newsapi.org despite the name. Its terms forbid publishing
+      # content received via the API, so EVENT_REGISTRY_NEWS is PROHIBITED for
+      # display in PUBLIC_COMMERCIAL and the connector never starts there.
+      - key: EVENT_REGISTRY_API_KEY
+        sync: false
       # ALPACA_KEY / ALPACA_SECRET were declared here and read by nothing —
       # there is no Alpaca connector in `backend/src`. Removed rather than
       # left as a slot an operator might fill.

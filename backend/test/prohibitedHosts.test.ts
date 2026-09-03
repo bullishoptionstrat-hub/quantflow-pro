@@ -25,7 +25,7 @@ import {
 
 /** The connector source string that maps to a dataset id. */
 function sourceFor(datasetId: string): string {
-  const source = ['yahoo', 'finnhub', 'tradier', 'polygon', 'cboe', 'occ', 'twelvedata']
+  const source = ['yahoo', 'finnhub', 'tradier', 'polygon', 'cboe', 'occ', 'twelvedata', 'eventregistry']
     .find((s) => datasetIdForSource(s) === datasetId);
   assert.ok(source, `no connector source maps to ${datasetId}`);
   return source!;
@@ -57,6 +57,7 @@ const PROHIBITED_HOSTS = listDatasets()
 const OWNER_FILE: Record<string, string> = {
   YAHOO_QUOTES: join('ingestion', 'connectors', 'yahoo.ts'),
   FINNHUB_QUOTES: join('ingestion', 'connectors', 'finnhub.ts'),
+  EVENT_REGISTRY_NEWS: join('ingestion', 'connectors', 'eventRegistry.ts'),
 };
 
 /**

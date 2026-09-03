@@ -37,6 +37,7 @@ const FILES: Record<string, string> = {
   twelvedata: 'twelveData.ts',
   fmp: 'fmp.ts',
   newsapi: 'newsApi.ts',
+  eventregistry: 'eventRegistry.ts',
   fred: 'fred.ts',
   reddit: 'reddit.ts',
   coingecko: 'coinGecko.ts',

@@ -58,6 +58,10 @@ import {
   startNewsAPI, onNewsHeadline, getNewsHeadlines,
 } from './connectors/newsApi';
 import {
+  startEventRegistry, onEventRegistryHeadline, onEventRegistryHealth,
+  getEventRegistryHeadlines,
+} from './connectors/eventRegistry';
+import {
   startCBOE, onCBOEData, getCBOEData,
 } from './connectors/cboe';
 import {
@@ -370,6 +374,7 @@ export const CONNECTOR_CREDENTIALS: Readonly<Record<string, readonly string[]>> 
   twelvedata: ['TWELVE_DATA_API_KEY'],
   fmp: ['FMP_API_KEY'],
   newsapi: ['NEWS_API_KEY'],
+  eventregistry: ['EVENT_REGISTRY_API_KEY'],
   fred: ['FRED_API_KEY'],
   reddit: ['REDDIT_CLIENT_ID', 'REDDIT_CLIENT_SECRET'],
   // Keyless by design.
@@ -550,6 +555,18 @@ export function startIngestion(io: any): void {
   onNewsHeadline((h) => {
     if (ioInstance) ioInstance.emit('news_update', h);
   });
+  onEventRegistryHeadline((h) => {
+    if (ioInstance) ioInstance.emit('news_update', h);
+  });
+  onEventRegistryHealth((h) => {
+    if (h.ok) {
+      sources['eventregistry'] = 'connected';
+      delete sourceErrors['eventregistry'];
+    } else {
+      sources['eventregistry'] = 'error';
+      sourceErrors['eventregistry'] = h.reason ?? 'Event Registry fetch failed.';
+    }
+  });
   onCBOEData((d) => {
     if (ioInstance) ioInstance.emit('cboe_update', d);
   });
@@ -563,6 +580,7 @@ export function startIngestion(io: any): void {
     startConnector('twelvedata', startTwelveData),
     startConnector('fmp', startFMP),
     startConnector('finnhub', startFinnhub),
+    startConnector('eventregistry', startEventRegistry),
     startConnector('coingecko', startCoinGecko),
     startConnector('fred', startFRED),
     startConnector('reddit', startReddit),

@@ -197,6 +197,12 @@ function NewsFeed({ panel }: { panel: Panel<NewsItem[]> }) {
                 color: sentimentColor(h.sentiment), flexShrink: 0, fontFamily: "'JetBrains Mono', monospace"
               }}>
                 {h.sentiment.toUpperCase()}
+                {/* Whose classification this is. The tag looks identical
+                    whether a keyword list or the news vendor produced it, and
+                    they are not the same claim. */}
+                {h.sentimentBasis === 'vendor' && (
+                  <span style={{ color: '#c4b5fd', marginLeft: 4 }}>· VENDOR</span>
+                )}
               </span>
             </div>
             <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -220,7 +226,8 @@ function NewsFeed({ panel }: { panel: Panel<NewsItem[]> }) {
       </div>
       {items.length > 0 && (
         <div style={{ padding: '6px 14px', fontSize: 9, color: 'var(--text-muted)', borderTop: '1px solid rgba(255,255,255,0.04)' }}>
-          Sentiment tags are this service&apos;s own keyword read of each headline, not the publisher&apos;s.
+          Sentiment tags are never the publisher&apos;s. A <span style={{ color: '#c4b5fd' }}>VENDOR</span> tag is
+          the news vendor&apos;s own score for the article; the rest are this service&apos;s keyword read of the headline.
         </div>
       )}
     </div>

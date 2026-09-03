@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { getRedditSentiment, getSymbolSentiment } from '../ingestion/connectors/reddit';
 import { getNewsHeadlines } from '../ingestion/connectors/newsApi';
+import { getEventRegistryHeadlines } from '../ingestion/connectors/eventRegistry';
 import { getFMPNews, getEarnings, getInsiderTrades } from '../ingestion/connectors/fmp';
 import { requireAuth } from '../middleware/auth';
 import {
@@ -13,9 +14,12 @@ import {
 
 const router = Router();
 
-function getItemSymbols(
-  item: ReturnType<typeof getNewsHeadlines>[number] | ReturnType<typeof getFMPNews>[number],
-): string[] {
+type AnyNewsItem =
+  | ReturnType<typeof getNewsHeadlines>[number]
+  | ReturnType<typeof getFMPNews>[number]
+  | ReturnType<typeof getEventRegistryHeadlines>[number];
+
+function getItemSymbols(item: AnyNewsItem): string[] {
   if ('symbols' in item) {
     return item.symbols;
   }
@@ -23,9 +27,7 @@ function getItemSymbols(
   return item.symbol ? [item.symbol] : [];
 }
 
-function getPublishedTimestamp(
-  item: ReturnType<typeof getNewsHeadlines>[number] | ReturnType<typeof getFMPNews>[number],
-): string {
+function getPublishedTimestamp(item: AnyNewsItem): string {
   return 'publishedAt' in item ? item.publishedAt : item.publishedDate;
 }
 
@@ -55,17 +57,33 @@ export interface NewsWireItem {
   /** The outlet that ran it. FMP's feed does not name one, so: null. */
   publisher: string | null;
   /** Which of our connectors carried it. */
-  provider: 'newsapi' | 'fmp';
+  provider: 'newsapi' | 'fmp' | 'eventregistry';
   publishedAt: string;
   symbols: string[];
-  /** Our keyword classification of the title, not the publisher's. */
+  /** The classification. See `sentimentBasis` for whose it is. */
   sentiment: 'bullish' | 'bearish' | 'neutral';
+  /**
+   * Who produced `sentiment`.
+   *
+   * `keyword` — this service ran its own term list over the headline, because
+   * the vendor supplies no score. That is newsapi.org and FMP.
+   * `vendor` — the vendor scored the article itself and we thresholded it.
+   * That is Event Registry, whose `sentiment` float is in `[-1, 1]`; the
+   * cutoffs are ours and are stated in the connector.
+   *
+   * Two provenances behind one field name is exactly what `source` meant
+   * before it was split into `publisher` and `provider`. Naming the basis
+   * stops the same conflation happening to the value.
+   */
+  sentimentBasis: 'keyword' | 'vendor';
 }
 
-export function toNewsWireItem(
-  item: ReturnType<typeof getNewsHeadlines>[number] | ReturnType<typeof getFMPNews>[number],
-): NewsWireItem {
+export function toNewsWireItem(item: AnyNewsItem): NewsWireItem {
+  // Three shapes now. `symbols` separates the single-symbol FMP record from
+  // the two multi-symbol ones, and `provider` separates those two from each
+  // other — it is on the record in both cases.
   const fromNewsApi = 'symbols' in item;
+  const fromEventRegistry = 'provider' in item && item.provider === 'eventregistry';
   return {
     // FMP sends no id. The URL is what identifies the article to the reader
     // and is stable across polls, which is all a list key needs; prefixing it
@@ -78,10 +96,11 @@ export function toNewsWireItem(
     // in the same colour as a real one; `null` sends the UI to the connector's
     // name, which is at least a true statement about where the story came from.
     publisher: fromNewsApi && item.source !== 'Unknown' ? item.source : null,
-    provider: fromNewsApi ? 'newsapi' : 'fmp',
+    provider: fromEventRegistry ? 'eventregistry' : fromNewsApi ? 'newsapi' : 'fmp',
     publishedAt: getPublishedTimestamp(item),
     symbols: getItemSymbols(item),
     sentiment: item.sentiment,
+    sentimentBasis: fromEventRegistry ? 'vendor' : 'keyword',
   };
 }
 
@@ -236,7 +255,8 @@ router.get('/regulatory/:slug', requireAuth, async (req: Request, res: Response)
 router.get('/:symbol', (req: Request, res: Response) => {
   const symbol = req.params.symbol.toUpperCase();
   const reddit = getSymbolSentiment(symbol);
-  const symbolNews = getNewsHeadlines().filter(n => getItemSymbols(n).includes(symbol)).slice(0, 20);
+  const symbolNews = [...getNewsHeadlines(), ...getEventRegistryHeadlines()]
+    .filter(n => getItemSymbols(n).includes(symbol)).slice(0, 20);
   const fmpSymbolNews = getFMPNews().filter(n => n.symbol === symbol).slice(0, 10);
 
   res.json({
@@ -251,6 +271,7 @@ router.get('/:symbol', (req: Request, res: Response) => {
 router.get('/news/headlines', (_req: Request, res: Response) => {
   const all = [
     ...getNewsHeadlines().slice(0, 100),
+    ...getEventRegistryHeadlines().slice(0, 100),
     ...getFMPNews().slice(0, 50),
   ].sort((a, b) => new Date(getPublishedTimestamp(b)).getTime() - new Date(getPublishedTimestamp(a)).getTime());
 
