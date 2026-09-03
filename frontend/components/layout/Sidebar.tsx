@@ -1,11 +1,13 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { isMarketOpen } from '@/lib/utils'
+import { isRegularHours } from '@/lib/utils'
 import { useStore } from '@/store/useStore'
 
 const NAV = [
-  { href: '/flow',          icon: '⚡', label: 'Live Flow',      badge: 'LIVE', group: 'flow' },
+  // No static `LIVE` badge: it sat two lines under the connection dot and
+  // contradicted it whenever the socket was down.
+  { href: '/flow',          icon: '⚡', label: 'Live Flow',      badge: null,   group: 'flow' },
   { href: '/dark-pool',     icon: '🌑', label: 'Dark Pool',      badge: null,   group: 'flow' },
   { href: '/power-alerts',  icon: '🔥', label: 'Power Alerts',   badge: null,   group: 'flow' },
   { href: '/heat-map',      icon: '🗺', label: 'Heat Map',       badge: null,   group: 'flow' },
@@ -26,8 +28,17 @@ const GROUP_LABELS: Record<string, string> = {
 
 export function Sidebar() {
   const pathname = usePathname()
-  const { powerAlerts, connected } = useStore()
-  const open = isMarketOpen()
+  const { powerAlerts, connected, flowEvents } = useStore()
+  const regularHours = isRegularHours()
+
+  // How much of what has arrived is constructed rather than observed. Shown
+  // only when there is some, so a fully live feed stays quiet.
+  const syntheticCount = flowEvents.filter(e => e.synthetic).length
+  const syntheticShare = syntheticCount === 0
+    ? null
+    : syntheticCount === flowEvents.length
+      ? 'ALL SIGNALS SIMULATED'
+      : `${syntheticCount}/${flowEvents.length} SIMULATED`
   const newAlerts = powerAlerts.filter(a => {
     const d = new Date(a.created_at)
     return Date.now() - d.getTime() < 300_000
@@ -55,18 +66,45 @@ export function Sidebar() {
 
       {/* Market status */}
       <div style={{ padding: '8px 16px', marginBottom: 4 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
-          <span style={{ width: 7, height: 7, borderRadius: '50%', background: open ? '#22c55e' : '#ef4444', display: 'inline-block', boxShadow: open ? '0 0 0 2px rgba(34,197,94,0.3)' : 'none' }} />
-          <span style={{ color: open ? '#22c55e' : '#ef4444', fontWeight: 600, fontFamily: "'JetBrains Mono', monospace" }}>
-            {open ? 'MARKET OPEN' : 'MARKET CLOSED'}
+        {/* `MARKET OPEN` over a weekday-and-clock check, with no holiday
+            calendar behind it — green on Thanksgiving. Named for what it
+            knows: the session window, in New York. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}
+          title="Weekday 09:30–16:00 ET. Market holidays are not checked.">
+          <span style={{ width: 7, height: 7, borderRadius: '50%', background: regularHours ? '#22c55e' : '#ef4444', display: 'inline-block', boxShadow: regularHours ? '0 0 0 2px rgba(34,197,94,0.3)' : 'none' }} />
+          <span style={{ color: regularHours ? '#22c55e' : '#ef4444', fontWeight: 600, fontFamily: "'JetBrains Mono', monospace" }}>
+            {regularHours ? 'REGULAR HOURS' : 'OUTSIDE HOURS'}
           </span>
         </div>
+
+        {/*
+          This read `connected ? '● LIVE DATA' : '◌ SIMULATION'`, and it was
+          wrong in both directions.
+
+          `connected` is the socket's transport state. On a keyless deployment
+          the backend simulates prints and sends them down a perfectly healthy
+          socket, so the sidebar said LIVE DATA over a simulated tape. And
+          nothing in the browser simulates anything any more — `generateSeedFlow`
+          is deleted — so a dead socket said SIMULATION while no data existed at
+          all. One flag was being asked two questions.
+
+          Transport is transport; whether a print is constructed is per print,
+          and the wire has carried `synthetic` all along.
+        */}
         <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
           <span style={{ width: 7, height: 7, borderRadius: '50%', background: connected ? '#22c55e' : '#f97316', display: 'inline-block' }} />
           <span style={{ color: connected ? '#86efac' : '#fdba74', fontFamily: "'JetBrains Mono', monospace" }}>
-            {connected ? '● LIVE DATA' : '◌ SIMULATION'}
+            {connected ? '● FEED CONNECTED' : '◌ FEED DISCONNECTED'}
           </span>
         </div>
+        {syntheticShare !== null && (
+          <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
+            <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#fbbf24', display: 'inline-block' }} />
+            <span style={{ color: '#fbbf24', fontFamily: "'JetBrains Mono', monospace" }}>
+              🧪 {syntheticShare}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Nav — grouped */}
@@ -101,16 +139,13 @@ export function Sidebar() {
                       </span>
                     )}
 
-                    {/* LIVE badge */}
-                    {item.badge === 'LIVE' && !showAlertBadge && (
-                      <span style={{
-                        background: open ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)',
-                        color: open ? '#86efac' : '#fca5a5',
-                        fontSize: 9, fontWeight: 700, borderRadius: 3, padding: '1px 5px', fontFamily: "'JetBrains Mono', monospace"
-                      }}>
-                        {open ? 'LIVE' : 'OFF'}
-                      </span>
-                    )}
+                    {/* A `LIVE` / `OFF` pill used to render here. It was
+                        driven by `isMarketOpen()`, so it said LIVE on any
+                        weekday afternoon whether or not a single signal had
+                        arrived — and it sat two lines below the connection
+                        dot, contradicting it whenever the socket was down.
+                        Nothing replaces it: the dot above already answers
+                        this, once. */}
                   </Link>
                 )
               })}
