@@ -131,6 +131,61 @@ test('zero remains expressible for a source that really reports zero', () => {
   );
 });
 
+// ─── TwelveData: one clock ──────────────────────────────────────────────────
+
+/**
+ * A stale quote must not present itself as fresh, and it could not have done
+ * otherwise while `SpotQuote.timestamp` carried two units.
+ *
+ * The WebSocket path wrote TwelveData's stamp straight through — unix
+ * *seconds* — while `fetchQuotesBatch` wrote `Date.now()`, milliseconds. The
+ * same cache, the same field. Nothing read it, so nothing broke; the moment
+ * the ticker tape started asking how old a price was, every streamed quote
+ * would have answered "1970" and been dated as three-decade-old data, while
+ * every REST quote answered correctly. Half a board dimmed for a unit error.
+ *
+ * Same family as the two above: a value that is not what it claims to be,
+ * rendered in the styling of one that is.
+ */
+
+test('a stamp in seconds and a stamp in milliseconds land on the same scale', () => {
+  const { quoteTimestamp } = require('../src/ingestion/connectors/twelveData');
+  const now = Date.now();
+  const seconds = Math.floor(now / 1000);
+  assert.ok(
+    Math.abs(quoteTimestamp(seconds) - now) < 1000,
+    'a unix-seconds stamp must normalize to milliseconds',
+  );
+  assert.equal(quoteTimestamp(now), now, 'a millisecond stamp passes through unchanged');
+});
+
+test('a missing stamp is receipt time, not the epoch', () => {
+  const { quoteTimestamp } = require('../src/ingestion/connectors/twelveData');
+  for (const missing of [undefined, null, '', 0, -1, NaN, 'not-a-time']) {
+    const t = quoteTimestamp(missing);
+    assert.ok(Math.abs(t - Date.now()) < 1000, `${String(missing)} should fall back to now, got ${t}`);
+  }
+  // Zero would read as 1970 and dim a quote that just arrived.
+  assert.notEqual(quoteTimestamp(0), 0);
+});
+
+test('a vendor string is parsed rather than coerced to NaN', () => {
+  const { quoteTimestamp } = require('../src/ingestion/connectors/twelveData');
+  const seconds = 1_780_000_000;
+  assert.equal(quoteTimestamp(String(seconds)), seconds * 1000);
+});
+
+test('both paths that write the cache go through the normalizer', () => {
+  // The bug was one path skipping it. A test on the function alone would pass
+  // just as happily with the WebSocket handler still writing `msg.timestamp`.
+  const body = readFileSync(join(CONNECTORS, 'twelveData.ts'), 'utf8');
+  const writes = [...body.matchAll(/^\s*timestamp: (.+),$/gm)].map((m) => m[1]);
+  assert.ok(writes.length >= 2, 'expected the WebSocket and REST paths to both stamp a quote');
+  for (const w of writes) {
+    assert.match(w, /^quoteTimestamp\(/, `a quote is stamped with \`${w}\`, bypassing the normalizer`);
+  }
+});
+
 // ─── Loading with a stubbed transport ───────────────────────────────────────
 
 /** Fresh module instances per test — both connectors hold module-level caches. */

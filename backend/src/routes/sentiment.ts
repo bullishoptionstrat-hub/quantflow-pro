@@ -29,6 +29,62 @@ function getPublishedTimestamp(
   return 'publishedAt' in item ? item.publishedAt : item.publishedDate;
 }
 
+/**
+ * One shape for a news item, whichever connector carried it.
+ *
+ * The two news connectors publish genuinely different records — NewsAPI's has
+ * `id`, `symbols`, `publishedAt` and a publisher name in `source`; FMP's has
+ * `symbol` (singular), `publishedDate`, no id, and the literal `'fmp'` in
+ * `source`. Both were being concatenated into one array under one key, so the
+ * response carried a union that no single client type could describe, and the
+ * two `source` fields meant different things under the same name.
+ *
+ * A client reading `symbols.length` on an FMP item throws; reading
+ * `publishedAt` gets `undefined` and dates it to `NaN`. Neither failure needs
+ * a client bug to happen — the response is what is malformed — so the union is
+ * resolved here, at the boundary, and the route publishes one contract.
+ *
+ * `sentiment` is our own keyword read of the headline in both cases, not a
+ * stance the outlet took. `provider` says which connector's keyword list
+ * produced it, so a client can attribute it correctly.
+ */
+export interface NewsWireItem {
+  id: string;
+  title: string;
+  url: string;
+  /** The outlet that ran it. FMP's feed does not name one, so: null. */
+  publisher: string | null;
+  /** Which of our connectors carried it. */
+  provider: 'newsapi' | 'fmp';
+  publishedAt: string;
+  symbols: string[];
+  /** Our keyword classification of the title, not the publisher's. */
+  sentiment: 'bullish' | 'bearish' | 'neutral';
+}
+
+export function toNewsWireItem(
+  item: ReturnType<typeof getNewsHeadlines>[number] | ReturnType<typeof getFMPNews>[number],
+): NewsWireItem {
+  const fromNewsApi = 'symbols' in item;
+  return {
+    // FMP sends no id. The URL is what identifies the article to the reader
+    // and is stable across polls, which is all a list key needs; prefixing it
+    // keeps it from colliding with a NewsAPI id that happens to look like one.
+    id: fromNewsApi ? item.id : `fmp:${item.url}`,
+    title: item.title,
+    url: item.url,
+    // NewsAPI's own record already substitutes `'Unknown'` when an article
+    // names no outlet. Carrying that through would print "Unknown" as a byline
+    // in the same colour as a real one; `null` sends the UI to the connector's
+    // name, which is at least a true statement about where the story came from.
+    publisher: fromNewsApi && item.source !== 'Unknown' ? item.source : null,
+    provider: fromNewsApi ? 'newsapi' : 'fmp',
+    publishedAt: getPublishedTimestamp(item),
+    symbols: getItemSymbols(item),
+    sentiment: item.sentiment,
+  };
+}
+
 // GET /api/sentiment — aggregate sentiment scores per symbol
 router.get('/', (_req: Request, res: Response) => {
   const reddit = getRedditSentiment();
@@ -186,7 +242,7 @@ router.get('/:symbol', (req: Request, res: Response) => {
   res.json({
     symbol,
     reddit,
-    news: [...symbolNews, ...fmpSymbolNews].slice(0, 25),
+    news: [...symbolNews, ...fmpSymbolNews].slice(0, 25).map(toNewsWireItem),
     updatedAt: new Date().toISOString(),
   });
 });
@@ -198,7 +254,7 @@ router.get('/news/headlines', (_req: Request, res: Response) => {
     ...getFMPNews().slice(0, 50),
   ].sort((a, b) => new Date(getPublishedTimestamp(b)).getTime() - new Date(getPublishedTimestamp(a)).getTime());
 
-  res.json({ headlines: all.slice(0, 100), total: all.length });
+  res.json({ headlines: all.slice(0, 100).map(toNewsWireItem), total: all.length });
 });
 
 // GET /api/sentiment/earnings — upcoming earnings

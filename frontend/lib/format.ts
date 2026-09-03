@@ -51,3 +51,32 @@ export function cryptoPrice(v: number): string {
   const places = Math.max(4, -Math.floor(Math.log10(v)) + 3)
   return v.toFixed(places).replace(/0+$/, '').replace(/\.$/, '')
 }
+
+/**
+ * An equity or index price, with a thousands separator.
+ *
+ * The ticker tape used `toFixed(q.price > 100 ? 2 : 2)` — a branch on price
+ * with identical arms, which is what a formatter looks like after the
+ * distinction it was written for is gone. An index at 5587 reads as a price
+ * with the separator and as a serial number without it.
+ */
+export function spotPrice(v: number): string {
+  // Below a dollar this hands off to `cryptoPrice`, because the SHIB defect
+  // above is not a fact about crypto — it is what two fixed decimals do to a
+  // small number, and `toFixed(2)` on a sub-cent price prints $0.00 whatever
+  // the asset is. The tape renders whichever symbols the feed carries rather
+  // than a list we control, so "no equity trades under a dollar" is not ours
+  // to assume. The two agree above a dollar by construction.
+  if (v < 1) return cryptoPrice(v)
+  return v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+/**
+ * A signed percentage, for a change that is only readable with its direction.
+ *
+ * `-0.4%` carries its sign; `+0.4%` does not unless something adds it, and a
+ * tape that shows one and not the other reads as if every quote were down.
+ */
+export function signedPct(v: number): string {
+  return `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`
+}

@@ -21,6 +21,34 @@ export interface SpotQuote {
   source: 'twelvedata';
 }
 
+/**
+ * One clock for `SpotQuote.timestamp`.
+ *
+ * The two paths that write this cache disagreed about the unit. TwelveData's
+ * WebSocket stamps its price events in unix **seconds**; `fetchQuotesBatch`
+ * stamps `Date.now()`, in **milliseconds**. Both went into the same field, so
+ * the cache held quotes measured on two scales and the first consumer to
+ * compare one against `Date.now()` would read every streamed quote as 1970 —
+ * i.e. as permanently stale. Nothing read the field until the ticker tape did,
+ * which is why it survived.
+ *
+ * Anything below 1e12 is seconds (1e12 ms is 2001, and no equity quote we
+ * accept predates that); anything at or above it is already milliseconds. A
+ * missing or unparseable stamp falls back to receipt time rather than to zero,
+ * because a quote we just received is not a quote from the epoch.
+ *
+ * The REST path now publishes the vendor's own stamp where it sends one,
+ * instead of overwriting it with receipt time — the same rule as
+ * `RawPrint.quoteTs`. Stamping a quote from the last session as if it arrived
+ * now manufactures exactly the freshness a staleness check exists to judge,
+ * and off-hours is when that misreads worst.
+ */
+export function quoteTimestamp(raw: unknown): number {
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return Date.now();
+  return n < 1e12 ? Math.round(n * 1000) : Math.round(n);
+}
+
 const spotCache = new Map<string, SpotQuote>();
 let onSpotUpdate: ((q: SpotQuote) => void) | null = null;
 let wsCreditsUsed = 0;
@@ -55,7 +83,7 @@ function startWebSocket(): void {
           change: parseFloat(msg.day_change ?? 0),
           changePct: parseFloat(msg.day_change_percent ?? 0),
           volume: parseInt(msg.volume ?? 0),
-          timestamp: msg.timestamp ?? Date.now(),
+          timestamp: quoteTimestamp(msg.timestamp),
           source: 'twelvedata',
         };
         spotCache.set(msg.symbol, quote);
@@ -85,7 +113,7 @@ async function fetchQuotesBatch(): Promise<void> {
         change: parseFloat(q.change ?? 0),
         changePct: parseFloat(q.percent_change ?? 0),
         volume: parseInt(q.volume ?? 0),
-        timestamp: Date.now(),
+        timestamp: quoteTimestamp(q.timestamp),
         source: 'twelvedata',
       };
       spotCache.set(sym, quote);
