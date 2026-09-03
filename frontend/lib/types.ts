@@ -97,7 +97,17 @@ export interface DarkPoolResponse {
 export interface PowerAlert {
   id: string
   underlying: string
-  alert_type: 'SWEEP' | 'BLOCK' | 'DARK_POOL' | 'GEX_FLIP' | 'ML_SIGNAL'
+  /**
+   * The kind of order that raised it — the signal's own `order_type`.
+   *
+   * This declared `'SWEEP' | 'BLOCK' | 'DARK_POOL' | 'GEX_FLIP' | 'ML_SIGNAL'`
+   * while `useFlowFeed` assigned `event.order_type as any`. Three of those
+   * five were produced by nothing (`ML_SIGNAL` was the deleted ML service's
+   * slot, the sibling of `ml_score`), and three of the values actually
+   * arriving — SPLIT, MULTI_LEG, LARGE — were not in the union at all. The
+   * cast was the only reason it typechecked.
+   */
+  alert_type: OrderType
   message: string
   heat_score: number
   created_at: string

@@ -593,3 +593,78 @@ test('the summary tiles report the position, not the plotted range', () => {
   assert.ok(!/'Credit'/.test(builder), "the two-state cost label survives");
   assert.match(builder, /no entry set/, 'the unset state needs saying');
 });
+
+// ─── The live flow window ───────────────────────────────────────────────────
+
+/**
+ * A display filter was deleting the tape.
+ *
+ * `useFlowFeed.handleEvent` began `if (!passesFilters(event)) return`, so the
+ * store held only what matched the filters at the moment each signal arrived —
+ * and the filters are a view control. Raising `minPremium` to $1M for a minute
+ * and putting it back deleted every sub-$1M print from that minute,
+ * permanently, while the control on screen said they were admitted again.
+ *
+ * The predicate was written out twice, and the second copy re-filtered an
+ * already-filtered set. Same class as the ticker tape's `STALE_MS`: one rule,
+ * two homes, and the copies could not both be right about when they ran.
+ *
+ * The behavioural assertions are in `frontend/test/flowWindow.test.tsx`; only
+ * a render can show that widening a filter brings signals back.
+ */
+
+const FLOW_HOOK = join(FRONTEND, 'hooks', 'useFlowFeed.ts');
+const FLOW_FEED = join(FRONTEND, 'components', 'flow', 'FlowFeed.tsx');
+const FLOW_STATS = join(FRONTEND, 'components', 'flow', 'FlowStats.tsx');
+
+test('the filter predicate has one definition', () => {
+  const predicate = /filters\.optionType !== 'ALL'|f\.optionType !== 'ALL'/;
+  const home = readFileSync(join(FRONTEND, 'lib', 'flowFilter.ts'), 'utf8');
+  assert.match(home, predicate, 'the predicate belongs in lib/flowFilter.ts');
+
+  for (const path of [FLOW_HOOK, FLOW_FEED]) {
+    const code = readFileSync(path, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+    assert.ok(!predicate.test(code), `${path} carries a second copy of the filter`);
+  }
+});
+
+test('nothing is filtered before it is stored', () => {
+  const code = readFileSync(FLOW_HOOK, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  assert.ok(!/passesFilters/.test(code), 'the ingest-time filter survives');
+  assert.ok(!/matchesFilters/.test(code),
+    'the hook must not consult the filters at all — that is the display layer');
+  assert.match(code, /addFlowEvent\(event\)/, 'every signal that arrives is stored');
+});
+
+test('an alert is not gated on what is being displayed', () => {
+  // A view control with a side effect on speech and desktop notifications.
+  const code = readFileSync(FLOW_HOOK, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  assert.match(code, /isPowerAlert\(event\)/, 'the alert criteria live in one named predicate');
+});
+
+test('the notification guard cannot throw where the API is absent', () => {
+  // `Notification.permission` on a browser without the API is a ReferenceError
+  // inside the socket batch handler, which takes the whole feed down.
+  const code = readFileSync(FLOW_HOOK, 'utf8');
+  assert.match(code, /typeof Notification === 'undefined'/,
+    'guard on the API existing, not just on `window`');
+});
+
+test('no flow aggregate is labelled a total', () => {
+  // `flowEvents` is a 500-event client ring buffer filled from page load. The
+  // backend's own buffer caps at 500 too, so reading `/api/flow/stats` would
+  // not have made the word true either.
+  const stats = readFileSync(FLOW_STATS, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  assert.ok(!/TOTAL/.test(stats), 'a windowed aggregate must not say TOTAL');
+  assert.match(stats, /signals received this session/, 'and must say what it is over');
+  assert.match(stats, /simulated/, 'an aggregate that pools simulated prints has to count them');
+  // `P/C RATIO` named three different quantities across the app.
+  assert.ok(!/P\/C RATIO/.test(stats), 'the ratio must name its basis');
+});
+
+test('the flow stats endpoint does not share a name with a different quantity', () => {
+  const ingestion = readFileSync(join(__dirname, '..', 'src', 'ingestion', 'index.ts'), 'utf8');
+  assert.ok(!/^\s*callPutRatio:/m.test(ingestion),
+    'callPutRatio was a count ratio sharing a name with the UI\'s premium ratio');
+  assert.match(ingestion, /callPutCountRatio:/, 'the basis belongs in the name');
+});
