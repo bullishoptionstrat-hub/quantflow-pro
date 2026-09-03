@@ -285,6 +285,11 @@ export function getIngestionStatus() {
   // connected/error.
   const notes: Record<string, string> = {};
   if (polygonQuoteNote) notes['polygon'] = polygonQuoteNote;
+  for (const [source, count] of Object.entries(unparsedFrames)) {
+    const existing = notes[source];
+    const note = `${count} stream frame(s) could not be parsed`;
+    notes[source] = existing ? `${existing}; ${note}` : note;
+  }
 
   return {
     active: ingestionActive,
@@ -765,7 +770,9 @@ function startTradierIngestion(): void {
           if (data.type === 'timesale' || data.type === 'trade') {
             processMarketTick(data, 'tradier');
           }
-        } catch {}
+        } catch {
+          noteUnparsedFrame('tradier');
+        }
       });
 
       tradierWs.on('error', (err) => {
@@ -875,6 +882,29 @@ export function polygonOptionTicker(
 
 /** Why the NBBO half is not contributing, when it is not. Reported separately. */
 let polygonQuoteNote: string | undefined;
+
+/**
+ * Frames a streaming source sent that this process could not parse.
+ *
+ * Both WebSocket handlers ended `} catch {}`. A frame that failed to parse was
+ * dropped with no counter, no log and no health signal — so a vendor changing
+ * its envelope, or a partial frame, produced a source that was `connected`,
+ * receiving bytes, and emitting nothing, with `/api/health` reporting it as
+ * working. That is the Stooq failure without even a zero to show for it: the
+ * three times this repo has fixed "a source that is down must not present
+ * itself as data", the source at least produced something.
+ */
+const unparsedFrames: Record<string, number> = {};
+
+function noteUnparsedFrame(source: string): void {
+  unparsedFrames[source] = (unparsedFrames[source] ?? 0) + 1;
+  const n = unparsedFrames[source]!;
+  // Log on the first and then sparsely: a vendor that changes its envelope
+  // produces one per frame, and a log line per frame is its own outage.
+  if (n === 1 || n % 500 === 0) {
+    console.warn(`[${source}] ${n} stream frame(s) could not be parsed`);
+  }
+}
 
 /**
  * The NBBO in force at the moment of a trade, from Polygon.
@@ -1074,7 +1104,9 @@ function startFinnhubIngestion(): void {
           }
         }
       }
-    } catch {}
+    } catch {
+      noteUnparsedFrame('finnhub');
+    }
   });
 
   ws.on('error', () => { sources['finnhub'] = 'error'; });
