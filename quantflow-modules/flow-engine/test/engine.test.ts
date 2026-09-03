@@ -6,6 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { FlowEngine } from "../src/engine.js";
 import { NbboBook } from "../src/nbbo.js";
+import { scoreSignal } from "../src/score.js";
 import { ClassifiedSignal, ContractStats } from "../src/types.js";
 import {
   ambiguousScenario,
@@ -213,4 +214,69 @@ test("a quote from before the trade still ages out normally", () => {
     book.inferSide(sym, 1.10, T0, 10_000), "BUY",
     "the same quote inside a wider window is fine",
   );
+});
+
+// ---------------------------------------------------------------------------
+// The score reconciles with its own breakdown
+// ---------------------------------------------------------------------------
+
+/**
+ * `scoreBreakdown` is rendered term by term under the heat number on the power
+ * alerts page, so the terms have to add up to the number beside them.
+ *
+ * The clamp used to be applied silently. Components floor at `premium: 3` and
+ * the ambiguous penalty is -15, so a low-premium signal whose side could not
+ * be inferred produced a breakdown summing to **-12** against a score of 0.
+ */
+test("every breakdown sums to the score it is published with", () => {
+  const contract = { symbol: "SPY_C610", underlying: "SPY", right: "C" as const, strike: 610, expiry: "2026-12-18" };
+  const kinds = ["SWEEP", "BLOCK", "SPLIT", "MULTI_LEG", "LARGE"] as const;
+  let sawClamp = false;
+
+  for (const kind of kinds) {
+    for (const totalPremium of [1_000, 60_000, 300_000, 2_000_000]) {
+      for (const sideAmbiguous of [false, true]) {
+        for (const exchanges of [1, 3]) {
+          for (const repeatHits of [0, 5]) {
+            const { score, breakdown } = scoreSignal({
+              kind, totalPremium, totalSize: 10, iso: exchanges > 1,
+              sideAmbiguous, exchanges, prints: 1, contract,
+              signalTs: Date.parse("2026-12-17T15:00:00Z"), repeatHits,
+            });
+            const sum = Object.values(breakdown).reduce((a, v) => a + v, 0);
+            assert.equal(sum, score,
+              `${kind} $${totalPremium} ambiguous=${sideAmbiguous}: terms sum to ${sum}, score is ${score}`);
+            assert.ok(score >= 0 && score <= 100, `score ${score} out of range`);
+            if (breakdown.clamp !== undefined) sawClamp = true;
+          }
+        }
+      }
+    }
+  }
+
+  assert.ok(sawClamp, "the matrix should reach the clamped case, or it proves nothing");
+});
+
+test("the clamped case is the low-premium ambiguous signal, and it is named", () => {
+  const { score, breakdown } = scoreSignal({
+    kind: "LARGE", totalPremium: 1_000, totalSize: 1, iso: false,
+    sideAmbiguous: true, exchanges: 1, prints: 1,
+    contract: { symbol: "SPY_C610", underlying: "SPY", right: "C", strike: 610, expiry: "2027-06-18" },
+    signalTs: Date.parse("2026-12-17T15:00:00Z"),
+  });
+  assert.equal(breakdown.premium, 3);
+  assert.equal(breakdown.ambiguousPenalty, -15);
+  assert.equal(breakdown.clamp, 12, "the floor is shown, not swallowed");
+  assert.equal(score, 0);
+});
+
+test("a signal that needs no clamp carries no clamp term", () => {
+  const { score, breakdown } = scoreSignal({
+    kind: "SWEEP", totalPremium: 2_000_000, totalSize: 500, iso: true,
+    sideAmbiguous: false, exchanges: 4, prints: 6,
+    contract: { symbol: "SPY_C610", underlying: "SPY", right: "C", strike: 610, expiry: "2026-12-18" },
+    signalTs: Date.parse("2026-12-17T15:00:00Z"), repeatHits: 5,
+  });
+  assert.equal(breakdown.clamp, undefined);
+  assert.equal(Object.values(breakdown).reduce((a, v) => a + v, 0), score);
 });
