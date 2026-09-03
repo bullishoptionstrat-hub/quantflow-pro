@@ -235,3 +235,47 @@ async function loadCboeWithPcrStatus(status: number) {
   };
   return freshRequire('../src/ingestion/connectors/cboe', { default: stub, ...stub });
 }
+
+// ─── Streaming sources that parse nothing ───────────────────────────────────
+
+/**
+ * Both WebSocket handlers ended `} catch {}`.
+ *
+ * A frame that failed to parse was dropped with no counter, no log and no
+ * health signal — so a vendor changing its envelope, or a run of partial
+ * frames, produced a source that was `connected`, receiving bytes, and
+ * emitting nothing, while `/api/health` reported it working.
+ *
+ * That is this file's own subject without even a zero to show for it. Stooq
+ * published quotes priced at zero and Cboe a ratio of 0.00; a silently dropped
+ * frame publishes nothing at all, which is harder to notice, not easier.
+ */
+
+const INGESTION = join(__dirname, '..', 'src', 'ingestion', 'index.ts');
+
+test('no stream frame is dropped without being counted', () => {
+  const code = readFileSync(INGESTION, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  assert.ok(!/catch\s*\{\s*\}/.test(code),
+    'a bare catch in the ingestion pipeline swallows a frame with no trace');
+  assert.match(code, /noteUnparsedFrame\('tradier'\)/);
+  assert.match(code, /noteUnparsedFrame\('finnhub'\)/);
+});
+
+test('unparsable frames reach /api/health as a source note', () => {
+  // `sourceNotes` is the existing vocabulary for "connected but degraded" —
+  // it is what carries Polygon's missing-NBBO case. A source parsing nothing
+  // is the same shape of problem and belongs in the same place.
+  const code = readFileSync(INGESTION, 'utf8');
+  const status = code.slice(code.indexOf('export function getIngestionStatus'));
+  assert.match(status.slice(0, 1200), /unparsedFrames/,
+    'the count must be visible on the health endpoint, not just in a log');
+});
+
+test('the frame counter does not log once per frame', () => {
+  // A vendor that changes its envelope produces one failure per frame, and a
+  // log line per frame is its own outage.
+  const code = readFileSync(INGESTION, 'utf8');
+  const fn = code.slice(code.indexOf('function noteUnparsedFrame'));
+  assert.match(fn.slice(0, 400), /n === 1 \|\| n % \d+ === 0/,
+    'log the first and then sparsely');
+});
