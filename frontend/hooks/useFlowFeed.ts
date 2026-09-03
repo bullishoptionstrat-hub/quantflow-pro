@@ -36,8 +36,14 @@ function speakAlert(event: FlowEvent) {
   const premium = event.total_premium >= 1_000_000
     ? `${(event.total_premium / 1_000_000).toFixed(1)} million`
     : `${Math.round(event.total_premium / 1000)}K`
+  // A simulated print says so out loud. The repo's note on the deleted seed
+  // generator is that neither this function nor `pushNotification` reads
+  // `synthetic`, so a flag on the data could not qualify what they announce —
+  // the backend simulates prints on every keyless deployment, and those reach
+  // here. The word goes first, before the ticker, because a listener who looks
+  // up mid-sentence has already missed it otherwise.
   const utt = new SpeechSynthesisUtterance(
-    `${event.underlying} ${event.option_type === 'C' ? 'call' : 'put'} sweep, ${premium} premium, ${event.sentiment.toLowerCase()}`
+    `${event.synthetic ? 'Simulated. ' : ''}${event.underlying} ${event.option_type === 'C' ? 'call' : 'put'} ${event.order_type.replace('_', ' ').toLowerCase()}, ${premium} premium, ${event.sentiment.toLowerCase()}`
   )
   utt.rate = 1.1
   utt.pitch = 1
@@ -52,7 +58,11 @@ function pushNotification(event: FlowEvent) {
   // print took the whole feed down on those browsers.
   if (typeof window === 'undefined' || typeof Notification === 'undefined') return
   if (Notification.permission !== 'granted') return
-  new Notification(`⚡ ${event.underlying} ${event.option_type === 'C' ? 'CALL' : 'PUT'} SWEEP`, {
+  // Same rule as the speech, and the same reason: the badge in the terminal
+  // does not travel with an OS notification. `SWEEP` was hardcoded in the
+  // title while the event carries its own `order_type`, so a BLOCK arrived on
+  // the desktop announced as a sweep.
+  new Notification(`${event.synthetic ? '🧪 SIMULATED · ' : '⚡ '}${event.underlying} ${event.option_type === 'C' ? 'CALL' : 'PUT'} ${event.order_type}`, {
     body: `${event.total_premium >= 1_000_000 ? (event.total_premium / 1_000_000).toFixed(1) + 'M' : Math.round(event.total_premium / 1000) + 'K'} | Heat: ${event.heat_score} | ${event.sentiment}`,
     icon: '/favicon.ico',
     tag: event.id,
@@ -104,6 +114,10 @@ export function useFlowFeed() {
         heat_score: event.heat_score,
         created_at: event.created_at,
         flow_event_id: event.id,
+        // Carried through so the alert can be marked, spoken and pushed as
+        // what it is. The signal has always known; the alert did not.
+        synthetic: event.synthetic,
+        score_breakdown: event.score_breakdown,
       })
     }
   }, [voiceEnabled, addFlowEvent, addPowerAlert])

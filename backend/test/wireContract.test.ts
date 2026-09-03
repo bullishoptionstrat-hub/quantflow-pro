@@ -668,3 +668,57 @@ test('the flow stats endpoint does not share a name with a different quantity', 
     'callPutRatio was a count ratio sharing a name with the UI\'s premium ratio');
   assert.match(ingestion, /callPutCountRatio:/, 'the basis belongs in the name');
 });
+
+// ─── The power alerts page ──────────────────────────────────────────────────
+
+/**
+ * It described a trigger the code does not implement, and credited a model
+ * that does not exist.
+ *
+ * "AI-scored unusual activity · Heat ≥75 · SWEEP + Block alerts": there is no
+ * model — `heat_score` is `flow-engine/score.ts`, deterministic, publishing
+ * its own breakdown, and `ml-service/` was deleted for putting a number with
+ * no provenance beside a real signal. BLOCK is special-cased nowhere and a
+ * SWEEP raises nothing on its own. The empty state added a third error, "Heat
+ * ≥75 **or** unusual SWEEP", where the condition is a conjunction.
+ *
+ * The rendered assertions are in `frontend/test/powerAlerts.test.tsx`.
+ */
+
+const ALERTS_PAGE = join(FRONTEND, 'app', 'power-alerts', 'page.tsx');
+
+test('the alerts page claims no model', () => {
+  const code = readFileSync(ALERTS_PAGE, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  assert.ok(!/AI-scored/.test(code), 'nothing here is AI-scored');
+  assert.ok(!/SWEEP \+ Block/.test(code), 'BLOCK is not special-cased anywhere');
+  assert.ok(!/Heat ≥75 or/.test(code), 'the condition is a conjunction');
+  assert.match(code, /flow-engine\/score\.ts/, 'the score names where it comes from');
+});
+
+test('no alert type is offered that nothing produces', () => {
+  // `alert_type` is `OrderType`. DARK_POOL, GEX_FLIP and ML_SIGNAL were in the
+  // colour map with nothing to put them there — ML_SIGNAL being the deleted
+  // service's slot, the sibling of `ml_score`.
+  const code = readFileSync(ALERTS_PAGE, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  for (const dead of ['DARK_POOL', 'GEX_FLIP', 'ML_SIGNAL']) {
+    assert.ok(!new RegExp(dead).test(code), `${dead} is produced by nothing`);
+  }
+  assert.match(code, /Record<OrderType, string>/, 'the map is keyed by what arrives');
+});
+
+test('an alert knows whether its print was simulated, and so do the channels', () => {
+  const hook = readFileSync(FLOW_HOOK, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  assert.match(hook, /synthetic: event\.synthetic/, 'the alert must carry it');
+  // The repo's own note on the deleted seed generator: neither of these reads
+  // `synthetic`, so a flag on the data cannot qualify what they announce.
+  assert.match(hook, /event\.synthetic \? 'Simulated\. ' : ''/, 'speech must say so');
+  assert.match(hook, /event\.synthetic \? '🧪 SIMULATED · '/, 'and so must the push notification');
+  // The title hardcoded SWEEP while the event carries its own order type.
+  assert.ok(!/CALL' : 'PUT'\} SWEEP`/.test(hook), 'a BLOCK was pushed announced as a sweep');
+});
+
+test('the alerts page distinguishes a dead feed from a quiet one', () => {
+  const code = readFileSync(ALERTS_PAGE, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  assert.match(code, /Not connected to the flow feed/, 'an outage is not a quiet tape');
+  assert.match(code, /score_breakdown/, 'the heat score must not be opaque');
+});

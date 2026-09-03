@@ -112,6 +112,24 @@ export interface PowerAlert {
   heat_score: number
   created_at: string
   flow_event_id?: string
+  /**
+   * True when the signal that raised it was simulated, replayed or built from
+   * aggregate volume — carried through from `FlowEvent.synthetic`.
+   *
+   * The alert did not have this field, so a keyless deployment's simulated
+   * prints raised alerts that were rendered, spoken aloud and pushed to the
+   * desktop with nothing marking them. The flow feed marks such rows and the
+   * demo banner is all-or-nothing; neither reaches an alert.
+   */
+  synthetic?: boolean
+  /**
+   * Why the signal scored what it did — `FlowEvent.score_breakdown`.
+   *
+   * The page renders `heat_score` at 22px with no provenance. The engine has
+   * published the per-component contributions all along, and showing them is
+   * the resolution `ml_score` got: an opaque number is the thing to avoid.
+   */
+  score_breakdown?: Record<string, number>
 }
 
 /**
