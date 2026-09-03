@@ -174,9 +174,24 @@ export interface BSResult {
   rho: number
 }
 
-export interface MarketSnapshot {
-  ticker: string
+/**
+ * `GET /api/macro/quotes` → `{ quotes: SpotQuote[] }`.
+ *
+ * This replaces `MarketSnapshot`, which nothing imported and which no endpoint
+ * has ever sent: it declared `ticker`, and the wire's key is `symbol`. It was
+ * a slot waiting for the next reader to bind to it and silently render
+ * `undefined` — the same shape of hazard as `PowerAlert.ml_score`.
+ *
+ * `timestamp` is milliseconds and is the quote's own clock, not receipt time,
+ * so a tape can say how old its prices are. See `quoteTimestamp()` in the
+ * connector for why that took a fix.
+ */
+export interface SpotQuote {
+  symbol: string
   price: number
   change: number
   changePct: number
+  volume: number
+  timestamp: number
+  source: 'twelvedata'
 }

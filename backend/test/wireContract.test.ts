@@ -292,3 +292,96 @@ test('scoring still exists, and is the auditable kind', () => {
     'every recorded signal should carry its per-component attribution',
   );
 });
+
+
+// ─── The ticker tape ────────────────────────────────────────────────────────
+
+/**
+ * The tape in `TopBar`, mounted in `app/layout.tsx` and therefore on screen
+ * above every page in the terminal.
+ *
+ * It rendered a hardcoded base map — SPX 5587, NVDA 942, TSLA 182, prices from
+ * 2024 — plus `Math.random() * 4 - 1.5` per symbol, re-rolled on a
+ * `Math.random() > 0.7` coin flip every ten seconds, in the same monospace and
+ * the same green and red as the live panels beneath it. The last and most
+ * visible member of the family that already cost the seeded flow feed, the
+ * generated dark-pool prints and the coin-flipped support/resistance levels.
+ *
+ * There is no `quotes.json` fixture to check the interface against, and adding
+ * one would be ceremony: with no `TWELVE_DATA_API_KEY` the capture is
+ * `{"quotes": []}`, which carries no field names and so cannot do the one job
+ * the fixtures exist for. The route does no reshaping —
+ * `Array.from(getSpotQuotes().values())` — so the connector's own `SpotQuote`
+ * *is* the wire, and that is what the frontend's copy is checked against here.
+ */
+
+const TWELVEDATA = join(__dirname, '..', 'src', 'ingestion', 'connectors', 'twelveData.ts');
+
+/** Field names declared on an `interface X { ... }` block in any file. */
+function fieldsOfIn(path: string, iface: string): Set<string> {
+  const src = readFileSync(path, 'utf8');
+  const start = src.indexOf(`export interface ${iface} {`);
+  assert.ok(start >= 0, `${path} should declare ${iface}`);
+  const body = src.slice(start, src.indexOf('\n}', start));
+  return new Set(
+    [...body.matchAll(/^\s{2}(?:\/\*\*[\s\S]*?\*\/\s*)?([a-zA-Z_][a-zA-Z0-9_]*)\??:/gm)]
+      .map((m) => m[1]!),
+  );
+}
+
+test('the frontend SpotQuote matches the connector the route serves', () => {
+  const wire = fieldsOfIn(TWELVEDATA, 'SpotQuote');
+  const declared = fieldsOf('SpotQuote');
+  const phantom = [...declared].filter((f) => !wire.has(f)).sort();
+  assert.deepEqual(
+    phantom, [],
+    `frontend SpotQuote declares fields the connector does not send: ${phantom.join(', ')}\n` +
+    `  connector sends: ${[...wire].sort().join(', ')}`,
+  );
+  // `symbol`, not `ticker` — the field `MarketSnapshot` got wrong.
+  assert.ok(wire.has('symbol') && declared.has('symbol'));
+  assert.ok(declared.has('timestamp'), 'the tape needs the clock to date a stale price');
+});
+
+test('MarketSnapshot is gone, not merely unused', () => {
+  // It declared `ticker`, `price`, `change`, `changePct` against an endpoint
+  // that has never sent `ticker`, and nothing imported it. Left in place it is
+  // one import away from a page rendering `undefined` down a column — the
+  // hazard `ml_score` was removed for.
+  assert.ok(
+    !/interface MarketSnapshot/.test(readFileSync(join(FRONTEND, 'lib', 'types.ts'), 'utf8')),
+    'MarketSnapshot should be replaced by the wire type, not left beside it',
+  );
+});
+
+test('the ticker tape reads the API and invents nothing', () => {
+  const bar = code(join(FRONTEND, 'components', 'layout', 'TopBar.tsx'));
+  assert.ok(!/Math\.random/.test(bar), 'the tape must not generate prices');
+  assert.ok(!/generateQuotes/.test(bar), 'the generator must be deleted, not merely uncalled');
+  assert.ok(
+    !/\b(SPX|NVDA|TSLA|MSTR)\b\s*:\s*\d/.test(bar),
+    'the hardcoded 2024 base price map must not come back',
+  );
+  assert.ok(/\/api\/macro\/quotes/.test(bar), 'the tape must read the spot-quote route');
+  assert.ok(/apiFetch/.test(bar), 'and go through the module that attaches the token');
+});
+
+test('the tape has a state for having no quotes', () => {
+  // A tape that renders an empty strip when the feed is down looks identical
+  // to a tape that is still loading, and both look like a working tape with
+  // nothing to say. `/api/macro/quotes` returns `{quotes: []}` on every
+  // keyless deployment, which is most of them.
+  const bar = readFileSync(join(FRONTEND, 'components', 'layout', 'TopBar.tsx'), 'utf8');
+  assert.match(bar, /quotes\.length === 0/, 'the empty feed needs a rendered state');
+  assert.match(bar, /NO SPOT FEED REPORTING/, 'and it must say so in words');
+  assert.match(bar, /UNREACHABLE/, 'an outage is a different answer from an empty feed');
+});
+
+test('the tape dates a price it can no longer vouch for', () => {
+  // The connector caches, so a dead feed keeps serving its last quotes
+  // forever. Rendering those in the live styling is the Stooq failure with a
+  // different connector — see `deadSources.test.ts`.
+  const bar = readFileSync(join(FRONTEND, 'components', 'layout', 'TopBar.tsx'), 'utf8');
+  assert.match(bar, /STALE_MS/, 'the tape needs a staleness threshold');
+  assert.match(bar, /AS OF/, 'and must say when stale prices are from');
+});

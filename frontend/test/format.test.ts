@@ -9,7 +9,7 @@
  * formatter instead. It was caught by eye in a screenshot.
  */
 import { describe, expect, test } from 'vitest'
-import { fmt, pctColor, pcrColor, cryptoPrice } from '@/lib/format'
+import { fmt, pctColor, pcrColor, cryptoPrice, spotPrice, signedPct } from '@/lib/format'
 
 describe('cryptoPrice', () => {
   test('never renders a live price as zero', () => {
@@ -85,5 +85,30 @@ describe('fmt', () => {
 
   test('below a million it is a plain number, not a dollar string', () => {
     expect(fmt(651_600)).toBe('651600.00')
+  })
+})
+
+describe('spotPrice', () => {
+  test('an index price reads as a price, not a serial number', () => {
+    expect(spotPrice(5587)).toBe('5,587.00')
+    expect(spotPrice(1204.5)).toBe('1,204.50')
+  })
+
+  test('two decimals always, so the tape does not jitter in width', () => {
+    expect(spotPrice(22)).toBe('22.00')
+    expect(spotPrice(612.4)).toBe('612.40')
+  })
+})
+
+describe('signedPct', () => {
+  test('a gain carries its sign', () => {
+    // Without this, +0.4% and 0.4% are the same string and the tape reads as
+    // if nothing were up.
+    expect(signedPct(0.4)).toBe('+0.40%')
+    expect(signedPct(0)).toBe('+0.00%')
+  })
+
+  test('a loss keeps the one it already has, and is not double-signed', () => {
+    expect(signedPct(-1.37)).toBe('-1.37%')
   })
 })
