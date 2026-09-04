@@ -3,7 +3,11 @@ import { getMacroData } from '../ingestion/connectors/fred';
 import { getCBOEData } from '../ingestion/connectors/cboe';
 import { getCryptoQuotes, getCryptoGlobal } from '../ingestion/connectors/coinGecko';
 import { getStooqQuotes, type StooqQuote } from '../ingestion/connectors/stooq';
-import { getSpotQuotes } from '../ingestion/connectors/twelveData';
+// The MERGED board, not Twelve Data's cache. Importing the connector's own
+// getter here is how Finnhub quotes were cached and never displayed: the
+// second spot source existed, the merge function existed, and the route that
+// serves the tape read past both of them.
+import { getSpotQuotes } from '../ingestion/index';
 
 const router = Router();
 
