@@ -3,26 +3,49 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { DEMO_COOKIE, isDemoModeEnabled } from '@/lib/demo'
 
+/**
+ * Whether this deployment can authenticate anyone at all.
+ *
+ * `createServerClient` **throws** when either value is missing — "Your
+ * project's URL and Key are required to create a Supabase client!" — and it
+ * was called unconditionally, before the demo check below. So a deployment
+ * with no Supabase configuration returned a **500 on every gated route**,
+ * including in demo mode, which exists precisely so the terminal works without
+ * a session. The escape hatch was behind the door it was meant to open.
+ *
+ * Skipping the client when it cannot be built is not a weakening: with no
+ * Supabase project there is no session to verify, so `user` is null either
+ * way. Demo still needs both of its independent conditions.
+ */
+function supabaseConfigured(): boolean {
+  return Boolean(
+    process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+  )
+}
+
 export async function middleware(req: NextRequest) {
   const res = NextResponse.next()
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return req.cookies.getAll()
-        },
-        setAll(cookiesToSet: { name: string; value: string; options: any }[]) {
-          cookiesToSet.forEach(({ name, value, options }) => {
-            res.cookies.set(name, value, options)
-          })
-        },
-      },
-    }
-  )
 
-  const { data: { user } } = await supabase.auth.getUser()
+  let user: { id: string } | null = null
+  if (supabaseConfigured()) {
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getAll() {
+            return req.cookies.getAll()
+          },
+          setAll(cookiesToSet: { name: string; value: string; options: any }[]) {
+            cookiesToSet.forEach(({ name, value, options }) => {
+              res.cookies.set(name, value, options)
+            })
+          },
+        },
+      }
+    )
+    user = (await supabase.auth.getUser()).data.user
+  }
 
   const isAuthRoute = req.nextUrl.pathname.startsWith('/login') || req.nextUrl.pathname.startsWith('/register')
 
