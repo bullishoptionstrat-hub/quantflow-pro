@@ -109,12 +109,25 @@ test('the greeks are absent rather than zero when the plan omits them', () => {
 });
 
 test('no chain connector substitutes a zero for a field the vendor omitted', () => {
+  // Scoped to the fields where a zero is a *reading* — a price, a size, a
+  // greek. A zero default on an array length or a loop bound is not this
+  // defect, and banning the bare `?? 0` string across four whole files would
+  // fail the next person writing one for an honest reason.
+  const READINGS =
+    'bid|ask|last|lastPrice|price|strike|strikePrice|volume|totalVolume|dayVolume|day-volume' +
+    '|openInterest|open-interest|oi|iv|impliedVolatility|volatility|delta|gamma|theta|vega' +
+    '|change|changePct|marketCap|dayHigh|dayLow|regularMarket\\w*|fiftyTwoWeek\\w*|underlyingPrice';
+  const zeroFill = new RegExp(`(${READINGS})['\\]]?\\s*(\\?\\?|\\|\\|)\\s*0\\b`, 'i');
+
   const offenders: string[] = [];
   for (const f of CHAIN_CONNECTORS) {
     const src = stripComments(readFileSync(join(CONNECTORS, f), 'utf8'));
-    if (/\?\?\s*0\b|\|\|\s*0\b/.test(src)) offenders.push(f);
+    const hit = src.match(zeroFill);
+    if (hit) offenders.push(`${f}: ${hit[0].trim()}`);
   }
-  assert.deepEqual(offenders, [], `still zero-filling an absent field: ${offenders.join(', ')}`);
+  assert.deepEqual(offenders, [],
+    'a reading defaulted to 0 is indistinguishable from a real zero, and these ' +
+    `fields become an NBBO: ${offenders.join(', ')}`);
 });
 
 test('the zero-fill guard covers every connector that publishes an NBBO', () => {
