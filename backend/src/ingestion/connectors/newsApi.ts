@@ -5,6 +5,7 @@
  * Signup: https://newsapi.org/register
  */
 import axios from 'axios';
+import { scheduleDailyReset } from '../dailyReset';
 
 const API_KEY = process.env.NEWS_API_KEY || '';
 const BASE = 'https://newsapi.org/v2';
@@ -108,14 +109,11 @@ async function fetchHeadlines(query: string): Promise<void> {
 export async function startNewsAPI(): Promise<void> {
   if (!API_KEY) { console.log('[newsapi] No key — skipped'); return; }
 
-  // Reset daily counter at midnight
-  const now = new Date();
-  const msUntilMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime() - now.getTime();
-  setTimeout(() => { dailyRequests = 0; }, msUntilMidnight);
+  scheduleDailyReset(() => { dailyRequests = 0; });
 
   // Initial fetch — stagger queries
   for (let i = 0; i < QUERIES.length; i++) {
-    setTimeout(() => fetchHeadlines(QUERIES[i]), i * 5000);
+    setTimeout(() => fetchHeadlines(QUERIES[i]), i * 5000).unref();
   }
 
   // Refresh every 30 min (4 queries × 2 refreshes = 8 req/h, ~192/day — within 100/day free limit with batching)

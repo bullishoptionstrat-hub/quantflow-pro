@@ -127,7 +127,7 @@ function startWebSocket(): void {
   });
 
   ws.on('error', () => {});
-  ws.on('close', () => { setTimeout(startWebSocket, 10000); });
+  ws.on('close', () => { setTimeout(startWebSocket, 10000).unref(); });
 }
 
 export async function startTastytrade(): Promise<void> {

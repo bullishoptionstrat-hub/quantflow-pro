@@ -8,6 +8,7 @@ import { LegacyFlowEvent as FlowEvent } from '../index';
 import { computeHeatScore } from '../heatScore';
 import { classifySweep } from '../sweepDetector';
 import { num, orUndefined } from '../optionalNumber';
+import { scheduleDailyReset } from '../dailyReset';
 
 const TOKEN = process.env.MARKETDATA_TOKEN || '';
 const BASE = 'https://api.marketdata.app/v1';
@@ -146,10 +147,7 @@ function heatOrUndefined(q: MDOptionQuote, price: number, size: number): number 
 export async function startMarketData(): Promise<void> {
   if (!TOKEN) { console.log('[marketdata] No token — skipped'); return; }
 
-  // Reset daily counter at midnight
-  const now = new Date();
-  const msUntilMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime() - now.getTime();
-  setTimeout(() => { creditsUsed = 0; }, msUntilMidnight);
+  scheduleDailyReset(() => { creditsUsed = 0; });
 
   async function poll(): Promise<void> {
     for (const sym of WATCHED) {
