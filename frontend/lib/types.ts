@@ -282,12 +282,22 @@ export interface NewsItem {
   url: string
   /** The outlet that ran it. FMP's feed names none, so: null. */
   publisher: string | null
-  /** Which connector carried it — whose keyword list produced `sentiment`. */
-  provider: 'newsapi' | 'fmp'
+  /** Which connector carried it. */
+  provider: 'newsapi' | 'fmp' | 'eventregistry'
   publishedAt: string
   symbols: string[]
-  /** Our keyword read of the title, not a stance the outlet took. */
+  /** The classification. See `sentimentBasis` for whose it is. */
   sentiment: 'bullish' | 'bearish' | 'neutral'
+  /**
+   * Who produced `sentiment` — never the outlet, either way.
+   *
+   * `keyword` is this service's own term list run over the headline, because
+   * newsapi.org and FMP supply no score. `vendor` is Event Registry's own
+   * article score, thresholded by us. Two provenances behind one field name is
+   * what `source` meant before it was split into `publisher` and `provider`;
+   * naming the basis stops the same conflation happening to the value.
+   */
+  sentimentBasis: 'keyword' | 'vendor'
 }
 
 /**

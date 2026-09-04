@@ -229,7 +229,7 @@ test('Yahoo\'s non-print publication path is gated as well', () => {
 const MAPPED_SOURCES = [
   'tradier', 'polygon', 'cboe', 'cboe_options', 'cboeOptions', 'occ', 'yahoo',
   'finra', 'marketdata', 'schwab', 'tastytrade', 'simulation', 'seed',
-  'finnhub', 'twelvedata',
+  'finnhub', 'twelvedata', 'eventregistry',
 ].filter((s) => datasetIdForSource(s));
 
 test('MAPPED_SOURCES has not drifted from the registry', () => {
@@ -239,11 +239,11 @@ test('MAPPED_SOURCES has not drifted from the registry', () => {
   const known = new Set(
     ['tradier', 'polygon', 'cboe', 'cboe_options', 'cboeOptions', 'occ', 'yahoo',
      'finra', 'marketdata', 'schwab', 'tastytrade', 'simulation', 'seed',
-     'finnhub', 'twelvedata']
+     'finnhub', 'twelvedata', 'eventregistry']
       .filter((s) => datasetIdForSource(s)),
   ).size;
   assert.equal(mapped, known);
-  assert.equal(mapped, 15, 'SOURCE_TO_DATASET changed — update MAPPED_SOURCES');
+  assert.equal(mapped, 16, 'SOURCE_TO_DATASET changed — update MAPPED_SOURCES');
 });
 
 /** One representative source per dataset, for the divergence canary. */
@@ -259,6 +259,7 @@ const SOURCE_FOR_DATASET: Record<string, string> = {
   TASTYTRADE_API: 'tastytrade',
   SIMULATION: 'simulation',
   FINNHUB_QUOTES: 'finnhub',
+  EVENT_REGISTRY_NEWS: 'eventregistry',
   TWELVEDATA_QUOTES: 'twelvedata',
 };
 

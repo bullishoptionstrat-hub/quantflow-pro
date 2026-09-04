@@ -206,6 +206,35 @@ export const DATASETS: readonly DatasetRights[] = [
       'Tier data, and the default configuration here is the free tier.',
   },
   {
+    id: 'EVENT_REGISTRY_NEWS',
+    label: 'Event Registry (newsapi.ai) news articles',
+    host: 'eventregistry.org',
+    // Showing these headlines to a third party is publishing content received
+    // via the API, which §6 forbids without the appropriate rights — so the
+    // connector gate refuses it before `start()` runs in a commercial
+    // deployment. Private research is UNVERIFIED rather than PERMITTED
+    // because §3 restricts free access to "evaluation and testing" and
+    // excludes projects producing "commercial or institutional value", and
+    // whether a given deployment qualifies is not something code can see.
+    display: { PRIVATE_RESEARCH: 'UNVERIFIED', PUBLIC_COMMERCIAL: 'PROHIBITED' },
+    persist: { PRIVATE_RESEARCH: 'UNVERIFIED', PUBLIC_COMMERCIAL: 'PROHIBITED' },
+    quotedRestriction:
+      'Share, sell, sublicense, or redistribute the data provided by our Service. ' +
+      'Redistribute content received via the API, including publishing or embedding, ' +
+      'without the appropriate rights.',
+    termsUrl: 'https://newsapi.ai/terms',
+    termsReadAt: '2026-09-03',
+    basis:
+      'Section 6 (Data Restrictions) prohibits redistributing the data or publishing ' +
+      'content received via the API, which is what rendering these headlines to a ' +
+      'third party is — hence PROHIBITED for display in PUBLIC_COMMERCIAL. Section 3 ' +
+      '(Free Access) limits free use to "evaluation and testing" and excludes any ' +
+      'project, research or application producing "commercial or institutional value", ' +
+      'so even private research is UNVERIFIED: it turns on the plan tier and on what ' +
+      'the operator does with the output, neither of which this service can establish. ' +
+      'The page states no retention terms at all, so persistence is unestablished too.',
+  },
+  {
     id: 'CBOE_CDN_DELAYED_CHAIN',
     label: 'Cboe delayed options chain (CDN JSON)',
     host: 'cdn.cboe.com',
@@ -359,6 +388,7 @@ const SOURCE_TO_DATASET: Readonly<Record<string, string>> = {
   // it needs a dataset entry of its own with the terms read — not this one.
   seed: 'SIMULATION',
   finnhub: 'FINNHUB_QUOTES',
+  eventregistry: 'EVENT_REGISTRY_NEWS',
   twelvedata: 'TWELVEDATA_QUOTES',
 };
 

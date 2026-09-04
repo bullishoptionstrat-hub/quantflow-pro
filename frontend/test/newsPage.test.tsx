@@ -72,6 +72,7 @@ const newsItem = (over: Partial<NewsItem> = {}): NewsItem => ({
   publishedAt: new Date(Date.now() - 20 * 60_000).toISOString(),
   symbols: ['NVDA'],
   sentiment: 'bullish',
+  sentimentBasis: 'keyword',
   ...over,
 })
 
@@ -280,5 +281,27 @@ describe('live records render as themselves', () => {
     })
     await renderPage()
     await waitFor(() => expect(screen.getByText('TODAY')).toBeDefined())
+  })
+})
+
+describe('a vendor-scored headline says so', () => {
+  test('the tag names whose classification it is', async () => {
+    // newsapi.org and FMP carry no score, so this service classifies with its
+    // own keyword list. Event Registry scores the article itself. The tag
+    // looks identical either way, and they are not the same claim.
+    mockApi({
+      news: () => ok({ headlines: [
+        newsItem({ id: 'a', provider: 'eventregistry', sentimentBasis: 'vendor', title: 'Scored by the vendor' }),
+        newsItem({ id: 'b', provider: 'newsapi', sentimentBasis: 'keyword', title: 'Scored by us' }),
+      ], total: 2 }),
+      sentiment: () => ok(fixture('sentiment')),
+      earnings: () => ok(fixture('earnings')),
+    })
+    const { container } = await renderPage()
+
+    await waitFor(() => expect(screen.getByText(/Scored by the vendor/)).toBeDefined())
+    expect(container.textContent).toMatch(/VENDOR/)
+    // Exactly one of the two rows is marked.
+    expect((container.textContent!.match(/· VENDOR/g) ?? []).length).toBe(1)
   })
 })

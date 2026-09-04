@@ -27,6 +27,7 @@ import assert from 'node:assert/strict';
 import { toNewsWireItem, type NewsWireItem } from '../src/routes/sentiment';
 import type { NewsHeadline } from '../src/ingestion/connectors/newsApi';
 import type { NewsItem } from '../src/ingestion/connectors/fmp';
+import type { EventRegistryHeadline } from '../src/ingestion/connectors/eventRegistry';
 
 const FROM_NEWSAPI: NewsHeadline = {
   id: 'newsapi-9f2c',
@@ -50,13 +51,29 @@ const FROM_FMP: NewsItem = {
   source: 'fmp',
 };
 
-/** Every key a client is entitled to read, present on both. */
+const FROM_EVENT_REGISTRY: EventRegistryHeadline = {
+  id: 'er:9455804617',
+  title: 'Wall Street ends sharply higher as rate-hike fears ease',
+  description: 'Body text the wire does not carry in full.',
+  url: 'https://example.test/er/wall-street',
+  source: 'Free Malaysia Today',
+  publishedAt: '2026-09-03T21:39:18Z',
+  symbols: ['SPY', 'QQQ'],
+  sentiment: 'bullish',
+  sentimentScore: 0.176,
+  provider: 'eventregistry',
+};
+
+/** Every key a client is entitled to read, present on all three. */
 const REQUIRED: (keyof NewsWireItem)[] = [
-  'id', 'title', 'url', 'publisher', 'provider', 'publishedAt', 'symbols', 'sentiment',
+  'id', 'title', 'url', 'publisher', 'provider', 'publishedAt', 'symbols',
+  'sentiment', 'sentimentBasis',
 ];
 
-test('both connectors normalize to the same set of keys', () => {
-  for (const item of [toNewsWireItem(FROM_NEWSAPI), toNewsWireItem(FROM_FMP)]) {
+test('all three connectors normalize to the same set of keys', () => {
+  for (const item of [
+    toNewsWireItem(FROM_NEWSAPI), toNewsWireItem(FROM_FMP), toNewsWireItem(FROM_EVENT_REGISTRY),
+  ]) {
     for (const key of REQUIRED) {
       assert.ok(key in item, `${item.provider} item is missing ${key}`);
       assert.notEqual(item[key], undefined, `${item.provider} item has ${key} undefined`);
@@ -146,4 +163,55 @@ test('the route maps every item it sends, on both news paths', async () => {
   for (const line of emitting) {
     assert.match(line, /toNewsWireItem/, `a news response is sent unnormalized: ${line.trim()}`);
   }
+});
+
+// ─── The third source ───────────────────────────────────────────────────────
+
+/**
+ * Event Registry (newsapi.ai) is a different vendor from newsapi.org, despite
+ * the name — different key, endpoint and response shape. A newsapi.ai key sent
+ * to newsapi.org returns `apiKeyInvalid`, which is how the connector came to
+ * exist.
+ *
+ * It is the only source that scores its own articles. The other two carry no
+ * score, so this service classifies them with its own keyword list — and the
+ * wire has to say which, or one field name carries two provenances. That is
+ * exactly what `source` did before it was split into `publisher`/`provider`.
+ */
+
+test('a vendor-scored article is marked as such, and a keyword-scored one is not', () => {
+  assert.equal(toNewsWireItem(FROM_EVENT_REGISTRY).sentimentBasis, 'vendor');
+  assert.equal(toNewsWireItem(FROM_NEWSAPI).sentimentBasis, 'keyword');
+  assert.equal(toNewsWireItem(FROM_FMP).sentimentBasis, 'keyword');
+});
+
+test('the third provider is distinguishable from the other two', () => {
+  // `symbols` separates FMP from the other two; `provider` separates those
+  // two from each other. Both discriminants are on the record.
+  assert.equal(toNewsWireItem(FROM_EVENT_REGISTRY).provider, 'eventregistry');
+  assert.equal(toNewsWireItem(FROM_NEWSAPI).provider, 'newsapi');
+  assert.equal(toNewsWireItem(FROM_FMP).provider, 'fmp');
+});
+
+test('the outlet is carried through, not the vendor', () => {
+  // Event Registry sends `source.title` (the outlet) and `source.uri` (its
+  // domain). Publishing "newsapi.ai" as the byline would be the `fmp` mistake.
+  assert.equal(toNewsWireItem(FROM_EVENT_REGISTRY).publisher, 'Free Malaysia Today');
+});
+
+test('its publication time is the outlet\'s, not the vendor\'s discovery time', () => {
+  // The API returns both `dateTimePub` (when the outlet published) and
+  // `dateTime` (when Event Registry saw it). A reader means the first.
+  const item = toNewsWireItem(FROM_EVENT_REGISTRY);
+  assert.equal(item.publishedAt, '2026-09-03T21:39:18Z');
+  assert.ok(Number.isFinite(new Date(item.publishedAt).getTime()));
+});
+
+test('the connector reads dateTimePub in preference to dateTime', () => {
+  const { readFileSync } = require('node:fs') as typeof import('node:fs');
+  const { join } = require('node:path') as typeof import('node:path');
+  const code = readFileSync(
+    join(__dirname, '..', 'src', 'ingestion', 'connectors', 'eventRegistry.ts'), 'utf8');
+  assert.match(code, /a\?\.dateTimePub === 'string'\s*\n?\s*\?/,
+    'dateTimePub must be preferred over the vendor\'s discovery time');
 });
