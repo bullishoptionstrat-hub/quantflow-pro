@@ -287,6 +287,9 @@ export function getIngestionStatus() {
   // connected/error.
   const notes: Record<string, string> = {};
   if (polygonQuoteNote) notes['polygon'] = polygonQuoteNote;
+  for (const [source, note] of Object.entries(connectorNotes)) {
+    notes[source] = notes[source] ? `${notes[source]}; ${note}` : note;
+  }
   for (const [source, count] of Object.entries(unparsedFrames)) {
     const existing = notes[source];
     const note = `${count} stream frame(s) could not be parsed`;
@@ -529,11 +532,16 @@ export function startIngestion(io: any): void {
   // connector reporting `connected` with nothing behind it.
   onFREDHealth((h) => {
     if (h.ok) {
+      // Contributing. A degraded cycle still says what is missing, through the
+      // note channel rather than by claiming the whole source is down.
       sources['fred'] = 'connected';
       delete sourceErrors['fred'];
+      if (h.degraded && h.reason) connectorNotes['fred'] = h.reason;
+      else delete connectorNotes['fred'];
     } else {
       sources['fred'] = 'error';
       sourceErrors['fred'] = h.reason ?? 'FRED fetch failed.';
+      delete connectorNotes['fred'];
     }
   });
   onRedditSentiment((s) => {
@@ -909,6 +917,18 @@ let polygonQuoteNote: string | undefined;
  * itself as data", the source at least produced something.
  */
 const unparsedFrames: Record<string, number> = {};
+
+/**
+ * "Connected, and here is what is missing."
+ *
+ * `sources` has three states and none of them fits a source that is working
+ * and incomplete. FRED reporting `error` because one of ten series was
+ * discontinued upstream sends an operator hunting a key problem that does not
+ * exist — the mirror image of reporting a dead source as `connected`, and just
+ * as misleading. This is the same channel `polygonQuoteNote` uses for a trades
+ * feed whose NBBO lookups are refused.
+ */
+const connectorNotes: Record<string, string> = {};
 
 function noteUnparsedFrame(source: string): void {
   unparsedFrames[source] = (unparsedFrames[source] ?? 0) + 1;

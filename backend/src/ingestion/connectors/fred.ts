@@ -42,6 +42,16 @@ let onMacroUpdate: ((s: FREDSeries) => void) | null = null;
 /** Health of the last fetch cycle, reported to /api/health via `onFREDHealth`. */
 export interface FREDHealth {
   ok: boolean;
+  /**
+   * The source is contributing, but not everything it was asked for arrived.
+   *
+   * A few series failing is a per-series problem — one of FRED's series was
+   * discontinued upstream, say — and the other nine still fill the panel.
+   * Reporting that as `error` sends an operator hunting a key problem that
+   * does not exist, which is the mirror image of reporting a dead source as
+   * `connected`.
+   */
+  degraded?: boolean;
   /** Operator-facing, and public: this reaches the unauthenticated /api/health. */
   reason?: string;
 }
@@ -133,10 +143,13 @@ async function fetchAll(): Promise<void> {
   }
 
   // Every series failing is one cause, not ten — almost always a rejected key.
-  // A few failing is a per-series problem and the rest of the panel is fine.
+  // A few failing is a per-series problem and the rest of the panel is fine,
+  // so the source is still contributing and says what is missing rather than
+  // reporting itself broken.
   const allFailed = failures.length === seriesIds.length;
   onHealth?.({
-    ok: false,
+    ok: !allFailed,
+    degraded: !allFailed,
     reason:
       `${failures.length}/${seriesIds.length} series failed. ${failures[0]}` +
       (failures.length > 1 ? ` (+${failures.length - 1} more)` : '') +

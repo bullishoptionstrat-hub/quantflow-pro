@@ -68,6 +68,15 @@ test('a healthy cycle reports ok and populates the cache', async () => {
 test('a partial failure is not reported as a total one', async () => {
   // One bad series is a series problem; ten is a key problem. Saying "check
   // your key" for the first would send the operator after the wrong thing.
+  //
+  // This used to assert `ok: false`, which did exactly that: `/api/health`
+  // rendered the source red while nine of ten series were filling the panel.
+  // Observed live, with a real key — FRED discontinued `GOLDAMGBD228NLBM`
+  // upstream, and the terminal reported the whole connector as broken.
+  //
+  // A partial failure is `ok` (the source is contributing) and `degraded`
+  // (here is what is missing), and `ingestion/index.ts` routes the reason to
+  // `sourceNotes` rather than `sourceErrors`.
   let n = 0;
   const fred = load(() => (++n === 1
     ? { status: 500, body: 'upstream hiccup' }
@@ -77,9 +86,24 @@ test('a partial failure is not reported as a total one', async () => {
   await fred.startFRED();
 
   const last = seen[seen.length - 1];
-  assert.equal(last.ok, false);
+  assert.equal(last.ok, true, 'nine of ten series arrived — the source is contributing');
+  assert.equal(last.degraded, true, 'and it must say so rather than reporting nothing wrong');
   assert.match(last.reason, /1\/10 series failed/);
   assert.ok(!/FRED_API_KEY is not accepted/.test(last.reason));
+});
+
+test('every series failing is reported as a failure, and points at the key', async () => {
+  // The other side of the same line. Ten of ten is one cause, not ten.
+  const fred = load(() => ({ status: 401, body: 'Bad Request. The value for variable api_key is not registered.' }));
+  const seen: any[] = [];
+  fred.onFREDHealth((h: any) => seen.push(h));
+  await fred.startFRED();
+
+  const last = seen[seen.length - 1];
+  assert.equal(last.ok, false, 'a source contributing nothing is not "connected"');
+  assert.ok(!last.degraded);
+  assert.match(last.reason, /10\/10 series failed/);
+  assert.match(last.reason, /FRED_API_KEY is not accepted/);
 });
 
 test('no key at all stays silent rather than reporting a failure', async () => {
