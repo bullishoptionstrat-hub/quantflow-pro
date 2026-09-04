@@ -5,6 +5,7 @@
  */
 import axios from 'axios';
 import { describeHttpError } from '../httpError';
+import { numeric } from '../optionalNumber';
 
 export interface CBOEData {
   vix: number;
@@ -121,18 +122,6 @@ interface PutCallValues {
 type PutCallBlock =
   | { ok: true; values: PutCallValues }
   | { ok: false; reason: string };
-
-/**
- * A number the response actually carried, or null.
- *
- * `parseFloat(undefined ?? 0)` is `0`, not `NaN` — the coercion is what made
- * an absent field indistinguishable from a real zero.
- */
-function numeric(v: unknown): number | null {
-  if (v === null || v === undefined || v === '') return null;
-  const n = typeof v === 'number' ? v : parseFloat(String(v));
-  return Number.isFinite(n) ? n : null;
-}
 
 async function fetchPutCallRatios(): Promise<PutCallBlock> {
   try {

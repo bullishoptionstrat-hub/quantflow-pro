@@ -8,6 +8,7 @@ import WebSocket from 'ws';
 import { LegacyFlowEvent as FlowEvent } from '../index';
 import { computeHeatScore } from '../heatScore';
 import { classifySweep } from '../sweepDetector';
+import { numeric, orUndefined } from '../optionalNumber';
 
 const USER = process.env.TASTYTRADE_USER || '';
 const PASS = process.env.TASTYTRADE_PASS || '';
@@ -54,17 +55,27 @@ async function fetchOptionChain(symbol: string): Promise<void> {
           const opt = strike[cp];
           if (!opt || !opt['root-symbol']) continue;
 
-          const size = opt['day-volume'] ?? 0;
-          if (size < 50) continue;
+          // Tastytrade sends its numbers as strings, so every field here goes
+          // through `numeric`. `parseFloat(undefined ?? 0)` is 0, not NaN —
+          // that coercion is what made an absent bid indistinguishable from a
+          // contract nobody is bidding on.
+          const size = numeric(opt['day-volume']);
+          if (size === null || size < 50) continue;
 
-          const bid = parseFloat(opt['bid'] ?? 0);
-          const ask = parseFloat(opt['ask'] ?? 0);
-          const last = parseFloat(opt['last'] ?? ((bid + ask) / 2));
-          const oi = opt['open-interest'] ?? 0;
-          const strikePrice = parseFloat(strike['strike-price'] ?? 0);
+          const bid = numeric(opt['bid']);
+          const ask = numeric(opt['ask']);
+          const oi = numeric(opt['open-interest']);
+          const strikePrice = numeric(strike['strike-price']);
           const expDate = exp['expiration-date'];
+          if (strikePrice === null || !expDate) continue;
 
-          const heat = computeHeatScore({ bid, ask, price: last, size, avgVolume: size * 0.4, openInterest: oi });
+          const last = numeric(opt['last'])
+            ?? (bid !== null && ask !== null ? (bid + ask) / 2 : null);
+          if (last === null) continue;
+
+          const heat = bid !== null && ask !== null && oi !== null
+            ? computeHeatScore({ bid, ask, price: last, size, avgVolume: size * 0.4, openInterest: oi })
+            : undefined;
 
           onFlowEvent?.({
             id: `tasty-${symbol}-${strikePrice}-${cp}-${Date.now()}`,
@@ -79,7 +90,8 @@ async function fetchOptionChain(symbol: string): Promise<void> {
             heatScore: heat,
             sentiment: cp === 'call' ? 'bullish' : 'bearish',
             source: 'tastytrade',
-            bid, ask,
+            bid: orUndefined(bid),
+            ask: orUndefined(ask),
           } as FlowEvent);
         }
       }

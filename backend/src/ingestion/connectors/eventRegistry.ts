@@ -23,6 +23,7 @@
  */
 import axios from 'axios';
 import { describeHttpError } from '../httpError';
+import { num } from '../optionalNumber';
 
 const API_KEY = process.env.EVENT_REGISTRY_API_KEY || '';
 const ENDPOINT = 'https://eventregistry.org/api/v1/article/getArticles';
@@ -82,10 +83,6 @@ export function onEventRegistryHealth(handler: (h: EventRegistryHealth) => void)
 export function getEventRegistryHeadlines(): EventRegistryHeadline[] { return headlines; }
 
 /** A number the vendor actually sent, or null. Never a zero standing in. */
-function num(v: unknown): number | null {
-  return typeof v === 'number' && Number.isFinite(v) ? v : null;
-}
-
 function labelFor(score: number | null): 'bullish' | 'bearish' | 'neutral' {
   // A missing score is `neutral` because it is unclassified, not because the
   // article is balanced. `sentimentScore: null` beside it says which.
