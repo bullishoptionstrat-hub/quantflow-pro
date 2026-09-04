@@ -27,6 +27,7 @@
 import axios from 'axios';
 import { quoteTimestamp, type SpotQuote } from './twelveData';
 import { describeHttpError } from '../httpError';
+import { num } from '../optionalNumber';
 
 const API_KEY = process.env.FINNHUB_API_KEY || '';
 const BASE = 'https://finnhub.io/api/v1';
@@ -51,10 +52,6 @@ export function onFinnhubHealth(handler: (h: FinnhubHealth) => void): void { onH
 export function getFinnhubSpotQuotes(): Map<string, SpotQuote> { return spotCache; }
 
 /** A number the vendor actually sent, or null. Never a zero standing in. */
-function num(v: unknown): number | null {
-  return typeof v === 'number' && Number.isFinite(v) ? v : null;
-}
-
 async function fetchQuote(symbol: string): Promise<boolean> {
   const { data } = await axios.get(`${BASE}/quote`, {
     params: { symbol },

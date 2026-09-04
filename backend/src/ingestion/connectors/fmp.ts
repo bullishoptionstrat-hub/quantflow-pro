@@ -4,6 +4,7 @@
  * Docs: https://site.financialmodelingprep.com/developer/docs
  */
 import axios from 'axios';
+import { scheduleDailyReset } from '../dailyReset';
 
 const API_KEY = process.env.FMP_API_KEY || '';
 const BASE = 'https://financialmodelingprep.com/api/v3';
@@ -123,10 +124,7 @@ async function fetchNews(): Promise<void> {
 export async function startFMP(): Promise<void> {
   if (!API_KEY) { console.log('[fmp] No key — skipped'); return; }
 
-  // Reset daily counter at midnight
-  const now = new Date();
-  const msUntilMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime() - now.getTime();
-  setTimeout(() => { reqCount = 0; }, msUntilMidnight);
+  scheduleDailyReset(() => { reqCount = 0; });
 
   await fetchEarningsCalendar();
   await fetchInsiderTrades();

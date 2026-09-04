@@ -4,6 +4,7 @@
  * Docs: https://flashalpha.com/api-documentation
  */
 import axios from 'axios';
+import { scheduleDailyReset } from '../dailyReset';
 
 const API_KEY = process.env.FLASHALPHA_API_KEY || '';
 const BASE = 'https://lab.flashalpha.com';
@@ -79,18 +80,27 @@ async function fetchGEX(symbol: string): Promise<void> {
   }
 }
 
+/**
+ * Spend the day's budget, staggered 90s apart across symbols.
+ *
+ * This ran once, from `startFlashAlpha`, and nothing ever called it again —
+ * FlashAlpha has no recurring poller. So its GEX was fetched once per process
+ * lifetime and then aged indefinitely while the source reported `connected`.
+ * The daily counter reset that sits beside it only makes sense if the budget
+ * is spent again, so the reset now drives this.
+ */
+function fetchDailyBatch(): void {
+  for (let i = 0; i < Math.min(SYMBOLS.length, MAX_DAILY); i++) {
+    setTimeout(() => fetchGEX(SYMBOLS[i]), i * 90_000).unref();
+  }
+}
+
 export async function startFlashAlpha(): Promise<void> {
   if (!API_KEY) { console.log('[flashalpha] No key — skipped'); return; }
 
-  // Reset daily counter at midnight ET
-  const now = new Date();
-  const msUntilMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime() - now.getTime();
-  setTimeout(() => { dailyCallCount = 0; }, msUntilMidnight);
+  scheduleDailyReset(() => { dailyCallCount = 0; fetchDailyBatch(); });
 
-  // Stagger fetches 90 seconds apart to preserve the 5/day budget across symbols
-  for (let i = 0; i < Math.min(SYMBOLS.length, MAX_DAILY); i++) {
-    setTimeout(() => fetchGEX(SYMBOLS[i]), i * 90_000);
-  }
+  fetchDailyBatch();
 
   console.log('[flashalpha] Started — fetching GEX for top symbols (5/day limit)');
 }
