@@ -108,26 +108,114 @@ test('the greeks are absent rather than zero when the plan omits them', () => {
   assert.equal(event.delta, undefined, 'a delta of 0 means the opposite of unknown');
 });
 
-test('no chain connector substitutes a zero for a field the vendor omitted', () => {
-  // Scoped to the fields where a zero is a *reading* — a price, a size, a
-  // greek. A zero default on an array length or a loop bound is not this
-  // defect, and banning the bare `?? 0` string across four whole files would
-  // fail the next person writing one for an honest reason.
-  const READINGS =
-    'bid|ask|last|lastPrice|price|strike|strikePrice|volume|totalVolume|dayVolume|day-volume' +
-    '|openInterest|open-interest|oi|iv|impliedVolatility|volatility|delta|gamma|theta|vega' +
-    '|change|changePct|marketCap|dayHigh|dayLow|regularMarket\\w*|fiftyTwoWeek\\w*|underlyingPrice';
-  const zeroFill = new RegExp(`(${READINGS})['\\]]?\\s*(\\?\\?|\\|\\|)\\s*0\\b`, 'i');
+/**
+ * The `?? 0` / `|| 0` sites in a source, each paired with the expression it
+ * defaults.
+ *
+ * The scan runs *backwards* from the operator over balanced brackets, because
+ * the field being zero-filled is usually not the token immediately left of it.
+ * A guard that required adjacency read every honest `?? 0` and missed
+ * `data.bid?.[i] ?? 0`, `parseFloat(opt['bid'] ?? 0)` and `num(opt.bid) ?? 0` —
+ * which between them are every form this audit actually found.
+ */
+function zeroDefaults(src: string): { operand: string; site: string }[] {
+  const sites: { operand: string; site: string }[] = [];
+  const op = /(\?\?|\|\|)\s*0(?![\d.])/g;
+  for (let m = op.exec(src); m; m = op.exec(src)) {
+    let i = m.index - 1;
+    while (i >= 0 && /\s/.test(src[i])) i--;
+    const end = i + 1;
+    let depth = 0;
+    while (i >= 0) {
+      const c = src[i];
+      if (c === ')' || c === ']') { depth++; i--; continue; }
+      if (c === '(' || c === '[') { if (depth === 0) break; depth--; i--; continue; }
+      if (depth > 0) { i--; continue; }
+      if (/[A-Za-z0-9_$.?'"]/.test(c)) { i--; continue; }
+      break;
+    }
+    const operand = src.slice(i + 1, end);
+    sites.push({ operand, site: `${operand} ${m[0].replace(/\s+/g, ' ')}` });
+  }
+  return sites;
+}
 
+/**
+ * Words that name a *reading* — a price, a size, a greek — where a zero is a
+ * value the vendor could have sent and so cannot also mean "absent". A zero
+ * default on an array length or a loop bound is not this defect, and banning
+ * the bare `?? 0` string across four whole files fails the next person writing
+ * an honest one.
+ */
+const READING_WORDS = new Set([
+  'bid', 'ask', 'last', 'price', 'strike', 'volume', 'size', 'oi',
+  'openinterest', 'interest', 'iv', 'volatility', 'delta', 'gamma', 'theta',
+  'vega', 'change', 'cap', 'high', 'low', 'spot', 'mid', 'premium',
+  'underlying',
+]);
+
+/** `q.bidPrice` -> ['bid', 'price']; `data.optionSymbol?.length` -> []. */
+function readingWordsIn(expr: string): string[] {
+  return expr
+    .split(/[^A-Za-z0-9_$]+/)
+    .flatMap((t) => t.replace(/([a-z0-9])([A-Z])/g, '$1 $2').split(/[\s_]+/))
+    .map((w) => w.toLowerCase())
+    .filter((w) => READING_WORDS.has(w));
+}
+
+test('no chain connector substitutes a zero for a field the vendor omitted', () => {
   const offenders: string[] = [];
   for (const f of CHAIN_CONNECTORS) {
     const src = stripComments(readFileSync(join(CONNECTORS, f), 'utf8'));
-    const hit = src.match(zeroFill);
-    if (hit) offenders.push(`${f}: ${hit[0].trim()}`);
+    for (const { operand, site } of zeroDefaults(src)) {
+      if (readingWordsIn(operand).length) offenders.push(`${f}: ${site}`);
+    }
   }
   assert.deepEqual(offenders, [],
     'a reading defaulted to 0 is indistinguishable from a real zero, and these ' +
     `fields become an NBBO: ${offenders.join(', ')}`);
+});
+
+test('the zero-fill guard recognises the forms this audit actually found', () => {
+  // A guard checked once, by hand, against the one form the checker happened
+  // to type is how the previous version passed while catching almost nothing.
+  // These are the literal lines deleted from the four connectors, plus the
+  // wrappers the fix introduced, so the rule cannot silently stop travelling.
+  const DEFECTS = [
+    'bid: data.bid?.[i] ?? 0,',
+    'ask: data.ask?.[i] ?? 0,',
+    'iv: data.iv?.[i] ?? 0,',
+    'strike: data.strike?.[i] ?? 0,',
+    'const bid = opt.bid ?? 0;',
+    'const oi = opt.openInterest ?? 0;',
+    "const bid = parseFloat(opt['bid'] ?? 0);",
+    "const size = opt['day-volume'] ?? 0;",
+    'const spot = data.underlyingPrice ?? 0;',
+    'price: r.regularMarketPrice ?? 0,',
+    'const bid = num(opt.bid) ?? 0;',
+    'const bid = Number(opt.bid) || 0;',
+    'bid: q.bidPrice ?? 0,',
+  ];
+  for (const line of DEFECTS) {
+    const [site] = zeroDefaults(line);
+    assert.ok(site, `no zero-default seen at all in: ${line}`);
+    assert.ok(readingWordsIn(site.operand).length > 0,
+      `the guard would not have caught: ${line}`);
+  }
+
+  // And the honest ones it must leave alone — a count is not a reading, and
+  // this half is why the rule is scoped to field names rather than to `?? 0`.
+  const HONEST = [
+    'const count = data.optionSymbol?.length ?? 0;',
+    'const n = rows.length || 0;',
+    'const page = Number(req.query.page) ?? 0;',
+  ];
+  for (const line of HONEST) {
+    for (const { operand } of zeroDefaults(line)) {
+      assert.deepEqual(readingWordsIn(operand), [],
+        `the guard fires on honest code: ${line}`);
+    }
+  }
 });
 
 test('the zero-fill guard covers every connector that publishes an NBBO', () => {
