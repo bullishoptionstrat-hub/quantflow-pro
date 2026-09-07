@@ -6,22 +6,33 @@ import axios from 'axios';
 import { LegacyFlowEvent as FlowEvent } from '../index';
 import { computeHeatScore } from '../heatScore';
 import { classifySweep } from '../sweepDetector';
+import { num, orUndefined } from '../optionalNumber';
 
 const ENABLED = process.env.YAHOO_ENABLED !== 'false';
 const WATCHED = ['SPY', 'QQQ', 'NVDA', 'AAPL', 'TSLA', 'MSFT', 'AMD', 'META', 'AMZN', 'MSTR', 'GLD', 'SLV'];
 const HEADERS = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' };
 
+/**
+ * A Yahoo spot quote. Nullable below `price` for the reason CoinGecko's
+ * `CryptoQuote` is: these went out with `?? 0`, and a `spot_update` is
+ * emitted straight to every connected socket, so a row Yahoo returned
+ * without a price became a $0.00 quote with a 0.00% change on the tape —
+ * rendered through the same markup as a live one.
+ *
+ * `price` stays non-null because a quote without one is not published at
+ * all. There is nothing left to call it.
+ */
 export interface YahooQuote {
   symbol: string;
   price: number;
-  change: number;
-  changePct: number;
-  volume: number;
-  marketCap: number;
-  dayHigh: number;
-  dayLow: number;
-  fiftyTwoWeekHigh: number;
-  fiftyTwoWeekLow: number;
+  change: number | null;
+  changePct: number | null;
+  volume: number | null;
+  marketCap: number | null;
+  dayHigh: number | null;
+  dayLow: number | null;
+  fiftyTwoWeekHigh: number | null;
+  fiftyTwoWeekLow: number | null;
   source: 'yahoo';
 }
 
@@ -43,17 +54,21 @@ async function fetchQuotes(): Promise<void> {
 
     const results = data?.quoteResponse?.result ?? [];
     for (const r of results) {
+      const price = num(r.regularMarketPrice);
+      // No price is not a price of zero, and this one goes to the tape.
+      if (price === null || !r.symbol) continue;
+
       const quote: YahooQuote = {
         symbol: r.symbol,
-        price: r.regularMarketPrice ?? 0,
-        change: r.regularMarketChange ?? 0,
-        changePct: r.regularMarketChangePercent ?? 0,
-        volume: r.regularMarketVolume ?? 0,
-        marketCap: r.marketCap ?? 0,
-        dayHigh: r.regularMarketDayHigh ?? 0,
-        dayLow: r.regularMarketDayLow ?? 0,
-        fiftyTwoWeekHigh: r.fiftyTwoWeekHigh ?? 0,
-        fiftyTwoWeekLow: r.fiftyTwoWeekLow ?? 0,
+        price,
+        change: num(r.regularMarketChange),
+        changePct: num(r.regularMarketChangePercent),
+        volume: num(r.regularMarketVolume),
+        marketCap: num(r.marketCap),
+        dayHigh: num(r.regularMarketDayHigh),
+        dayLow: num(r.regularMarketDayLow),
+        fiftyTwoWeekHigh: num(r.fiftyTwoWeekHigh),
+        fiftyTwoWeekLow: num(r.fiftyTwoWeekLow),
         source: 'yahoo',
       };
       quoteCache.set(r.symbol, quote);
@@ -74,27 +89,38 @@ async function fetchOptionFlow(symbol: string): Promise<void> {
     const result = data?.optionChain?.result?.[0];
     if (!result) return;
 
-    const spot = result.quote?.regularMarketPrice ?? 0;
     const options = [...(result.options?.[0]?.calls ?? []), ...(result.options?.[0]?.puts ?? [])];
 
     for (const opt of options) {
-      const size = opt.volume ?? 0;
-      if (size < 100) continue;
+      const size = num(opt.volume);
+      if (size === null || size < 100) continue;
 
-      const bid = opt.bid ?? 0;
-      const ask = opt.ask ?? 0;
-      const last = opt.lastPrice ?? ((bid + ask) / 2);
-      const oi = opt.openInterest ?? 0;
+      const bid = num(opt.bid);
+      const ask = num(opt.ask);
+      const oi = num(opt.openInterest);
+      const strike = num(opt.strike);
+      if (strike === null) continue; // not a contract without one
+
+      // The midpoint stands in for an untraded contract's price only when
+      // there is a real two-sided quote to take a midpoint of. With bid and
+      // ask filled in as zero it produced a last price of 0.00, and with one
+      // side missing it produced half the other side.
+      const last = num(opt.lastPrice)
+        ?? (bid !== null && ask !== null ? (bid + ask) / 2 : null);
+      if (last === null) continue;
+
       const cp: 'C' | 'P' = opt.contractSymbol?.includes('C') ? 'C' : 'P';
 
-      const heat = computeHeatScore({ bid, ask, price: last, size, avgVolume: size * 0.3, openInterest: oi });
+      const heat = bid !== null && ask !== null && oi !== null
+        ? computeHeatScore({ bid, ask, price: last, size, avgVolume: size * 0.3, openInterest: oi })
+        : undefined;
 
       onFlowEvent?.({
         id: `yahoo-${opt.contractSymbol}-${Date.now()}`,
         timestamp: new Date().toISOString(),
         symbol,
         expiration: opt.expiration ? new Date(opt.expiration * 1000).toISOString().split('T')[0] : '',
-        strike: opt.strike ?? 0,
+        strike,
         callPut: cp,
         type: classifySweep({ size, exchanges: ['C'] }),
         size,
@@ -102,7 +128,9 @@ async function fetchOptionFlow(symbol: string): Promise<void> {
         heatScore: heat,
         sentiment: cp === 'C' ? 'bullish' : 'bearish',
         source: 'yahoo',
-        bid, ask, iv: opt.impliedVolatility,
+        bid: orUndefined(bid),
+        ask: orUndefined(ask),
+        iv: orUndefined(num(opt.impliedVolatility)),
       } as FlowEvent);
     }
   } catch {}

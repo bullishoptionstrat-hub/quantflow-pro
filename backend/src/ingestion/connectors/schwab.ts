@@ -8,6 +8,7 @@ import axios from 'axios';
 import { LegacyFlowEvent as FlowEvent } from '../index';
 import { computeHeatScore } from '../heatScore';
 import { classifySweep } from '../sweepDetector';
+import { num } from '../optionalNumber';
 
 const APP_KEY = process.env.SCHWAB_APP_KEY || '';
 const APP_SECRET = process.env.SCHWAB_APP_SECRET || '';
@@ -69,35 +70,50 @@ async function fetchOptionsChain(symbol: string): Promise<void> {
       timeout: 8000,
     });
 
-    const spot = data.underlyingPrice ?? 0;
     const processMap = (optionMap: Record<string, any[]>, cp: 'C' | 'P') => {
       Object.values(optionMap).forEach((strikes: any) => {
         Object.values(strikes).forEach((contracts: any) => {
           const c = Array.isArray(contracts) ? contracts[0] : contracts;
-          if (!c || c.totalVolume < 100) return;
+          if (!c) return;
 
-          const heat = computeHeatScore({
-            bid: c.bid, ask: c.ask, price: c.last,
-            size: c.totalVolume, avgVolume: c.totalVolume * 0.3,
-            openInterest: c.openInterest,
-          });
+          // Schwab already left an absent field `undefined` rather than
+          // zeroing it, so its wire fields were honest — but `undefined`
+          // reached `computeHeatScore` as arithmetic, and every comparison
+          // below was made against a value that might not exist.
+          const size = num(c.totalVolume);
+          const bid = num(c.bid);
+          const ask = num(c.ask);
+          const oi = num(c.openInterest);
+          const last = num(c.last);
+          const strike = num(c.strikePrice);
+          const expiration = c.expirationDate?.split('T')[0];
+          if (size === null || size < 100) return;
+          if (last === null || strike === null || !expiration) return;
+
+          const heat = bid !== null && ask !== null && oi !== null
+            ? computeHeatScore({
+                bid, ask, price: last,
+                size, avgVolume: size * 0.3, openInterest: oi,
+              })
+            : undefined;
 
           onFlowEvent?.({
             id: `schwab-${c.symbol}-${Date.now()}`,
             timestamp: new Date().toISOString(),
             symbol,
-            expiration: c.expirationDate?.split('T')[0] ?? '',
-            strike: c.strikePrice,
+            expiration,
+            strike,
             callPut: cp,
-            type: classifySweep({ size: c.totalVolume, exchanges: ['C'] }),
-            size: c.totalVolume,
-            premium: c.last * c.totalVolume * 100,
+            type: classifySweep({ size, exchanges: ['C'] }),
+            size,
+            premium: last * size * 100,
             heatScore: heat,
             sentiment: cp === 'C' ? 'bullish' : 'bearish',
             source: 'schwab',
-            bid: c.bid, ask: c.ask,
-            iv: c.volatility ? c.volatility / 100 : undefined,
-            delta: c.delta,
+            bid: bid ?? undefined,
+            ask: ask ?? undefined,
+            iv: num(c.volatility) !== null ? num(c.volatility)! / 100 : undefined,
+            delta: num(c.delta) ?? undefined,
           } as FlowEvent);
         });
       });

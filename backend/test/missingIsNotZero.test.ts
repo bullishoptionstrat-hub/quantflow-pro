@@ -23,17 +23,21 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { zeroFilledReadings } from './zeroDefaults';
 
 const CONNECTORS = join(__dirname, '..', 'src', 'ingestion', 'connectors');
 const code = (f: string) =>
   readFileSync(join(CONNECTORS, f), 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
 
 test('no connector writes a zero where a vendor sent nothing', () => {
-  for (const f of ['coinGecko.ts', 'cboe.ts']) {
-    const src = code(f);
-    assert.ok(!/\?\?\s*0\b/.test(src.replace(/\?\?\s*0\s*,\s*$/gm, '')),
-      `${f} still substitutes 0 for an absent field`);
-  }
+  // This guard used to test `!/\?\?\s*0\b/` after first deleting every line
+  // *ending* in `?? 0,` — an object literal's field, which is exactly how
+  // coinGecko wrote the defect this test was added for. It also never looked
+  // at `|| 0`. It shares `zeroDefaults` with the chain connectors' guard now:
+  // one rule, one implementation, so the two cannot drift apart again.
+  const offenders = ['coinGecko.ts', 'cboe.ts'].flatMap((f) => zeroFilledReadings(f, code(f)));
+  assert.deepEqual(offenders, [],
+    `a vendor's absent field is being published as a zero: ${offenders.join(', ')}`);
 });
 
 test('a coin with no price is not a quote', async () => {
@@ -108,6 +112,32 @@ test('a cboe row missing a ratio is a failure, not a 0.00', async () => {
     assert.ok(d === null || d.putCallUnavailable, 'a partial row must not publish ratios');
     if (d?.putCallUnavailable) {
       assert.match(d.putCallUnavailable, /putCallRatioIndex|putCallRatioTotal/);
+    }
+  } finally { cboe.restore(); }
+});
+
+test('a cboe row missing a volume keeps the ratios and reports no volume', async () => {
+  // The three ratios were parsed field by field and the five volumes beside
+  // them were still `numeric(...) ?? 0`, inside the same `ok: true` block. So
+  // a row that carried ratios but no `equity_call_volume` published an equity
+  // call volume of zero — a reading, from a field the response did not have.
+  // Nullable rather than a whole-block failure: one absent volume is not a
+  // reason to withhold the put/call read this endpoint exists for.
+  const cboe = await loadCboe({ data: [{
+    equity_put_call_ratio: '0.91',
+    index_put_call_ratio: '1.35',
+    total_put_call_ratio: '0.98',
+    equity_put_volume: '1200000',
+  }] }); // the other four volumes absent
+  try {
+    await cboe.startCBOE();
+    const d = cboe.getCBOEData();
+    assert.ok(d, 'the row is usable — only some volumes are unknown');
+    assert.equal(d.putCallUnavailable, undefined, 'an absent volume must not withhold the ratios');
+    assert.equal(d.putCallRatioEquity, 0.91);
+    assert.equal(d.equityPutVolume, 1_200_000, 'the volume that was sent survives');
+    for (const f of ['equityCallVolume', 'indexCallVolume', 'indexPutVolume', 'totalOptionsVolume']) {
+      assert.equal(d[f], null, `${f} must be null, not 0, when the row carried none`);
     }
   } finally { cboe.restore(); }
 });

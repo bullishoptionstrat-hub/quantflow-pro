@@ -109,7 +109,7 @@ function startWebSocket(): void {
   });
 
   ws.on('error', () => {});
-  ws.on('close', () => { setTimeout(startWebSocket, 5000); });
+  ws.on('close', () => { setTimeout(startWebSocket, 5000).unref(); });
 }
 
 async function fetchQuotesBatch(): Promise<void> {

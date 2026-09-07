@@ -5,6 +5,7 @@
  */
 import axios from 'axios';
 import { describeHttpError } from '../httpError';
+import { num } from '../optionalNumber';
 
 const API_KEY = process.env.COINGECKO_API_KEY || '';
 const BASE = API_KEY
@@ -54,10 +55,6 @@ export interface CoinGeckoHealth {
 }
 
 /** A number the vendor actually sent, or null. Never a zero standing in. */
-function num(v: unknown): number | null {
-  return typeof v === 'number' && Number.isFinite(v) ? v : null;
-}
-
 export interface GlobalCryptoData {
   totalMarketCap: number | null;
   totalVolume: number | null;

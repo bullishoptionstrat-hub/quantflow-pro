@@ -108,7 +108,17 @@ export interface LegacyFlowEvent {
   type: 'SWEEP' | 'BLOCK' | 'SPLIT';
   size: number;
   premium: number;
-  heatScore: number;
+  /**
+   * Absent when the source carried no NBBO for the contract.
+   *
+   * Bid/ask displacement is the score's largest single component (0-35 of
+   * 100), so a score computed with a missing quote filled in as zero is not
+   * a less certain score — it is a different quantity under the same name,
+   * and it read as maximum aggression because a fill above a zero bid looks
+   * like one. `legacyEventToPrint` discards this field either way; the engine
+   * scores every print itself.
+   */
+  heatScore?: number;
   sentiment: 'bullish' | 'bearish' | 'neutral';
   source: string;
   bid?: number;
