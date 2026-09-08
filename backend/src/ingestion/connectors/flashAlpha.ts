@@ -5,6 +5,7 @@
  */
 import axios from 'axios';
 import { scheduleDailyReset } from '../dailyReset';
+import { num } from '../optionalNumber';
 
 const API_KEY = process.env.FLASHALPHA_API_KEY || '';
 const BASE = 'https://lab.flashalpha.com';
@@ -12,21 +13,35 @@ const SYMBOLS = ['SPX', 'SPY', 'QQQ', 'NVDA', 'AAPL', 'TSLA', 'MSFT'];
 
 export interface FlashGEXLevel {
   strike: number;
-  gex: number;
-  dex: number;
-  vex: number;
-  callGamma: number;
-  putGamma: number;
+  gex: number | null;
+  dex: number | null;
+  vex: number | null;
+  callGamma: number | null;
+  putGamma: number | null;
   source: 'flashalpha';
 }
 
+/**
+ * Every level in this summary is a **strike price**, and each was `?? 0`.
+ *
+ * A gamma flip of `0` is not a weak reading, it is a level that cannot exist:
+ * dealer positioning does not turn over at a strike of zero on any underlying.
+ * Drawn on a chart beside a real one it is indistinguishable — which is the
+ * finding this repo already recorded about `/api/gex`, in its own words: *"a
+ * fabricated gamma flip looks exactly like a real one."*
+ *
+ * `dealerRegime` was `data.dealer_regime ?? 'neutral'`, which is the same
+ * defect in a string: "dealers are neutrally positioned" is a market read, and
+ * a response that carried no regime did not make it. Null is the fourth state,
+ * the way `moneyness` gained `UNKNOWN`.
+ */
 export interface FlashGEXSummary {
   symbol: string;
-  gammaFlip: number;
-  maxPain: number;
-  callWall: number;
-  putWall: number;
-  dealerRegime: 'long' | 'short' | 'neutral';
+  gammaFlip: number | null;
+  maxPain: number | null;
+  callWall: number | null;
+  putWall: number | null;
+  dealerRegime: 'long' | 'short' | 'neutral' | null;
   levels: FlashGEXLevel[];
   fetchedAt: number;
 }
@@ -48,28 +63,36 @@ async function fetchGEX(symbol: string): Promise<void> {
       timeout: 8000,
     });
 
-    const levels: FlashGEXLevel[] = (data.strikes ?? []).map((s: any) => ({
-      strike: s.strike,
-      gex: s.net_gex ?? 0,
-      dex: s.net_dex ?? 0,
-      vex: s.net_vex ?? 0,
-      callGamma: s.call_gamma ?? 0,
-      putGamma: s.put_gamma ?? 0,
-      source: 'flashalpha' as const,
-    }));
+    // A level with no strike is not a level — it cannot be placed on a chart
+    // or compared to spot — so the row is dropped rather than defaulted.
+    const levels: FlashGEXLevel[] = (data.strikes ?? []).flatMap((s: any) => {
+      const strike = num(s.strike);
+      if (strike === null || strike <= 0) return [];
+      return [{
+        strike,
+        gex: num(s.net_gex),
+        dex: num(s.net_dex),
+        vex: num(s.net_vex),
+        callGamma: num(s.call_gamma),
+        putGamma: num(s.put_gamma),
+        source: 'flashalpha' as const,
+      }];
+    });
 
+    const regime = data.dealer_regime;
     cache.set(symbol, {
       symbol,
-      gammaFlip: data.gamma_flip ?? 0,
-      maxPain: data.max_pain ?? 0,
-      callWall: data.call_wall ?? 0,
-      putWall: data.put_wall ?? 0,
-      dealerRegime: data.dealer_regime ?? 'neutral',
+      gammaFlip: num(data.gamma_flip),
+      maxPain: num(data.max_pain),
+      callWall: num(data.call_wall),
+      putWall: num(data.put_wall),
+      dealerRegime: regime === 'long' || regime === 'short' || regime === 'neutral' ? regime : null,
       levels,
       fetchedAt: Date.now(),
     });
 
-    console.log(`[flashalpha] GEX fetched for ${symbol} — flip: ${data.gamma_flip}`);
+    const flip = num(data.gamma_flip);
+    console.log(`[flashalpha] GEX fetched for ${symbol} — flip: ${flip ?? 'not reported'}`);
   } catch (err: any) {
     if (err.response?.status === 429) {
       console.warn('[flashalpha] Daily limit reached');
