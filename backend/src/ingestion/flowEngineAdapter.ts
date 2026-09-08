@@ -176,7 +176,13 @@ function recordStats(symbol: string, print: RawPrint): void {
     openInterest: print.openInterest ?? prev?.openInterest,
     avgDailyVolume: print.avgDailyVolume ?? prev?.avgDailyVolume,
     // Day volume *before* this print — the engine adds the signal's own size.
-    dayVolume: print.dayVolume ?? prev?.dayVolume ?? 0,
+    //
+    // No `?? 0` on the end. `ContractStats.dayVolume` is optional and
+    // `score.ts` already writes `(dayVol ?? 0) + input.totalSize`, so the zero
+    // changed no score — it only made "this source reports no day volume"
+    // indistinguishable from "nothing has traded today" for anything else that
+    // reads these stats.
+    dayVolume: print.dayVolume ?? prev?.dayVolume,
     underlyingPrice: print.underlyingPrice ?? prev?.underlyingPrice,
   });
 }
@@ -289,7 +295,20 @@ function originOf(sig: ClassifiedSignal): SignalOrigin {
  * the engine emits on burst close, not per trade).
  */
 export function ingestPrint(print: RawPrint): WireFlowEvent[] {
+  // `strike` joined this guard late. It was the one field of the five that a
+  // caller could leave absent: `occSymbol` pads `Math.round(0 * 1000)` to
+  // `00000000` without complaint, so a strike-0 print became a real-looking
+  // OCC symbol and was classified, scored and published. Measured through this
+  // function, one print, spot 580:
+  //
+  //     strike 0   -> moneyness ITM, sentiment BULLISH, score 32
+  //
+  // because `moneynessOf` asks `spot > strike`, and every spot is above zero.
+  // `marketData` was fixed connector-side by dropping the row; this is the
+  // same rule at the seam every source passes through, so the next caller
+  // gets it without knowing about it.
   if (!print.symbol || !print.expiry || !(print.price > 0) || !(print.size > 0)) return [];
+  if (!(print.strike > 0)) return [];
 
   const ts = print.ts ?? Date.now();
   // Receipt time is stamped here, at the boundary — the earliest moment this

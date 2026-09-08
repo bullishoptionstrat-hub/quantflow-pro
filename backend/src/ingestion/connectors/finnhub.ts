@@ -70,8 +70,13 @@ async function fetchQuote(symbol: string): Promise<boolean> {
   const quote: SpotQuote = {
     symbol,
     price,
-    change: num(data?.d) ?? 0,
-    changePct: num(data?.dp) ?? 0,
+    // `d` and `dp` are null for any symbol Finnhub has no previous close for
+    // — a fresh listing, a halted name, an index it prices but does not track
+    // day-over-day. `?? 0` turned that into an authoritative "unchanged, flat"
+    // on the tape, three lines above a comment refusing to do exactly this to
+    // `volume`.
+    change: num(data?.d),
+    changePct: num(data?.dp),
     // `/quote` carries no volume. Null says that; zero would claim none traded.
     volume: null,
     // `t` is unix **seconds**. `quoteTimestamp` normalizes it, and is the one

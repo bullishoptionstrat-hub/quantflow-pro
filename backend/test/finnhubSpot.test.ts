@@ -89,6 +89,35 @@ test('a symbol Finnhub does not cover is not quoted at zero', async () => {
   } finally { fh.restore(); }
 });
 
+test('a change Finnhub did not send is null, not a flat zero', async () => {
+  // `d` (change) and `dp` (percent change) come back null for any symbol with
+  // no previous close — a fresh listing, a halted name, an index Finnhub
+  // prices but does not track day-over-day. `?? 0` published that as an
+  // authoritative "unchanged", three lines below a comment refusing to do the
+  // same thing to `volume`. The price is still good, so the quote survives.
+  const fh = load(async () => quote(612.4, { d: null, dp: null }));
+  try {
+    await fh.startFinnhub();
+    const q = fh.getFinnhubSpotQuotes().get('SPY');
+    assert.ok(q, 'an unknown change does not invalidate a known price');
+    assert.equal(q.price, 612.4);
+    assert.equal(q.change, null, 'an unreported change must not reach the tape as 0');
+    assert.equal(q.changePct, null);
+  } finally { fh.restore(); }
+});
+
+test('a genuinely unchanged price still reports zero', async () => {
+  // The other half, and the reason this is null rather than a sentinel: a
+  // stock that really closed flat reports 0, and that reading must survive.
+  const fh = load(async () => quote(612.4, { d: 0, dp: 0 }));
+  try {
+    await fh.startFinnhub();
+    const q = fh.getFinnhubSpotQuotes().get('SPY');
+    assert.equal(q.change, 0);
+    assert.equal(q.changePct, 0);
+  } finally { fh.restore(); }
+});
+
 test('it reports its own health each cycle', async () => {
   const seen: Array<{ ok: boolean; reason?: string }> = [];
 

@@ -18,8 +18,18 @@ export function fmt(n: number, decimals = 2): string {
   return n.toFixed(decimals)
 }
 
-/** Green up, red down, muted flat. */
-export function pctColor(v: number): string {
+/**
+ * Green up, red down, muted flat — and muted for a change we do not have.
+ *
+ * Widened to accept null for the same reason `pcrColor` was: the tape's
+ * `changePct` is nullable now, and the alternative is three call sites each
+ * writing their own `=== null` check, which is how the macro page's crypto
+ * column and this one drifted into two different spellings of one rule.
+ * Muted is already this function's answer for "flat", and a change that was
+ * not reported should not be louder than one that was zero.
+ */
+export function pctColor(v: number | null | undefined): string {
+  if (v == null) return 'var(--text-muted)'
   if (v > 0) return '#22c55e'
   if (v < 0) return '#ef4444'
   return 'var(--text-muted)'
@@ -77,6 +87,9 @@ export function spotPrice(v: number): string {
  * `-0.4%` carries its sign; `+0.4%` does not unless something adds it, and a
  * tape that shows one and not the other reads as if every quote were down.
  */
-export function signedPct(v: number): string {
+export function signedPct(v: number | null | undefined): string {
+  // An em dash, not `+0.00%`. A source that did not send a change has not said
+  // the price is unchanged, and the two are one character apart on screen.
+  if (v == null) return '—'
   return `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`
 }

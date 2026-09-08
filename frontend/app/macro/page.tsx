@@ -297,8 +297,8 @@ function CryptoPanel({ data }: { data: CryptoQuote[] }) {
                 <td style={{ padding: '8px 12px', textAlign: 'right', fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 }}>
                   ${cryptoPrice(c.price)}
                 </td>
-                <td style={{ padding: '8px 12px', textAlign: 'right', color: c.changePct24h === null ? 'var(--text-muted)' : pctColor(c.changePct24h), fontFamily: "'JetBrains Mono', monospace", fontWeight: 700 }}>
-                  {c.changePct24h === null ? '—' : `${signedPct(c.changePct24h)}`}
+                <td style={{ padding: '8px 12px', textAlign: 'right', color: pctColor(c.changePct24h), fontFamily: "'JetBrains Mono', monospace", fontWeight: 700 }}>
+                  {signedPct(c.changePct24h)}
                 </td>
                 <td style={{ padding: '8px 12px', textAlign: 'right', color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
                   {c.marketCap === null ? '—' : fmt(c.marketCap)}

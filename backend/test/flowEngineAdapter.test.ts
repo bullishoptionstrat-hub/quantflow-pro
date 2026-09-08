@@ -10,6 +10,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   ingestPrint, drainIdle, resetDaily, occSymbol, sentimentOf,
   type RawPrint,
@@ -143,6 +145,11 @@ test('malformed prints are dropped, not thrown on', () => {
   assert.deepEqual(ingestPrint(print({ symbol: '', price: 5 })), []);
   assert.deepEqual(ingestPrint(print({ symbol: 'BAD', price: 0 })), []);
   assert.deepEqual(ingestPrint(print({ symbol: 'BAD', size: 0 })), []);
+  // `strike` joined this guard last, and was the one field a caller could
+  // leave absent without being refused: `occSymbol` pads `Math.round(0 * 1000)`
+  // to `00000000`, so the contract looked real all the way to the wire.
+  assert.deepEqual(ingestPrint(print({ symbol: 'BAD', strike: 0 })), []);
+  assert.deepEqual(ingestPrint(print({ symbol: 'BAD', strike: undefined as unknown as number })), []);
 });
 
 test('the daily reset does not strip provenance from an in-flight burst', () => {
@@ -154,4 +161,35 @@ test('the daily reset does not strip provenance from an in-flight burst', () => 
   assert.ok(sig, 'expected the in-flight burst to still finalize');
   assert.equal(sig.synthetic, true, 'synthetic must survive the reset');
   assert.equal(sig.source, 'unit-test', 'source must survive the reset');
+});
+
+test('a strike-zero print is not classified as a deep-ITM call', () => {
+  // What the guard prevents, rather than that it exists. Measured before the
+  // fix, one print at spot 580: `moneynessOf` asks `spot > strike` for a call,
+  // and every spot is above zero — so a print whose strike the source did not
+  // send came out ITM, BULLISH and scored, indistinguishable on the tape from
+  // a real deep-in-the-money buy.
+  //
+  // The route in is `index.ts`, not a connector: the Polygon trade path wrote
+  // `strike: details.strike_price ?? 0` nine lines below an NBBO lookup that
+  // checked the same field for `undefined`. No connector-scoped guard could
+  // see it, which is the argument for putting the rule at this seam.
+  const evs = ingestAndDrain(print({ symbol: 'STRIKE0', strike: 0, underlyingPrice: 580 }));
+  assert.deepEqual(evs, [], 'no signal at all, rather than one with strike 0');
+
+  const real = ingestAndDrain(print({ symbol: 'STRIKE0', strike: 550, underlyingPrice: 580 }));
+  assert.equal(real.length, 1, 'a priced strike still classifies');
+  assert.equal(real[0]!.moneyness, 'ITM');
+});
+
+test('the Polygon trade path refuses a trade with no strike', () => {
+  // Source-level, because the guard above is the backstop and this is the
+  // caller that needed it. `?? 0` on a field the line above tests for
+  // `undefined` is the shape to look for.
+  const src = readFileSync(join(__dirname, '..', 'src', 'ingestion', 'index.ts'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  assert.ok(!/strike:\s*details\.strike_price\s*\?\?\s*0/.test(src),
+    'the Polygon print must not default an absent strike to zero');
+  assert.match(src, /typeof details\.strike_price !== 'number'[\s\S]{0,80}continue/,
+    'and must skip the trade rather than ingest it');
 });

@@ -22,10 +22,21 @@ interface UnusualContract {
   strike: number
   right: 'C' | 'P'
   volume: number
-  openInterest: number
-  volumeToOI: number
+  /**
+   * `null` where the Cboe row did not carry the field.
+   *
+   * `openInterest` was typed `number` and rendered with `.toLocaleString()`,
+   * while the connector wrote `Number(r.open_interest) || 0` — so a row Cboe
+   * answered without open interest showed the definite claim **0** in this
+   * column. `volumeToOI` was typed `number` and the connector sent `Infinity`,
+   * which `JSON.stringify` turns into `null`: the wire had been carrying a
+   * null this interface called a number, and the `Number.isFinite` check below
+   * rendered it as `new` by way of a path neither side had declared.
+   */
+  openInterest: number | null
+  volumeToOI: number | null
   last: number
-  iv: number
+  iv: number | null
   notional: number
   delayedMinutes: number
   asOf: string
@@ -132,9 +143,12 @@ export function UnusualActivity() {
                     <td style={{ ...td, color: '#fafafa' }}>{r.strike}</td>
                     <td style={{ ...td, color: 'var(--text-muted)' }}>{r.expiry}</td>
                     <td style={{ ...td, color: '#fafafa' }}>{r.volume.toLocaleString()}</td>
-                    <td style={{ ...td, color: 'var(--text-muted)' }}>{r.openInterest.toLocaleString()}</td>
-                    <td style={{ ...td, color: r.volumeToOI >= 5 ? '#a78bfa' : '#fafafa', fontWeight: 700 }}>
-                      {Number.isFinite(r.volumeToOI) ? `${r.volumeToOI.toFixed(1)}x` : 'new'}
+                    <td style={{ ...td, color: 'var(--text-muted)' }}>{r.openInterest === null ? '—' : r.openInterest.toLocaleString()}</td>
+                    <td style={{ ...td, color: r.volumeToOI !== null && r.volumeToOI >= 5 ? '#a78bfa' : '#fafafa', fontWeight: 700 }}>
+                      {/* `new` means no open interest to divide by — the whole
+                          day's volume opened positions. An open interest the
+                          row simply did not carry is `—`, a different answer. */}
+                      {r.volumeToOI !== null ? `${r.volumeToOI.toFixed(1)}x` : r.openInterest === null ? '—' : 'new'}
                     </td>
                     <td style={{ ...td, color: 'var(--text-muted)' }}>{r.iv ? `${(r.iv * 100).toFixed(0)}%` : '—'}</td>
                     <td style={{ ...td, color: '#fbbf24', fontWeight: 700 }}>{fmtNotional(r.notional)}</td>

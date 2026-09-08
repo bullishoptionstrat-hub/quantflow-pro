@@ -107,9 +107,15 @@ test('the grader really does depend on the variable the doctor names', () => {
   // stale in the least visible way — an operator setting a key they no longer
   // need, or not setting one they do.
   const ingestion = readFileSync(join(__dirname, '..', 'src', 'ingestion', 'index.ts'), 'utf8');
+  // Matches an expression body as well as a block one. The block was required
+  // by an earlier spelling of this regex, and `getSpotPrice` returning
+  // `number | null` removed the `px > 0 ? px : undefined` guard that made a
+  // block necessary — so the test failed on a change that strengthened exactly
+  // the dependency it exists to assert. The claim is where the mark comes
+  // from, not how many braces surround it.
   assert.match(
     ingestion,
-    /new SignalGrader\(store,\s*\(underlying\)\s*=>\s*\{[\s\S]{0,200}?getSpotPrice\(underlying\)/,
+    /new SignalGrader\(store,\s*\(underlying\)\s*=>[\s\S]{0,200}?getSpotPrice\(underlying\)/,
     'the grader should still take its mark from getSpotPrice',
   );
   const twelve = readFileSync(

@@ -18,27 +18,19 @@
  * `start()` returned once and never looks again, so a rate-limited CoinGecko
  * kept saying `connected` while serving an ageing cache — the finding that
  * gave Stooq `onStooqHealth`.
+ *
+ * The source-level guard that used to head this file — "no `?? 0` in
+ * coinGecko.ts or cboe.ts" — is gone, and `defaultedReadings.test.ts` holds
+ * every file under `src/ingestion/` to it instead. Two files of seventeen was
+ * the whole problem: the same defect was live in five of the other fifteen.
+ * What remains here is the behaviour, driven through the connectors.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { zeroFilledReadings } from './zeroDefaults';
 
 const CONNECTORS = join(__dirname, '..', 'src', 'ingestion', 'connectors');
-const code = (f: string) =>
-  readFileSync(join(CONNECTORS, f), 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
-
-test('no connector writes a zero where a vendor sent nothing', () => {
-  // This guard used to test `!/\?\?\s*0\b/` after first deleting every line
-  // *ending* in `?? 0,` — an object literal's field, which is exactly how
-  // coinGecko wrote the defect this test was added for. It also never looked
-  // at `|| 0`. It shares `zeroDefaults` with the chain connectors' guard now:
-  // one rule, one implementation, so the two cannot drift apart again.
-  const offenders = ['coinGecko.ts', 'cboe.ts'].flatMap((f) => zeroFilledReadings(f, code(f)));
-  assert.deepEqual(offenders, [],
-    `a vendor's absent field is being published as a zero: ${offenders.join(', ')}`);
-});
 
 test('a coin with no price is not a quote', async () => {
   const gecko = await loadGecko([
