@@ -20,6 +20,7 @@
  * here carries `asOf` / `delayedMinutes` so the UI can label it honestly.
  */
 import axios from 'axios';
+import { numeric } from '../optionalNumber';
 
 export interface CboeGexLevel {
   strike: number;
@@ -36,14 +37,34 @@ export interface CboeUnusualContract {
   expiry: string;
   strike: number;
   right: 'C' | 'P';
+  /** Both gated above: a row reaches this list only with a volume and a last. */
   volume: number;
-  openInterest: number;
-  volumeToOI: number;
-  bid: number;
-  ask: number;
   last: number;
-  iv: number;
-  delta: number;
+  /**
+   * `null` where the chain row did not carry one.
+   *
+   * `Number(r.open_interest) || 0` published a **0** into the Open Int column
+   * for a row Cboe answered without the field, and the table renders it with
+   * `.toLocaleString()` — so an unknown open interest read as the definite
+   * claim "0". Unlike the GEX path above, which skips a contract on `oi > 0`,
+   * this list is gated on volume alone, so the zero survived to the wire.
+   */
+  openInterest: number | null;
+  /**
+   * Volume as a multiple of open interest — `null` when there is no open
+   * interest to divide by, which is what "the whole day's volume opened new
+   * positions" looks like.
+   *
+   * This was `Infinity`, and `JSON.stringify(Infinity)` is `null`, so the wire
+   * already carried a null the type called a `number`. The frontend's
+   * `Number.isFinite(...)` check happened to render that as `new`, which is
+   * right — by way of a path neither side declared. It is a real null now.
+   */
+  volumeToOI: number | null;
+  bid: number | null;
+  ask: number | null;
+  iv: number | null;
+  delta: number | null;
   /** volume x last x 100. A day's notional, not one trade's premium. */
   notional: number;
   lastTradeTime: string | null;
@@ -52,7 +73,8 @@ export interface CboeUnusualContract {
 export interface CboeSnapshot {
   symbol: string;
   spot: number;
-  iv30: number;
+  /** 30-day implied volatility, or `null` where the chain did not carry it. */
+  iv30: number | null;
   gex: CboeGexLevel[];
   unusual: CboeUnusualContract[];
   contractCount: number;
@@ -129,7 +151,9 @@ export async function fetchCboeChain(symbol: string): Promise<CboeSnapshot | nul
   const rows = d?.options;
   if (!Array.isArray(rows) || rows.length === 0) return null;
 
-  const spot = Number(d.current_price ?? d.close ?? 0);
+  // Gated on `spot > 0`: no spot means no snapshot, since every GEX figure
+  // below is scaled by it.
+  const spot = numeric(d.current_price) ?? numeric(d.close) ?? 0;
   if (!(spot > 0)) return null;
 
   const byStrike = new Map<number, CboeGexLevel>();
@@ -139,9 +163,15 @@ export async function fetchCboeChain(symbol: string): Promise<CboeSnapshot | nul
     const parsed = parseOsi(String(r.option ?? ''));
     if (!parsed) continue;
 
-    const oi = Number(r.open_interest) || 0;
-    const gamma = Number(r.gamma) || 0;
-    const volume = Number(r.volume) || 0;
+    // Read once, honestly, then narrowed per path. The GEX aggregation below
+    // needs a number it can multiply and gates on `oi > 0 && gamma !== 0`, so
+    // a missing field there is correctly a skip — but the unusual list is
+    // gated on volume alone and *publishes* open interest, so it needs the
+    // null. One zero-fill was serving two paths with different requirements.
+    const rawOi = numeric(r.open_interest);
+    const oi = rawOi ?? 0;
+    const gamma = numeric(r.gamma) ?? 0;
+    const volume = numeric(r.volume) ?? 0;
 
     if (oi > 0 && gamma !== 0) {
       let lvl = byStrike.get(parsed.strike);
@@ -163,7 +193,8 @@ export async function fetchCboeChain(symbol: string): Promise<CboeSnapshot | nul
     // Volume exceeding open interest means most of today's activity opened new
     // positions rather than closing existing ones — the classic institutional
     // participation tell.
-    const last = Number(r.last_trade_price) || 0;
+    // Gated on `last > 0` two lines down, so an absent price skips the row.
+    const last = numeric(r.last_trade_price) ?? 0;
     if (volume > 0 && last > 0 && volume > Math.max(oi, 250)) {
       unusual.push({
         option: String(r.option),
@@ -172,13 +203,13 @@ export async function fetchCboeChain(symbol: string): Promise<CboeSnapshot | nul
         strike: parsed.strike,
         right: parsed.right,
         volume,
-        openInterest: oi,
-        volumeToOI: oi > 0 ? volume / oi : Infinity,
-        bid: Number(r.bid) || 0,
-        ask: Number(r.ask) || 0,
+        openInterest: rawOi,
+        volumeToOI: rawOi !== null && rawOi > 0 ? volume / rawOi : null,
+        bid: numeric(r.bid),
+        ask: numeric(r.ask),
         last,
-        iv: Number(r.iv) || 0,
-        delta: Number(r.delta) || 0,
+        iv: numeric(r.iv),
+        delta: numeric(r.delta),
         notional: volume * last * 100,
         lastTradeTime: r.last_trade_time ?? null,
       });
@@ -190,7 +221,7 @@ export async function fetchCboeChain(symbol: string): Promise<CboeSnapshot | nul
   const snap: CboeSnapshot = {
     symbol: upper,
     spot,
-    iv30: Number(d.iv30) || 0,
+    iv30: numeric(d.iv30),
     gex: [...byStrike.values()].sort((a, b) => a.strike - b.strike),
     unusual: unusual.slice(0, 40),
     contractCount: rows.length,
