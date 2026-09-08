@@ -33,12 +33,22 @@ export function Sidebar() {
 
   // How much of what has arrived is constructed rather than observed. Shown
   // only when there is some, so a fully live feed stays quiet.
+  //
+  // "CONSTRUCTED", not "SIMULATED". `synthetic` covers two different things:
+  // a generated print, and a real vendor chain row turned into a print from
+  // the day's aggregate volume (marketData, schwab, tastytrade, yahoo). A
+  // deployment credentialed for only those sources is showing real Schwab
+  // data, and this read "ALL SIGNALS SIMULATED" — telling an operator their
+  // paid integration was fake. The row badge's own wording has been the
+  // accurate one all along: "constructed from aggregate volume or generated".
+  // Demo mode has its own all-or-nothing banner, so nothing is lost by not
+  // saying "simulated" here.
   const syntheticCount = flowEvents.filter(e => e.synthetic).length
   const syntheticShare = syntheticCount === 0
     ? null
     : syntheticCount === flowEvents.length
-      ? 'ALL SIGNALS SIMULATED'
-      : `${syntheticCount}/${flowEvents.length} SIMULATED`
+      ? 'ALL SIGNALS CONSTRUCTED'
+      : `${syntheticCount}/${flowEvents.length} CONSTRUCTED`
   const newAlerts = powerAlerts.filter(a => {
     const d = new Date(a.created_at)
     return Date.now() - d.getTime() < 300_000
@@ -101,7 +111,7 @@ export function Sidebar() {
           <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
             <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#fbbf24', display: 'inline-block' }} />
             <span style={{ color: '#fbbf24', fontFamily: "'JetBrains Mono', monospace" }}>
-              🧪 {syntheticShare}
+              SYN · {syntheticShare}
             </span>
           </div>
         )}

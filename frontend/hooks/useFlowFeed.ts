@@ -36,14 +36,19 @@ function speakAlert(event: FlowEvent) {
   const premium = event.total_premium >= 1_000_000
     ? `${(event.total_premium / 1_000_000).toFixed(1)} million`
     : `${Math.round(event.total_premium / 1000)}K`
-  // A simulated print says so out loud. The repo's note on the deleted seed
+  // A constructed print says so out loud. The repo's note on the deleted seed
   // generator is that neither this function nor `pushNotification` reads
   // `synthetic`, so a flag on the data could not qualify what they announce —
-  // the backend simulates prints on every keyless deployment, and those reach
-  // here. The word goes first, before the ticker, because a listener who looks
-  // up mid-sentence has already missed it otherwise.
+  // and those prints reach here. The word goes first, before the ticker,
+  // because a listener who looks up mid-sentence has already missed it.
+  //
+  // "Constructed", not "Simulated": `synthetic` is also set on real Schwab,
+  // Tastytrade, marketData and Yahoo chain rows, which are synthesized from a
+  // day's aggregate volume rather than generated. Saying "simulated" aloud
+  // about a paid feed is a false claim, and this is the surface with the least
+  // room to qualify it afterwards.
   const utt = new SpeechSynthesisUtterance(
-    `${event.synthetic ? 'Simulated. ' : ''}${event.underlying} ${event.option_type === 'C' ? 'call' : 'put'} ${event.order_type.replace('_', ' ').toLowerCase()}, ${premium} premium, ${event.sentiment.toLowerCase()}`
+    `${event.synthetic ? 'Constructed. ' : ''}${event.underlying} ${event.option_type === 'C' ? 'call' : 'put'} ${event.order_type.replace('_', ' ').toLowerCase()}, ${premium} premium, ${event.sentiment.toLowerCase()}`
   )
   utt.rate = 1.1
   utt.pitch = 1
@@ -61,8 +66,10 @@ function pushNotification(event: FlowEvent) {
   // Same rule as the speech, and the same reason: the badge in the terminal
   // does not travel with an OS notification. `SWEEP` was hardcoded in the
   // title while the event carries its own `order_type`, so a BLOCK arrived on
-  // the desktop announced as a sweep.
-  new Notification(`${event.synthetic ? '🧪 SIMULATED · ' : '⚡ '}${event.underlying} ${event.option_type === 'C' ? 'CALL' : 'PUT'} ${event.order_type}`, {
+  // the desktop announced as a sweep. `SYN`, matching every in-app surface,
+  // rather than `🧪 SIMULATED` — this one leaves the application entirely, so
+  // it is the worst place to tell an operator their real feed is fake.
+  new Notification(`${event.synthetic ? 'SYN · ' : '⚡ '}${event.underlying} ${event.option_type === 'C' ? 'CALL' : 'PUT'} ${event.order_type}`, {
     body: `${event.total_premium >= 1_000_000 ? (event.total_premium / 1_000_000).toFixed(1) + 'M' : Math.round(event.total_premium / 1000) + 'K'} | Heat: ${event.heat_score} | ${event.sentiment}`,
     icon: '/favicon.ico',
     tag: event.id,

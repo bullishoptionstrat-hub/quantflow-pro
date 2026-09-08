@@ -96,8 +96,11 @@ export function FlowStats() {
         {flowEvents.length >= WINDOW_CAP && (
           <span style={{ color: '#fbbf24' }}>· window full at {WINDOW_CAP} — older signals have dropped off</span>
         )}
+        {/* "constructed", not "simulated" — see the note in Sidebar.tsx. Real
+            chain data synthesized from a day's aggregate volume is not
+            generated data, and calling it that disparages a working feed. */}
         {synthetic.length > 0 && (
-          <span style={{ color: '#fbbf24' }}>· {synthetic.length} simulated</span>
+          <span style={{ color: '#fbbf24' }}>· {synthetic.length} constructed</span>
         )}
       </div>
     </div>

@@ -657,7 +657,11 @@ test('no flow aggregate is labelled a total', () => {
   const stats = readFileSync(FLOW_STATS, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
   assert.ok(!/TOTAL/.test(stats), 'a windowed aggregate must not say TOTAL');
   assert.match(stats, /signals received this session/, 'and must say what it is over');
-  assert.match(stats, /simulated/, 'an aggregate that pools simulated prints has to count them');
+  // "constructed", not "simulated": `synthetic` is also set on real vendor
+  // chain rows synthesized from a day's aggregate volume, so calling the count
+  // "simulated" told a credentialed Schwab deployment its feed was fake.
+  assert.match(stats, /constructed/, 'an aggregate that pools constructed prints has to count them');
+  assert.ok(!/simulated/i.test(stats), 'and must not call a real chain row simulated');
   // `P/C RATIO` named three different quantities across the app.
   assert.ok(!/P\/C RATIO/.test(stats), 'the ratio must name its basis');
 });
@@ -706,13 +710,22 @@ test('no alert type is offered that nothing produces', () => {
   assert.match(code, /Record<OrderType, string>/, 'the map is keyed by what arrives');
 });
 
-test('an alert knows whether its print was simulated, and so do the channels', () => {
+test('an alert knows whether its print was constructed, and so do the channels', () => {
   const hook = readFileSync(FLOW_HOOK, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
   assert.match(hook, /synthetic: event\.synthetic/, 'the alert must carry it');
   // The repo's own note on the deleted seed generator: neither of these reads
   // `synthetic`, so a flag on the data cannot qualify what they announce.
-  assert.match(hook, /event\.synthetic \? 'Simulated\. ' : ''/, 'speech must say so');
-  assert.match(hook, /event\.synthetic \? '🧪 SIMULATED · '/, 'and so must the push notification');
+  //
+  // These two are the surfaces that leave the application — a spoken alert and
+  // an OS notification — so they are the worst places to get the word wrong,
+  // and they had it wrong: `synthetic` is set on real Schwab, Tastytrade,
+  // marketData and Yahoo chain rows as well as on generated prints. Asserted
+  // as the rule rather than the literal, because pinning the exact string is
+  // how both of these came to pin the wrong one.
+  assert.match(hook, /event\.synthetic \? '[^']+' : ''/, 'speech must say so');
+  assert.match(hook, /event\.synthetic \? '[^']+ · '/, 'and so must the push notification');
+  assert.ok(!/simulated/i.test(hook) && !/🧪/.test(hook),
+    'neither may call a real vendor chain row simulated');
   // The title hardcoded SWEEP while the event carries its own order type.
   assert.ok(!/CALL' : 'PUT'\} SWEEP`/.test(hook), 'a BLOCK was pushed announced as a sweep');
 });

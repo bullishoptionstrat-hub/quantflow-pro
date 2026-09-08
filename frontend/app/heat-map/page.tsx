@@ -55,7 +55,10 @@ export default function HeatMapPage() {
         <h1 style={{ fontSize: 18, fontWeight: 700, color: '#fafafa', marginBottom: 4 }}>🗺 Heat Score Map</h1>
         <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>
           Peak heat per ticker, tiles shaded by premium · over the {flowEvents.length} signal{flowEvents.length === 1 ? '' : 's'} received this session
-          {syntheticTotal > 0 && <span style={{ color: '#fbbf24' }}> · 🧪 {syntheticTotal} simulated</span>}
+          {/* "constructed", not "simulated": `synthetic` is set on generated
+              prints AND on real vendor chain rows synthesized from a day's
+              aggregate volume. See the note in Sidebar.tsx. */}
+          {syntheticTotal > 0 && <span style={{ color: '#fbbf24' }}> · SYN {syntheticTotal} constructed</span>}
         </p>
       </div>
 
@@ -95,8 +98,8 @@ export default function HeatMapPage() {
                 <span style={{ fontWeight: 700, fontSize: 15, color: '#fafafa', fontFamily: "'JetBrains Mono', monospace" }}>
                   {d.ticker}
                   {d.synthetic > 0 && (
-                    <span title={`${d.synthetic} of ${d.count} signals simulated`} style={{ marginLeft: 5, fontSize: 11, color: '#fbbf24' }}>
-                      🧪{d.synthetic === d.count ? '' : `${d.synthetic}`}
+                    <span title={`${d.synthetic} of ${d.count} signals constructed from aggregate volume or generated — not observed prints`} style={{ marginLeft: 5, fontSize: 11, color: '#fbbf24' }}>
+                      SYN{d.synthetic === d.count ? '' : ` ${d.synthetic}`}
                     </span>
                   )}
                 </span>
@@ -152,8 +155,8 @@ export default function HeatMapPage() {
                 <td>
                   <span className="ticker-pill">{d.ticker}</span>
                   {d.synthetic > 0 && (
-                    <span title={`${d.synthetic} of ${d.count} signals simulated`} style={{ marginLeft: 5, fontSize: 10, color: '#fbbf24', fontFamily: "'JetBrains Mono', monospace" }}>
-                      🧪{d.synthetic}
+                    <span title={`${d.synthetic} of ${d.count} signals constructed from aggregate volume or generated — not observed prints`} style={{ marginLeft: 5, fontSize: 10, color: '#fbbf24', fontFamily: "'JetBrains Mono', monospace" }}>
+                      SYN {d.synthetic}
                     </span>
                   )}
                 </td>

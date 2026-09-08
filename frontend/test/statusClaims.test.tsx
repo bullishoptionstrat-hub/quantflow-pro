@@ -15,6 +15,8 @@
  */
 import { describe, expect, test, beforeEach, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 
 // `usePathname()` has no router outside an App Router route; the sidebar reads
 // it to mark the active link.
@@ -53,22 +55,73 @@ describe('the sidebar reports transport as transport', () => {
     expect(container.textContent).not.toMatch(/SIMULATION/)
   })
 
-  test('simulated prints are reported where they are, per print', () => {
+  // "CONSTRUCTED", not "SIMULATED". `synthetic` is set on generated prints and
+  // on real vendor chain rows synthesized from a day's aggregate volume, so a
+  // deployment credentialed for only chain sources — Schwab, Tastytrade — was
+  // told ALL SIGNALS SIMULATED about a working paid feed. The flow table's own
+  // badge has always worded it accurately ("constructed from aggregate volume
+  // or generated"); that wording is now the only one on any surface. Demo mode
+  // keeps its separate all-or-nothing banner, so nothing is lost.
+  test('constructed prints are reported where they are, per print', () => {
     useStore.setState({ connected: true, flowEvents: [flow({ synthetic: true }), flow()] } as never)
     const { container } = render(<Sidebar />)
-    expect(container.textContent).toMatch(/1\/2 SIMULATED/)
+    expect(container.textContent).toMatch(/1\/2 CONSTRUCTED/)
+    expect(container.textContent).not.toMatch(/SIMULATED/)
   })
 
-  test('an all-simulated feed says so plainly', () => {
+  test('a feed of nothing but constructed prints says so plainly', () => {
     useStore.setState({ connected: true, flowEvents: [flow({ synthetic: true })] } as never)
     const { container } = render(<Sidebar />)
-    expect(container.textContent).toMatch(/ALL SIGNALS SIMULATED/)
+    expect(container.textContent).toMatch(/ALL SIGNALS CONSTRUCTED/)
   })
 
-  test('a fully live feed stays quiet about it', () => {
+  test('a fully observed feed stays quiet about it', () => {
     useStore.setState({ connected: true, flowEvents: [flow(), flow()] } as never)
     const { container } = render(<Sidebar />)
-    expect(container.textContent).not.toMatch(/SIMULATED/)
+    expect(container.textContent).not.toMatch(/CONSTRUCTED|SIMULATED/)
+  })
+
+  test('no surface keyed on `synthetic` calls it simulated', () => {
+    // Six surfaces said "simulated" or wore a 🧪 flask about a flag that is
+    // also set on real Schwab, Tastytrade, marketData and Yahoo chain rows.
+    // The row badge did not, which is how the discrepancy was findable at all.
+    // A hand-fixed list of six is exactly the shape of guard this repo has
+    // twice found insufficient, so this reads the source instead.
+    //
+    // `app/dark-pool/page.tsx` is excluded on purpose: it branches on
+    // `p.source === 'simulation'`, which really is generated data, and
+    // "SIMULATED" there is the correct word.
+    const ROOT = join(__dirname, '..')
+    const files: string[] = []
+    const walk = (d: string) => {
+      for (const n of readdirSync(d)) {
+        if (n === 'node_modules' || n === '.next' || n === 'test') continue
+        const p = join(d, n)
+        if (statSync(p).isDirectory()) walk(p)
+        else if (/\.tsx?$/.test(n)) files.push(p)
+      }
+    }
+    // Every source directory, discovered — not ['app', 'components', 'lib'],
+    // which is what this guard said first and which missed `hooks/`, where
+    // the *desktop notification* announced a real Schwab feed as
+    // "🧪 SIMULATED". A hand-listed scope is the exact failure this repo has
+    // now found three times.
+    for (const d of readdirSync(ROOT)) {
+      if (['node_modules', '.next', 'test', 'public'].includes(d)) continue
+      const p = join(ROOT, d)
+      if (statSync(p).isDirectory()) walk(p)
+    }
+
+    const offenders: string[] = []
+    for (const f of files) {
+      const rel = f.slice(ROOT.length + 1)
+      if (rel === 'app/dark-pool/page.tsx') continue
+      const src = readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*|\{\/\*[\s\S]*?\*\/\}/g, '')
+      if (!/\bsynthetic\b/.test(src)) continue
+      if (/🧪/.test(src)) offenders.push(`${rel}: flask emoji`)
+      if (/simulated|SIMULATED/.test(src)) offenders.push(`${rel}: the word "simulated"`)
+    }
+    expect(offenders).toEqual([])
   })
 
   test('the session indicator claims only what it checks', () => {
@@ -106,16 +159,16 @@ describe('the heat map describes its own window', () => {
     expect(screen.getAllByText('90').length).toBeGreaterThan(0)
   })
 
-  test('a tile built from simulated prints is marked', () => {
+  test('a tile built from constructed prints is marked', () => {
     useStore.setState({ connected: true, flowEvents: [flow({ synthetic: true })] } as never)
     const { container } = render(<HeatMapPage />)
-    expect(container.textContent).toMatch(/🧪/)
-    expect(container.textContent).toMatch(/1 simulated/)
+    expect(container.textContent).toMatch(/SYN/)
+    expect(container.textContent).toMatch(/1 constructed/)
   })
 
   test('a fully observed map carries no marker', () => {
     useStore.setState({ connected: true, flowEvents: [flow()] } as never)
     const { container } = render(<HeatMapPage />)
-    expect(container.textContent).not.toMatch(/🧪|simulated/)
+    expect(container.textContent).not.toMatch(/SYN|constructed|simulated|🧪/)
   })
 })
