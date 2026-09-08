@@ -176,7 +176,13 @@ function recordStats(symbol: string, print: RawPrint): void {
     openInterest: print.openInterest ?? prev?.openInterest,
     avgDailyVolume: print.avgDailyVolume ?? prev?.avgDailyVolume,
     // Day volume *before* this print — the engine adds the signal's own size.
-    dayVolume: print.dayVolume ?? prev?.dayVolume ?? 0,
+    //
+    // No `?? 0` on the end. `ContractStats.dayVolume` is optional and
+    // `score.ts` already writes `(dayVol ?? 0) + input.totalSize`, so the zero
+    // changed no score — it only made "this source reports no day volume"
+    // indistinguishable from "nothing has traded today" for anything else that
+    // reads these stats.
+    dayVolume: print.dayVolume ?? prev?.dayVolume,
     underlyingPrice: print.underlyingPrice ?? prev?.underlyingPrice,
   });
 }

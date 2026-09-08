@@ -67,8 +67,18 @@ export function onFREDHealth(handler: (h: FREDHealth) => void): void {
 export function getMacroData(): FREDSeries[] {
   return Array.from(macroCache.values());
 }
-export function getMacroValue(seriesId: string): number {
-  return macroCache.get(seriesId)?.value ?? 0;
+/**
+ * The latest observation of a series, or null when FRED has not answered for
+ * it yet.
+ *
+ * Returned `0`, which for this cache is never a harmless default: the series
+ * it holds are rates and index levels — `DFF`, `T10Y2Y`, `UNRATE`, `VIXCLS` —
+ * where zero is a reading with a meaning. A macro panel bound to this would
+ * have shown a fed funds rate of 0.00% for "we have not fetched yet". Same
+ * sentinel, same removal, as `getSpotPrice`.
+ */
+export function getMacroValue(seriesId: string): number | null {
+  return macroCache.get(seriesId)?.value ?? null;
 }
 
 async function fetchSeries(seriesId: string): Promise<void> {

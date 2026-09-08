@@ -35,22 +35,21 @@
  * `quantflow-modules/flow-engine`.)
  *
  * Coverage note: `marketData.ts` is exercised through its own mapping
- * function. The other three build their events inline inside a fetch loop
- * that needs credentials and a login, so they are held to the source-level
- * guard — the same standard `missingIsNotZero.test.ts` applies to cboe.
+ * function, which is what these tests drive. The other three build their
+ * events inline inside a fetch loop that needs credentials and a login, so
+ * they are held to the source-level rule instead.
+ *
+ * That source-level rule used to live at the bottom of this file, as a scan
+ * over a hand-written list of four connectors. It is
+ * `defaultedReadings.test.ts` now, over every file under `src/ingestion/`,
+ * because the list was the defect: it asserted its own completeness only
+ * against "a connector reaching `onFlowEvent` with a bid", so `occ.ts` —
+ * which publishes no flow events — and `index.ts` — not a connector at all —
+ * could never have been caught by it, and both were inventing numbers.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { quotesToFlow, type MDOptionQuote } from '../src/ingestion/connectors/marketData';
-import { readingWordsIn, zeroDefaults, zeroFilledReadings } from './zeroDefaults';
-
-const CONNECTORS = join(__dirname, '..', 'src', 'ingestion', 'connectors');
-const stripComments = (s: string) => s.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
-
-/** The four connectors whose chain rows become a contract's NBBO. */
-const CHAIN_CONNECTORS = ['marketData.ts', 'yahoo.ts', 'tastytrade.ts', 'schwab.ts'];
 
 function row(over: Partial<MDOptionQuote> = {}): MDOptionQuote {
   return {
@@ -107,72 +106,4 @@ test('the greeks are absent rather than zero when the plan omits them', () => {
   const [event] = quotesToFlow([row({ iv: null, delta: null })]);
   assert.equal(event.iv, undefined, 'an IV of 0 is not "no IV"');
   assert.equal(event.delta, undefined, 'a delta of 0 means the opposite of unknown');
-});
-
-test('no chain connector substitutes a zero for a field the vendor omitted', () => {
-  const offenders = CHAIN_CONNECTORS.flatMap((f) =>
-    zeroFilledReadings(f, stripComments(readFileSync(join(CONNECTORS, f), 'utf8'))));
-  assert.deepEqual(offenders, [],
-    'a reading defaulted to 0 is indistinguishable from a real zero, and these ' +
-    `fields become an NBBO: ${offenders.join(', ')}`);
-});
-
-test('the zero-fill guard recognises the forms this audit actually found', () => {
-  // A guard checked once, by hand, against the one form the checker happened
-  // to type is how the previous version passed while catching almost nothing.
-  // These are the literal lines deleted from the four connectors, plus the
-  // wrappers the fix introduced, so the rule cannot silently stop travelling.
-  const DEFECTS = [
-    'bid: data.bid?.[i] ?? 0,',
-    'ask: data.ask?.[i] ?? 0,',
-    'iv: data.iv?.[i] ?? 0,',
-    'strike: data.strike?.[i] ?? 0,',
-    'const bid = opt.bid ?? 0;',
-    'const oi = opt.openInterest ?? 0;',
-    "const bid = parseFloat(opt['bid'] ?? 0);",
-    "const size = opt['day-volume'] ?? 0;",
-    'const spot = data.underlyingPrice ?? 0;',
-    'price: r.regularMarketPrice ?? 0,',
-    'const bid = num(opt.bid) ?? 0;',
-    'const bid = Number(opt.bid) || 0;',
-    'bid: q.bidPrice ?? 0,',
-  ];
-  for (const line of DEFECTS) {
-    const [site] = zeroDefaults(line);
-    assert.ok(site, `no zero-default seen at all in: ${line}`);
-    assert.ok(readingWordsIn(site.operand).length > 0,
-      `the guard would not have caught: ${line}`);
-  }
-
-  // And the honest ones it must leave alone — a count is not a reading, and
-  // this half is why the rule is scoped to field names rather than to `?? 0`.
-  const HONEST = [
-    'const count = data.optionSymbol?.length ?? 0;',
-    'const n = rows.length || 0;',
-    'const page = Number(req.query.page) ?? 0;',
-  ];
-  for (const line of HONEST) {
-    for (const { operand } of zeroDefaults(line)) {
-      assert.deepEqual(readingWordsIn(operand), [],
-        `the guard fires on honest code: ${line}`);
-    }
-  }
-});
-
-test('the zero-fill guard covers every connector that publishes an NBBO', () => {
-  // The rule was written against a hand-listed pair and so did not travel.
-  // This asserts the list is the real one: any connector reaching
-  // `onFlowEvent` with a bid/ask is a connector whose quote becomes an NBBO.
-  const { readdirSync } = require('node:fs') as typeof import('node:fs');
-  const publishesQuotes = readdirSync(CONNECTORS)
-    .filter((f) => f.endsWith('.ts'))
-    .filter((f) => {
-      const src = stripComments(readFileSync(join(CONNECTORS, f), 'utf8'));
-      return /onFlowEvent\?\.\(|onFlowEvent\(/.test(src) && /\bbid\b/.test(src);
-    });
-  assert.deepEqual(
-    publishesQuotes.sort(),
-    [...CHAIN_CONNECTORS].sort(),
-    'a connector publishing quotes is missing from CHAIN_CONNECTORS',
-  );
 });
