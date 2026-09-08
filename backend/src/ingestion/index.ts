@@ -1325,10 +1325,7 @@ function startSignalHistory(): void {
   // enforced, because the connector gate deliberately refuses PROHIBITED only
   // and widening it would collapse the DISPLAY/PERSIST distinction the
   // registry exists to draw.
-  grader = new SignalGrader(store, (underlying) => {
-    const px = getSpotPrice(underlying);
-    return px > 0 ? px : undefined;
-  });
+  grader = new SignalGrader(store, (underlying) => getSpotPrice(underlying) ?? undefined);
 
   onSignal((sig, origin) => {
     // Fire-and-forget: recording must never add latency to the live tape or

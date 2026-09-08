@@ -5,6 +5,7 @@
  */
 import axios from 'axios';
 import WebSocket from 'ws';
+import { numeric } from '../optionalNumber';
 
 const API_KEY = process.env.TWELVE_DATA_API_KEY || '';
 const BASE = 'https://api.twelvedata.com';
@@ -25,12 +26,26 @@ const WATCHED = ['SPY', 'QQQ', 'NVDA', 'AAPL', 'TSLA', 'MSFT', 'AMD', 'META', 'A
  * and nothing else. A zero there would be the `?? 0` defect all over again —
  * "no volume traded" is a different claim from "this source does not report
  * volume".
+ *
+ * That paragraph was written here and then contradicted eight lines down: both
+ * of this file's write paths built the field as `parseInt(q.volume ?? 0)`, so
+ * the null it argues for was never once published. `change` and `changePct`
+ * were worse, because the *type* forbade the honest answer — they were
+ * `number`, so both connectors had no way to say "not sent" and both wrote a
+ * zero. Finnhub sends `d`/`dp` as null for any symbol without a previous close
+ * (a fresh listing, a halted name), and the tape rendered that as an
+ * authoritative `+0.00%`.
+ *
+ * `price` stays non-nullable, and that is the distinction: a quote with no
+ * price is not a quote, so both connectors refuse the row instead of
+ * publishing a null. An unknown *change* still leaves a usable price.
  */
 export interface SpotQuote {
   symbol: string;
   price: number;
-  change: number;
-  changePct: number;
+  /** `null` where the vendor did not send one. Never a zero standing in. */
+  change: number | null;
+  changePct: number | null;
   volume: number | null;
   timestamp: number;
   source: 'twelvedata' | 'finnhub';
@@ -76,8 +91,16 @@ export function getSpotQuotes(): Map<string, SpotQuote> {
   return spotCache;
 }
 
-export function getSpotPrice(symbol: string): number {
-  return spotCache.get(symbol)?.price ?? 0;
+/**
+ * The mark for a symbol, or null when this board has never quoted it.
+ *
+ * Returned `0` for an unknown symbol, which its one caller defended against
+ * with `px > 0 ? px : undefined`. The sentinel is removed rather than the
+ * guard kept: a zero mark reaching the grader would score every outcome
+ * against a price of nothing, and the next caller does not inherit the guard.
+ */
+export function getSpotPrice(symbol: string): number | null {
+  return spotCache.get(symbol)?.price ?? null;
 }
 
 function startWebSocket(): void {
@@ -91,13 +114,17 @@ function startWebSocket(): void {
   ws.on('message', (raw: Buffer) => {
     try {
       const msg = JSON.parse(raw.toString());
-      if (msg.event === 'price' && msg.symbol && msg.price) {
+      if (msg.event === 'price' && msg.symbol) {
+        // Twelve Data sends its numbers as strings, so `numeric` rather than
+        // `num`. A row with no usable price is dropped, not published at zero.
+        const price = numeric(msg.price);
+        if (price === null || price <= 0) return;
         const quote: SpotQuote = {
           symbol: msg.symbol,
-          price: parseFloat(msg.price),
-          change: parseFloat(msg.day_change ?? 0),
-          changePct: parseFloat(msg.day_change_percent ?? 0),
-          volume: parseInt(msg.volume ?? 0),
+          price,
+          change: numeric(msg.day_change),
+          changePct: numeric(msg.day_change_percent),
+          volume: numeric(msg.volume),
           timestamp: quoteTimestamp(msg.timestamp),
           source: 'twelvedata',
         };
@@ -122,12 +149,17 @@ async function fetchQuotesBatch(): Promise<void> {
 
     const process = (sym: string, q: any) => {
       if (!q || q.status === 'error') return;
+      // `parseFloat(q.close ?? q.price ?? 0)` published $0.00 into the spot
+      // cache for a symbol the batch answered without a price — and the cache
+      // feeds every socket's ticker tape.
+      const price = numeric(q.close) ?? numeric(q.price);
+      if (price === null || price <= 0) return;
       const quote: SpotQuote = {
         symbol: sym,
-        price: parseFloat(q.close ?? q.price ?? 0),
-        change: parseFloat(q.change ?? 0),
-        changePct: parseFloat(q.percent_change ?? 0),
-        volume: parseInt(q.volume ?? 0),
+        price,
+        change: numeric(q.change),
+        changePct: numeric(q.percent_change),
+        volume: numeric(q.volume),
         timestamp: quoteTimestamp(q.timestamp),
         source: 'twelvedata',
       };

@@ -245,9 +245,22 @@ export interface BSResult {
  */
 export interface SpotQuote {
   symbol: string
+  /**
+   * Always a real price. Both connectors drop a row they cannot price rather
+   * than publishing a null, so a quote on this board is a quote.
+   */
   price: number
-  change: number
-  changePct: number
+  /**
+   * `null` where the source did not send one — not zero.
+   *
+   * These were `number`, so neither connector could say "not sent" and both
+   * wrote a zero: Finnhub returns `d`/`dp` as null for any symbol with no
+   * previous close, and the tape rendered that as a definite `+0.00%` in flat
+   * styling. Absence and "unchanged" are different readings and the tape now
+   * shows `—` for the first.
+   */
+  change: number | null
+  changePct: number | null
   /**
    * `null` where the source does not report one.
    *

@@ -74,6 +74,14 @@ describe('pctColor', () => {
     expect(pctColor(-0.91)).toBe('#ef4444')
     expect(pctColor(0)).toBe('var(--text-muted)')
   })
+
+  test('a change we do not have is muted, not green', () => {
+    // The same rule `pcrColor` exists for: absence must not be coloured as a
+    // direction. Muted is already the answer for flat, so an unreported
+    // change is never louder than a reported zero.
+    expect(pctColor(null)).toBe('var(--text-muted)')
+    expect(pctColor(undefined)).toBe('var(--text-muted)')
+  })
 })
 
 describe('fmt', () => {
@@ -119,5 +127,16 @@ describe('signedPct', () => {
 
   test('a loss keeps the one it already has, and is not double-signed', () => {
     expect(signedPct(-1.37)).toBe('-1.37%')
+  })
+
+  test('a change the source did not send is a dash, not +0.00%', () => {
+    // `SpotQuote.change` used to be `number`, so neither spot connector could
+    // express "not sent" and both wrote a zero — Finnhub returns `d`/`dp` as
+    // null for any symbol with no previous close. `+0.00%` is a reading; the
+    // tape must not make one up.
+    expect(signedPct(null)).toBe('—')
+    expect(signedPct(undefined)).toBe('—')
+    // And a real zero still reads as a real zero.
+    expect(signedPct(0)).toBe('+0.00%')
   })
 })
