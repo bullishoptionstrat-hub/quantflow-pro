@@ -48,6 +48,12 @@
  * Scope is `src/ingestion/` because that is where vendor data enters. Route
  * handlers default query parameters (`parseInt(req.query.limit) || 50`), which
  * is a different act: the caller omitted it, no source misreported it.
+ *
+ * That boundary is real and worth stating: thirteen sites are registered here
+ * against thirty-one across `src/`, so the eighteen elsewhere are *unguarded
+ * by this rule*, not judged clean by it. Widening it is a decision about
+ * whether those defaults are the same act — not a matter of pointing `walk()`
+ * at a higher directory.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
