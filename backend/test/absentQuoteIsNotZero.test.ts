@@ -46,6 +46,10 @@
  * against "a connector reaching `onFlowEvent` with a bid", so `occ.ts` —
  * which publishes no flow events — and `index.ts` — not a connector at all —
  * could never have been caught by it, and both were inventing numbers.
+ *
+ * So what is left in this file is behaviour only, driven through
+ * `quotesToFlow`. If you are looking for the guard the paragraph above
+ * describes, it is not here any more.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
