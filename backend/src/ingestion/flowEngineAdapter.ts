@@ -55,6 +55,42 @@ export interface RawPrint {
    * can be inferred at all, would be deciding on a fabricated age.
    */
   quoteTs?: number;
+  /**
+   * Set when `price` is a trade whose *time* the source does not report.
+   *
+   * A chain-snapshot connector builds a print out of three things that did not
+   * happen together: `last` is a trade at some unknown moment in the session,
+   * `size` is the whole day's cumulative volume, and `bid`/`ask` are the NBBO
+   * as of the poll. Leaving `quoteTs` to default to `ts` asserts the trade and
+   * the quote were simultaneous, which is the one thing known to be false.
+   *
+   * The consequence is not cosmetic. `inferSide` compares the fill against the
+   * NBBO and refuses to answer when the quote is more than `maxAgeMs` from the
+   * trade — the rule `nbbo.ts` opens by calling the #1 way flow tools lie. A
+   * gap asserted as zero can never exceed 2s, so the rule could not fire for
+   * any of these sources, and a day's aggregate volume compared against a
+   * closing quote came out as a confident BUY.
+   *
+   * Note what does *not* fix it: stamping the snapshot with its true as-of
+   * time. Measured through this function, one print at spot 580 —
+   *
+   *     ts = now, quoteTs unset                  side=BUY
+   *     ts and quoteTs both back 15 min          side=BUY
+   *     ts and quoteTs both back 24 h            side=BUY
+   *     quoteTs 15 min behind ts                 side=AMBIGUOUS
+   *
+   * — because the rule measures the *gap*, and shifting both stamps preserves
+   * it at zero. A delay concept would have bought honest labelling and left
+   * the inference exactly as wrong.
+   *
+   * So the print says the gap is unknown, and `ingestPrint` withholds the
+   * NBBO: a missing quote is already AMBIGUOUS by contract. The cost is that
+   * the book does not learn this contract's bid/ask, so a live tape print
+   * arriving later for the same contract cannot use it — which is the right
+   * cost, because a delayed chain's NBBO is not evidence about a live fill
+   * either, and the staleness rule could not have caught that one either.
+   */
+  tradeTimeUnknown?: boolean;
   openInterest?: number;
   dayVolume?: number;
   avgDailyVolume?: number;
@@ -331,7 +367,8 @@ export function ingestPrint(print: RawPrint): WireFlowEvent[] {
   // judge. A quote from after the trade is refused outright by `inferSide`.
   const bid = print.bid;
   const ask = print.ask;
-  if (bid !== undefined && ask !== undefined && ask > 0 && ask >= bid) {
+  if (bid !== undefined && ask !== undefined && ask > 0 && ask >= bid
+      && !print.tradeTimeUnknown) {
     engine.onQuote({ ts: print.quoteTs ?? ts, contractSymbol: symbol, bid, ask });
   }
 

@@ -1428,6 +1428,13 @@ function legacyEventToPrint(e: LegacyFlowEvent, source: string): RawPrint | null
     // These connectors poll option *chains* and synthesize a print from the
     // day's aggregate volume — not real tape. Flagged so the UI can say so.
     synthetic: true,
+    // And none of the four report when `last` traded. `e.timestamp` is the
+    // moment this process read the chain, written by all four as
+    // `new Date().toISOString()`, so using it for both the trade and the quote
+    // claims a simultaneity that is known to be false — see `RawPrint`. This
+    // is the single seam all four pass through, which is why the statement
+    // belongs here rather than four times over.
+    tradeTimeUnknown: true,
   };
 }
 
