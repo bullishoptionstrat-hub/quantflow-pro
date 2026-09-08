@@ -73,12 +73,12 @@ describe('an empty page says which kind of empty', () => {
   })
 })
 
-describe('a simulated alert says so everywhere it appears', () => {
+describe('a constructed alert says so everywhere it appears', () => {
   test('on the row, and once at the top', () => {
     useStore.setState({ connected: true, powerAlerts: [alert({ synthetic: true }), alert()] } as never)
     const { container } = render(<PowerAlertsPage />)
-    expect(screen.getByText(/SIMULATED/)).toBeDefined()
-    expect(container.textContent).toMatch(/1 of these 2 alerts came from simulated prints/)
+    expect(screen.getAllByText(/SYN/).length).toBeGreaterThan(0)
+    expect(container.textContent).toMatch(/1 of these 2 alerts came from constructed prints/)
   })
 
   test('and in the banner across the top of the terminal', () => {
@@ -86,13 +86,13 @@ describe('a simulated alert says so everywhere it appears', () => {
     // page, with no room for provenance unless it is put there.
     useStore.setState({ powerAlerts: [alert({ synthetic: true })] } as never)
     const { container } = render(<PowerAlertBanner />)
-    expect(container.textContent).toMatch(/🧪/)
+    expect(container.textContent).toMatch(/SYN/)
   })
 
   test('a real alert carries no marker', () => {
     useStore.setState({ connected: true, powerAlerts: [alert()] } as never)
     const { container } = render(<PowerAlertsPage />)
-    expect(container.textContent).not.toMatch(/SIMULATED|🧪/)
+    expect(container.textContent).not.toMatch(/SYN|SIMULATED|🧪/)
   })
 })
 

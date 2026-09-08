@@ -173,10 +173,10 @@ describe('the stat tiles say what they are over', () => {
     expect(container.textContent).toMatch(/window full at 500/)
   })
 
-  test('simulated prints are counted where the aggregate mixes them', async () => {
+  test('constructed prints are counted where the aggregate mixes them', async () => {
     // The feed marks them per row; an aggregate that pools them has to say so.
     const { container } = await renderStats([flow({ synthetic: true }), flow()])
-    expect(container.textContent).toMatch(/1 simulated/)
+    expect(container.textContent).toMatch(/1 constructed/)
   })
 
   test('an all-put tape is not coloured green', async () => {

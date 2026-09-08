@@ -16,9 +16,19 @@ export function PowerAlertBanner() {
         {recent.slice(0, 6).map(a => (
           <span key={a.id} style={{ whiteSpace: 'nowrap', fontSize: 11, fontFamily: "'JetBrains Mono', monospace", color: '#fafafa', opacity: a.synthetic ? 0.75 : 1 }}>
             {/* A scrolling banner across the top of the terminal is the least
-                inspectable surface there is; a simulated print has to carry
-                its marker here too. */}
-            {a.synthetic && <span style={{ color: '#fbbf24' }}>🧪 </span>}
+                inspectable surface there is; a constructed print has to carry
+                its marker here too.
+                `SYN`, matching the flow table's badge, rather than a flask:
+                the flask reads as "simulated", and most rows carrying this
+                flag in a credentialed deployment are real vendor chain data
+                synthesized from aggregate volume. One marker, one meaning,
+                two surfaces. */}
+            {a.synthetic && (
+              <span
+                title="Constructed from aggregate volume or generated — not an observed print"
+                style={{ color: '#fde68a', fontWeight: 700, fontSize: 9, letterSpacing: '0.06em' }}
+              >SYN </span>
+            )}
             <span style={{ color: a.heat_score >= 80 ? '#fbbf24' : '#fb923c', fontWeight: 700 }}>{a.underlying}</span>
             {' · '}{a.message.split('—')[1]?.trim() || a.message}
             {' · '}<span style={{ color: '#a78bfa' }}>HEAT {a.heat_score}</span>

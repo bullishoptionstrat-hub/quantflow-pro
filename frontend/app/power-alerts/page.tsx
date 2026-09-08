@@ -48,7 +48,10 @@ const TRIGGER = 'Raised when the engine scores a signal 75 or above — its unus
 
 export default function PowerAlertsPage() {
   const { powerAlerts, voiceEnabled, setVoiceEnabled, connected } = useStore()
-  const simulated = powerAlerts.filter(a => a.synthetic).length
+  // Named for what it counts. `synthetic` covers a generated print *and* a
+  // real vendor chain row synthesized from aggregate volume, so `simulated`
+  // was the wrong word in the code as well as on the screen.
+  const constructed = powerAlerts.filter(a => a.synthetic).length
 
   const requestNotifications = async () => {
     if (typeof Notification !== 'undefined') {
@@ -82,9 +85,9 @@ export default function PowerAlertsPage() {
         </div>
       </div>
 
-      {simulated > 0 && (
+      {constructed > 0 && (
         <div style={{ marginBottom: 12, padding: '8px 12px', borderRadius: 6, background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.3)', fontSize: 11, color: '#fbbf24', fontFamily: "'JetBrains Mono', monospace" }}>
-          🧪 {simulated} of these {powerAlerts.length} alerts came from simulated prints. They are spoken and pushed as simulated too.
+          SYN · {constructed} of these {powerAlerts.length} alerts came from constructed prints — synthesized from a chain's aggregate volume, or generated. They are spoken and pushed with the same marker.
         </div>
       )}
 
@@ -123,7 +126,7 @@ export default function PowerAlertsPage() {
                     <HeatBadge score={alert.heat_score} />
                     {alert.synthetic && (
                       <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: 'rgba(251,191,36,0.15)', color: '#fbbf24', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.05em' }}>
-                        🧪 SIMULATED
+                        SYN
                       </span>
                     )}
                     <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
