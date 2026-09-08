@@ -1084,6 +1084,11 @@ function startPolygonIngestion(): void {
           const details = t.details ?? {};
           if (!details.expiration_date) continue;
 
+          // Nine lines below, this same possibly-absent field was written as
+          // `strike: details.strike_price ?? 0`. The NBBO lookup knew it could
+          // be missing; the print did not.
+          if (typeof details.strike_price !== 'number' || !(details.strike_price > 0)) continue;
+
           const nbbo = details.strike_price !== undefined
             ? quotes.get(polygonOptionTicker(
                 t.underlying_asset?.ticker ?? 'UNK',
@@ -1098,7 +1103,7 @@ function startPolygonIngestion(): void {
             ts: Math.round(t.sip_timestamp / 1_000_000),
             symbol: t.underlying_asset?.ticker ?? 'UNK',
             expiry: details.expiration_date,
-            strike: details.strike_price ?? 0,
+            strike: details.strike_price,
             right: details.contract_type === 'call' ? 'C' : 'P',
             price: t.price,
             size: t.size,
