@@ -63,6 +63,14 @@ async function fetchGEX(symbol: string): Promise<void> {
       timeout: 8000,
     });
 
+    // `num`, not `numeric`: this deployment has no FlashAlpha key, so the
+    // response shape is taken from the previous code's own `?? 0` — which only
+    // makes sense on JSON numbers — rather than observed. If the vendor turns
+    // out to send strings, every level is refused and the connector publishes
+    // nothing. That is the right direction to be wrong in: nothing has a
+    // consumer here, and a silent parse of an unverified schema is how a
+    // fabricated number gets in.
+    //
     // A level with no strike is not a level — it cannot be placed on a chart
     // or compared to spot — so the row is dropped rather than defaulted.
     const levels: FlashGEXLevel[] = (data.strikes ?? []).flatMap((s: any) => {
