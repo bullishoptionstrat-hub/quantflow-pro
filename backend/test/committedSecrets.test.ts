@@ -5,8 +5,12 @@
  *
  * ── What this was written for ───────────────────────────────────────────────
  *
- * `docs/FORENSIC_AUDIT.md` #7, raised in the draft PR of 2026-08-28, said real
- * credentials were committed inside the root zip files and had to be rotated.
+ * Finding #7 of `docs/FORENSIC_AUDIT.md` said real credentials were committed
+ * inside the root zip files and had to be rotated. That file is **not in this
+ * tree** — it exists only inside the draft PR #5 of 2026-08-28, which is still
+ * open and still conflicting, which is part of how the finding stayed live:
+ * the audit that recorded it was never merged, so nothing on `main` pointed at
+ * it and no guard could be written against a document that is not here.
  * Roughly fifty pull requests landed after that and the finding was still
  * live: several archives were tracked, in a **public** repository, and
  * `.gitignore` did not merely fail to exclude them — it named three of them in
