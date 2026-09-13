@@ -15,10 +15,20 @@ ml-service/models/*.pkl
 
 # Local archive/staging dir (contains a 210MB Archive.zip) - never commit
 quanntflow/
+
+# No archives, with no exceptions.
+#
+# Three of these used to be un-ignored by name, and two of those carried a
+# live `.env` holding vendor API keys, tracked in a public repo. An archive is opaque
+# to every review that reads a diff, so the exception list is what made the
+# leak possible; there is no exception list now. The unpacked, current sources
+# are `quantflow-modules/` and this repo itself.
+#
+# `backend/test/committedSecrets.test.ts` enforces this against tracked files
+# rather than trusting the pattern.
 *.zip
-!qf-firecrawl (1).zip
-!qf-flow-engine.zip
-!quantflow.zip
+*.tar.gz
+*.tgz
 
 # Preview captures — snapshots of a live backend, not source
 .preview/
