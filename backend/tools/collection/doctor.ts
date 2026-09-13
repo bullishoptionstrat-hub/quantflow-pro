@@ -22,6 +22,14 @@
  * With `--url` it also reads a running backend's `/api/health`, which is the
  * only way to know what is actually connected rather than what could be.
  */
+// Before the import graph, for the same reason `server.ts` does it on its
+// first line: `src/ingestion/index` reads `process.env` at module scope, and
+// with `module: commonjs` that read happens during the `import` below — before
+// any statement in this file could have populated it. Without this, a
+// developer with a fully configured `backend/.env` was told every persistable
+// source lacked credentials, by the one tool whose job is answering that.
+import 'dotenv/config';
+
 import {
   classifySource, resolveBusinessMode, BusinessModeError,
   datasetIdForSource, type BusinessMode,
