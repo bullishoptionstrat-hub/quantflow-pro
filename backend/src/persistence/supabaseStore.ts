@@ -339,6 +339,32 @@ export class SupabaseSignalStore implements SignalStore {
     };
   }
 
+  /**
+   * An exact row count, or a thrown error — never a zero standing in for one.
+   *
+   * `count` is `number | null` on every PostgREST response: the number is
+   * carried in the `Content-Range` header, and a response that arrives without
+   * one parses to `null` with **no `error` set**, so the `error` branch above
+   * does not catch it. Returning `count ?? 0` turned that into the claim
+   * `0 rows` — on `/api/track-record`, the one endpoint whose entire purpose
+   * is saying what this deployment has actually measured.
+   *
+   * Three separate lies came out of the same line. `countSignals()` published
+   * `{ total: 0, synthetic: 0, real: 0 }`, which reads as *the recorder is
+   * discarding everything* — the failure this module exists to make impossible
+   * to have by accident — when what had actually failed was the count. Because
+   * `total` and `synthetic` are two round-trips, one answering and the other
+   * not gave `real: total - 0`, overstating the research population by exactly
+   * the synthetic signals it is supposed to exclude. And in `trackRecord()`
+   * all three `excluded` counts feed the `notes[]` that explain the
+   * exclusions, so a report that had dropped rows described itself as having
+   * dropped none.
+   *
+   * A count nobody answered is not a count of zero. The caller is
+   * `/api/track-record`, which already answers a throw with a 500 naming the
+   * failure; that is the honest output, and it matches how the rest of this
+   * module resolves uncertainty — to refusal, not to permission.
+   */
   private async count(
     table: string,
     shape: (q: any) => any,
@@ -347,7 +373,14 @@ export class SupabaseSignalStore implements SignalStore {
       this.db.from(table).select('*', { count: 'exact', head: true }),
     );
     if (error) throw new Error(`${table} count failed: ${error.message}`);
-    return count ?? 0;
+    if (typeof count !== 'number' || !Number.isFinite(count)) {
+      throw new Error(
+        `${table} count returned no number (got ${JSON.stringify(count)}). ` +
+        'The query succeeded without a Content-Range count; reporting 0 here ' +
+        'would be indistinguishable from an empty table.',
+      );
+    }
+    return count;
   }
 }
 
