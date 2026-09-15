@@ -137,10 +137,16 @@ test('the grader picks up a recorded real signal and grades it at M15', async (t
   }
   assert.ok(keys.length > 0);
 
-  // Drive the clock and the spot feed directly.
+  // Drive the clock and the mark feed directly. The lookup carries its source,
+  // which is what the recorded outcome now attributes the price to.
   let spot = 548;
   let now = Date.now();
-  const grader = new SignalGrader(store, () => spot, {}, () => now);
+  const grader = new SignalGrader(
+    store,
+    () => ({ price: spot, source: 'twelvedata', rightsClass: 'UNVERIFIED' }),
+    {},
+    () => now,
+  );
 
   for (const k of keys) {
     const rec = await store.getSignal(k);

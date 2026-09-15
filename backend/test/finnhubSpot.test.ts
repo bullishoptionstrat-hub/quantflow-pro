@@ -18,6 +18,8 @@
  * That refusal is the whole reason this file exists as a test rather than a
  * comment.
  */
+import { registeredMarkSources } from '../src/ingestion/markSources';
+import { classifySource } from '../src/provenance/rights';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -176,11 +178,36 @@ test('the connector does not reach the grader', () => {
     'the grader\'s mark source must not consult Finnhub — its terms forbid ' +
     'sharing derived results, and a track record is derived results');
 
+  // The second half of this test used to assert the grader read `getSpotPrice`
+  // and that no `finnhub` appeared within 300 characters of it. That was the
+  // right guard for a one-vendor mark path, and the comment above predicted its
+  // own end: "if a fallback is ever added to getSpotPrice, this fails." One was
+  // — the grader resolves from a ranked registry now — and it did fail, which
+  // is the guard working rather than the guarantee lapsing.
+  //
+  // So it is re-pointed at the guarantee instead of at the mechanism, and it is
+  // strictly stronger for it: rather than hoping the string "finnhub" stays out
+  // of a 300-character window, every registered mark source is classified and
+  // none may be PROHIBITED for PERSIST. Finnhub is named separately because it
+  // is the source this file is about — its terms forbid sharing "data or
+  // derived results", and a published track record is derived results.
   const index = readFileSync(join(__dirname, '..', 'src', 'ingestion', 'index.ts'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
   const grader = index.slice(index.indexOf('grader = new SignalGrader'));
-  assert.match(grader.slice(0, 300), /getSpotPrice\(underlying\)/);
-  assert.ok(!/finnhub/i.test(grader.slice(0, 300)), 'the grader reads one source');
+  assert.match(grader.slice(0, 300), /resolveMark\(underlying\)/,
+    'the grader should take its mark from the registry');
+
+  const registered = registeredMarkSources();
+  assert.ok(!registered.some((s) => /finnhub/i.test(s)),
+    'Finnhub must never be a registered mark source');
+  for (const source of registered) {
+    for (const mode of ['PRIVATE_RESEARCH', 'PUBLIC_COMMERCIAL'] as const) {
+      assert.notEqual(
+        classifySource(source, 'PERSIST', mode).rightsClass, 'PROHIBITED',
+        `${source} is PROHIBITED for PERSIST in ${mode} and may not price a mark`,
+      );
+    }
+  }
 });
 
 test('the display board merges both, with Twelve Data winning', () => {

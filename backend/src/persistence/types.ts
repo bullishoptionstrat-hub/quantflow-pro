@@ -96,6 +96,16 @@ export interface OutcomeRecord {
   /** Mark used at entry, and at the checkpoint. Absent when not observable. */
   entryMark?: number;
   exitMark?: number;
+  /**
+   * Which source priced each mark. Present exactly when the mark is.
+   *
+   * Recorded because the grader now resolves its mark from a ranked registry
+   * rather than one hard-wired vendor, so "where did this price come from?"
+   * stopped being answerable from the deployment's configuration alone. The two
+   * can differ: a vendor can drop out between registration and a checkpoint.
+   */
+  entryMarkSource?: string;
+  exitMarkSource?: string;
   /** When the checkpoint fell due, and when it was actually evaluated. */
   dueAt: number;
   evaluatedAt: number;

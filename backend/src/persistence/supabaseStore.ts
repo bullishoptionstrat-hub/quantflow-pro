@@ -134,6 +134,10 @@ export class SupabaseSignalStore implements SignalStore {
       excursion: rec.excursion ?? null,
       entry_mark: rec.entryMark ?? null,
       exit_mark: rec.exitMark ?? null,
+      // Null, not a sentinel string, when the mark is absent. The table's
+      // CHECK holds the pairing: a mark without a source is not recordable.
+      entry_mark_source: rec.entryMarkSource ?? null,
+      exit_mark_source: rec.exitMarkSource ?? null,
       due_at: iso(rec.dueAt),
       evaluated_at: iso(rec.evaluatedAt),
       ungraded_reason: rec.ungradedReason ?? null,
@@ -156,6 +160,8 @@ export class SupabaseSignalStore implements SignalStore {
       excursion: r.excursion ?? undefined,
       entryMark: r.entry_mark ?? undefined,
       exitMark: r.exit_mark ?? undefined,
+      entryMarkSource: r.entry_mark_source ?? undefined,
+      exitMarkSource: r.exit_mark_source ?? undefined,
       dueAt: ms(r.due_at),
       evaluatedAt: ms(r.evaluated_at),
       ungradedReason: r.ungraded_reason ?? undefined,

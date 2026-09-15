@@ -15,6 +15,8 @@ import WebSocket from 'ws';
 import { fetchCboeChain, getCboeSnapshot, getCboeSymbols } from './connectors/cboeOptions';
 import { fetchOccVolume, getOccVolume } from './connectors/occ';
 import { describeHttpError } from './httpError';
+import { probeAll, type EntitlementResult } from './entitlement';
+import { resolveMark, markSourceStandings } from './markSources';
 import {
   ingestPrint, drainIdle, resetDaily, onSignal,
   type RawPrint, type WireFlowEvent,
@@ -219,6 +221,99 @@ function markNoCredentials(source: string, vars: string[]): void {
     `The connector is not contributing data.`;
 }
 
+/**
+ * What each vendor said when asked whether this key reaches its data.
+ *
+ * Separate from `sources` on purpose, and it must stay separate. `sources` is
+ * owned by the poller that writes it, and the one time two writers shared a
+ * health field the loser was the truth: `startConnector` recorded what
+ * `start()` returned once and overwrote a failure the connector had already
+ * reported (CLAUDE.md, the dead-sources note). The entitlement probe is a
+ * second opinion, not a second author — it answers a question no poller asks,
+ * and it never decides whether a source is `connected`.
+ *
+ * Empty until the first probe resolves, which is why each entry carries the
+ * instant it was taken: an entitlement is a fact about a moment, and a plan
+ * that lapses at noon reads as entitled until the next sweep.
+ */
+const entitlement: Record<string, EntitlementResult & { checkedAt: string }> = {};
+
+/** Hourly, so a plan that lapses mid-session is noticed without a restart. */
+const ENTITLEMENT_REPROBE_MS = 60 * 60_000;
+
+/**
+ * Ask the vendors, at boot and hourly after.
+ *
+ * Why at boot at all, when a failing poller already reports an error: because
+ * the poller reports `error` with a body a human has to read, and only after
+ * its own cycle has run — hourly, for some. This answers a narrower question
+ * uniformly and immediately: `refused` (the plan does not cover it) versus
+ * `rejected` (the key is wrong) versus `unreachable` (no answer). Twelve Data
+ * has no options poller reporting here at all, and it is the source every
+ * graded outcome derives from.
+ *
+ * Never blocks startup and never throws into it. A probe that fails is an
+ * absence of information, and `probeAll` already resolves rather than rejects;
+ * the `catch` is for the impossible case, so an unhandled rejection cannot take
+ * the ingestion process down over a diagnostic.
+ *
+ * Cost, since these are metered requests: three sources at most, once an hour —
+ * 72 calls a day against Twelve Data's free 800/day, and a rounding error
+ * against Polygon's per-minute limit.
+ */
+function startEntitlementProbes(): void {
+  const sweep = (): void => {
+    void probeAll(process.env)
+      .then((results) => {
+        const at = new Date().toISOString();
+        for (const r of results) {
+          entitlement[r.source] = { ...r, checkedAt: at };
+          if (r.state === 'refused' || r.state === 'rejected') {
+            console.log(`[entitlement] ${r.source}: ${r.state} — ${r.detail}`);
+          }
+        }
+      })
+      .catch(() => { /* a diagnostic must not be able to end the process */ });
+  };
+
+  sweep();
+  setInterval(sweep, ENTITLEMENT_REPROBE_MS).unref();
+}
+
+/**
+ * Fold a denial into the degraded-notes channel — and only into that one.
+ *
+ * `sources` is deliberately not written here. The poller owns that field, and
+ * the one time two writers shared a health field the loser was the truth:
+ * `startConnector` recorded what `start()` returned once and overwrote a
+ * failure the connector had already reported. So an operator reading a board
+ * where polygon says `connected` still sees that its plan refuses the endpoint,
+ * without the probe and the poller fighting over a single word.
+ *
+ * `unreachable`, `unknown` and `unprobed` produce no note on purpose: none of
+ * them is evidence of anything, and a permanent "we could not check" line on a
+ * status board is noise that teaches an operator to stop reading it.
+ *
+ * Exported because it is the only interesting behaviour in the projection, and
+ * a seam beats a test-only setter on module state.
+ */
+export function mergeEntitlementNotes(
+  notes: Record<string, string>,
+  verdicts: Record<string, { state: string; detail: string }>,
+): Record<string, string> {
+  for (const [source, r] of Object.entries(verdicts)) {
+    if (r.state !== 'refused' && r.state !== 'rejected') continue;
+    const note = `entitlement ${r.state}: ${r.detail}`;
+    notes[source] = notes[source] ? `${notes[source]}; ${note}` : note;
+  }
+  return notes;
+}
+
+/** The probe's verdicts, for /api/health. Public — see `describeHttpError`. */
+export function getEntitlement(): Record<string, EntitlementResult & { checkedAt: string }> {
+  return { ...entitlement };
+}
+
 // ─── Public getters ─────────────────────────────────────────────────────────
 
 export function getRecentFlow(): FlowEvent[] {
@@ -310,11 +405,29 @@ export function getIngestionStatus() {
     notes[source] = existing ? `${existing}; ${note}` : note;
   }
 
+  mergeEntitlementNotes(notes, entitlement);
+
   return {
     active: ingestionActive,
     sources,
     sourceErrors,
     sourceNotes: notes,
+    /**
+     * What the vendor said, per source, and when. Distinct from `sources`:
+     * that is "is data arriving?", this is "would it be allowed to?".
+     * Every string here has been through `describeHttpError`, which carries
+     * the vendor's own words and scrubs anything key-shaped — several of
+     * these probes put the key in the query string.
+     */
+    entitlement: getEntitlement(),
+    /**
+     * The grader's mark registry: which sources could price an underlying,
+     * and why each is in or out. Published because "every outcome is
+     * UNGRADED" used to be answerable only by knowing that one hard-wired
+     * vendor supplied the price — and the registry is short enough that a
+     * single refusal still grades nothing.
+     */
+    markSources: markSourceStandings(),
     // Listed even before the connector loop has run, so a refusal is visible
     // on a cold /api/health rather than only after the first poll tick. Every
     // string here is a quoted public restriction and a terms URL — nothing
@@ -622,9 +735,13 @@ export function startIngestion(io: any): void {
     }
   });
 
+  // After the connectors, not before: the probe is an extra request per vendor
+  // and the feed getting up is worth more than the diagnostic about it.
+  startEntitlementProbes();
+
   // Drain bursts the engine is holding once the feed goes quiet — it finalizes
   // on the next trade's watermark, so an idle feed would sit on its last signal.
-  setInterval(() => emitSignals(drainIdle()), 1_000);
+  setInterval(() => emitSignals(drainIdle()), 1_000).unref();
 
   // `repeatHits` is scored per *day*; reset it at the UTC session boundary so a
   // long-lived Render process doesn't drift every contract toward max repeats.
@@ -636,17 +753,17 @@ export function startIngestion(io: any): void {
       resetDaily();
       console.log('[ingestion] daily engine state reset');
     }
-  }, 60_000);
+  }, 60_000).unref();
 
   // Refresh GEX every 60 seconds
   setInterval(() => {
     ['SPX', 'SPY', 'QQQ', 'NVDA'].forEach((s) => {
       gexCache[s] = { levels: generateSyntheticGEX(s), fetchedAt: Date.now() };
     });
-  }, 60_000);
+  }, 60_000).unref();
 
   // Dark pool simulation refresh every 5 minutes
-  setInterval(addDarkPoolPrints, 300_000);
+  setInterval(addDarkPoolPrints, 300_000).unref();
 
   console.log('[ingestion] v3 started — flow-engine classification, seeded',
     flowEvents.length, 'signals, 13 connectors initializing');
@@ -1138,7 +1255,7 @@ function startPolygonIngestion(): void {
     }
   }
 
-  setInterval(poll, 10_000);
+  setInterval(poll, 10_000).unref();
   poll();
 }
 
@@ -1188,7 +1305,7 @@ function startSimulationFeed(): void {
     const spot = SIM_SPOTS[symbol]! * (1 + (Math.random() - 0.5) * 0.002);
     SIM_SPOTS[symbol] = spot;
     emitSignals(simulatePrints(symbol, spot, Date.now()).flatMap(ingestPrint));
-  }, 3000);
+  }, 3000).unref();
 
   console.log('[ingestion] Simulation feed running');
 }
@@ -1330,7 +1447,10 @@ function startSignalHistory(): void {
   // enforced, because the connector gate deliberately refuses PROHIBITED only
   // and widening it would collapse the DISPLAY/PERSIST distinction the
   // registry exists to draw.
-  grader = new SignalGrader(store, (underlying) => getSpotPrice(underlying) ?? undefined);
+  // The mark comes from a ranked registry now, not one hard-wired vendor, and
+  // every outcome records which source priced it. See ingestion/markSources.ts
+  // for why that registry is currently one entry long.
+  grader = new SignalGrader(store, (underlying) => resolveMark(underlying));
 
   onSignal((sig, origin) => {
     // Fire-and-forget: recording must never add latency to the live tape or
@@ -1347,7 +1467,7 @@ function startSignalHistory(): void {
   // so a 60s tick is well inside the lateness tolerance.
   setInterval(() => {
     void grader?.tick().catch(() => { /* counted in grader stats */ });
-  }, 60_000);
+  }, 60_000).unref();
 
   const p = describePersistence();
   console.log(`[history] store=${p.store} durable=${p.durable} mode=${p.businessMode}`);
@@ -1554,7 +1674,7 @@ function startCboeOptions(): void {
     }
   }
   void tick();
-  setInterval(() => { void tick(); }, 20_000);
+  setInterval(() => { void tick(); }, 20_000).unref();
 }
 
 // ─── OCC cleared volume ──────────────────────────────────────────────────────
@@ -1573,5 +1693,5 @@ function startOcc(): void {
     }
   }
   void tick();
-  setInterval(() => { void tick(); }, 300_000);
+  setInterval(() => { void tick(); }, 300_000).unref();
 }

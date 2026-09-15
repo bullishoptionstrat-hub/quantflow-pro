@@ -66,15 +66,41 @@ export const DEFAULT_GRADER_CONFIG: GraderConfig = {
   maxLatenessMs: 30 * 60_000,
 };
 
-/** Current price of an underlying, or undefined when not observable. */
-export type SpotLookup = (underlying: string) => number | undefined;
+/**
+ * A price, and where it came from.
+ *
+ * The provenance is part of the value rather than a second argument, so it is
+ * **structurally impossible to record a mark without knowing its source**. The
+ * previous shape was a bare `number | undefined`, and every graded outcome in
+ * this repo's history therefore carries a price whose origin is recoverable
+ * only by knowing which vendor happened to be wired in on the day — which is
+ * the same class of unrecorded assumption as "a vendor honours the key it
+ * issued".
+ *
+ * `rightsClass` travels with it because a mark from an `UNVERIFIED` source and
+ * one from a `PERMITTED` source are different evidence, and a track record
+ * built from a mixture should be able to say which rows are which.
+ */
+export interface Mark {
+  price: number;
+  /** Connector source string, e.g. `twelvedata`. */
+  source: string;
+  /** Its PERSIST standing in the mode that resolved it. Never `PROHIBITED`. */
+  rightsClass: string;
+}
+
+/** Current mark for an underlying, or undefined when not observable. */
+export type MarkLookup = (underlying: string) => Mark | undefined;
+
+/** @deprecated The bare-number shape. Kept only as a name for older callers. */
+export type SpotLookup = MarkLookup;
 
 interface Pending {
   signalKey: string;
   underlying: string;
   decisionAt: number;
   direction: ImpliedDirection;
-  entryPrice?: number;
+  entryMark?: Mark;
   /** Horizons still to grade. */
   remaining: Set<OutcomeHorizon>;
 }
@@ -99,7 +125,7 @@ export class SignalGrader {
 
   constructor(
     private readonly store: SignalStore,
-    private readonly spot: SpotLookup,
+    private readonly spot: MarkLookup,
     config: Partial<GraderConfig> = {},
     private readonly now: () => number = () => Date.now(),
   ) {
@@ -137,7 +163,7 @@ export class SignalGrader {
       // Entry mark is taken now, at registration — which is at or just after
       // the decision instant. Taking it later would measure from a price the
       // signal itself may have moved.
-      entryPrice: this.spot(rec.underlying),
+      entryMark: this.spot(rec.underlying),
       remaining: new Set<OutcomeHorizon>(['M15', 'H1', 'D1']),
     });
   }
@@ -163,8 +189,10 @@ export class SignalGrader {
             horizon,
             label: outcome.label,
             excursion: outcome.excursion,
-            entryMark: p.entryPrice,
+            entryMark: p.entryMark?.price,
+            entryMarkSource: p.entryMark?.source,
             exitMark: outcome.exitMark,
+            exitMarkSource: outcome.exitMarkSource,
             dueAt,
             evaluatedAt: now,
             ungradedReason: outcome.ungradedReason,
@@ -197,6 +225,7 @@ export class SignalGrader {
     label: OutcomeLabelValue;
     excursion?: number;
     exitMark?: number;
+    exitMarkSource?: string;
     ungradedReason?: string;
   } {
     // An AMBIGUOUS side yields no implied direction, and a signal with no
@@ -213,7 +242,7 @@ export class SignalGrader {
       };
     }
 
-    if (p.entryPrice === undefined || !(p.entryPrice > 0)) {
+    if (p.entryMark === undefined || !(p.entryMark.price > 0)) {
       return {
         label: 'UNGRADED',
         ungradedReason:
@@ -242,8 +271,8 @@ export class SignalGrader {
       };
     }
 
-    const exitMark = this.spot(p.underlying);
-    if (exitMark === undefined || !(exitMark > 0)) {
+    const exit = this.spot(p.underlying);
+    if (exit === undefined || !(exit.price > 0)) {
       return {
         label: 'UNGRADED',
         ungradedReason:
@@ -251,7 +280,11 @@ export class SignalGrader {
       };
     }
 
-    const rawMove = (exitMark - p.entryPrice) / p.entryPrice;
+    // Both marks are recorded with their source. They can differ — a vendor
+    // can fall out between registration and a checkpoint — and an excursion
+    // measured across two different price sources is worth being able to spot.
+    const exitMark = exit.price;
+    const rawMove = (exitMark - p.entryMark.price) / p.entryMark.price;
     // Signed in the direction the signal implied: a bearish signal followed by
     // a fall is a positive excursion.
     const excursion = p.direction === 'BULLISH' ? rawMove : -rawMove;
@@ -261,6 +294,6 @@ export class SignalGrader {
     else if (excursion < -this.cfg.flatBandPct) label = 'NEGATIVE';
     else label = 'FLAT';
 
-    return { label, excursion, exitMark };
+    return { label, excursion, exitMark, exitMarkSource: exit.source };
   }
 }
