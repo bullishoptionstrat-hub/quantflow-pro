@@ -341,38 +341,67 @@ every day is sample.
 
 - [ ] **2.1** Watch `/api/track-record` climb toward n=30. Let it run. The
       floor exists so you don't fool yourself; respect it.
-- [ ] **2.2 — A collection heartbeat.** `collection_gaps` exists — surface it.
+- [x] **2.2 — A collection heartbeat.** *Done 2026-09-15 — and it was not
+      "surface it".* `collection_gaps` had a migration, a type, three CHECK
+      constraints and two store implementations, and **nothing had ever called
+      `recordGap`**. The table built to stop a flattering hit rate had recorded
+      nothing. `persistence/coverage.ts` is the writer, on the grader's existing
+      tick; `/api/health` carries the open gap. `MARKET_CLOSED` is never emitted
+      — that needs a holiday calendar this repo does not have, and mislabelling
+      an outage as a closure is the flattering direction. Also found: the two
+      stores disagreed about `recordGap` (Postgres upserts, memory pushed), so
+      an extending gap was one row in production and one per tick under test.
+      ~~`collection_gaps` exists — surface it.~~
       "Collecting for 11 days · 3 gaps totalling 47 min · 22 of 30 graded."
       You need to *see* the clock running or you won't trust the number when
       it arrives.
-- [ ] **2.3 — Record the entitlement state on every persisted signal.** When
-      you read the track record in six months, "which feed was live that day"
-      is the first question you'll have.
+- [x] **2.3 — Record the entitlement state on every persisted signal.**
+      *Closed 2026-09-15 with no code, which is the honest answer.*
+      `SignalRecord` already persists `source`, `datasetId`, `rightsClass` and
+      `synthetic` per row — the question "which feed was live that day" is
+      already answerable. The entitlement *verdict* is a moment-in-time fact
+      about a vendor, not a property of a signal, and stapling a mutable probe
+      result onto an append-only row would be the wrong shape.
 
 ### Phase 3 — Dealer positioning (week 3+, parallel with waiting)
 
 The cheapest real capability gap. GEX is one number from a family, and you
 already fetch the chain that produces all of them.
 
-- [ ] **3.1 — DEX, vanna and charm per strike**, alongside the GEX you have.
-      The standard construction: per contract, `gamma × OI × 100 × spot² ×
-      0.01`, calls positive, puts negative, summed across the chain; the
-      spot² term is what converts unitless gamma into dollars-hedged per 1%
-      move. Vanna and charm are the same sum against ∂Δ/∂vol and ∂Δ/∂time.
-- [ ] **3.2 — The gamma-flip level**, where aggregate GEX crosses zero. Above
-      it dealer hedging damps moves; below it, it amplifies. It is the one
-      number SpotGamma's entire product is arranged around.
-- [ ] **3.3 — State the assumption on the chart, in the chart.** *GEX is
-      modelled, not observed.* Public chain data shows greeks, volume and open
-      interest — it does not show whether dealers are net long or short any
-      contract. Every GEX product in Part 3 assumes calls-sold / puts-sold and
-      almost none says so. **You have an entire rights registry built on
-      naming what you don't know; this is that same move, applied to a
-      number everyone else ships bare.** It is a genuine differentiator and it
-      costs one line of UI.
-- [ ] **3.4 — A 0DTE lens.** An expiry filter over flow you already have, plus
-      the GEX profile for today's expiry only. Near-free, and it is a
-      headline feature on every platform in Part 3.
+- [x] **3.1 — DEX per strike.** *Done 2026-09-15.* Cboe publishes per-contract
+      delta, so dollar delta is as direct a computation as GEX. **Vanna and
+      charm are refused, not deferred**: Cboe does not publish them, and
+      deriving them means inverting Cboe's own delta to recover a pricing model
+      this codebase does not have — importing every assumption silently. The
+      payload says so. The sign trap is the interesting part: gamma is positive
+      for both rights so `gex`'s split is an *imposed* convention, while delta
+      carries its own — imposing a second flips the puts twice.
+
+- [x] **3.2 — The gamma-flip level.** *Done 2026-09-15, by removing it.* The
+      published value was the first per-strike sign change in a strike-sorted
+      array: on a live AAPL chain with spot at 331.75 it returned **80**, a
+      strike holding $1,420 of the chain's $1.45bn. A cumulative-sum crossing
+      gives 100 — still 70% below spot — and the vendors' method is a third
+      computation again. Three candidates, no established basis, so `null` with
+      `flipUnavailable` saying why. Picking a replacement is a research step
+      with a citation, not an edit.
+
+- [x] **3.3 — State the assumption, on the payload.** *Done 2026-09-15.* Not a
+      UI task done later: an `assumptions` block ships with every response and a
+      guard asserts it. GEX is modelled, not observed — the call-positive /
+      put-negative convention *is* the dealer assumption, and it is the one
+      nobody states. Also removed `generateSyntheticGEX`, the last
+      `Math.random()` in the tree: 31 strikes over a 2024 spot map, plus a 60s
+      timer writing fresh random levels into the cache `getGEXLevels` reads as
+      the last real chain.
+
+- [x] **3.4 — A 0DTE lens.** *Done 2026-09-15.* Same aggregation restricted to
+      the chain's own trading date, taken from the vendor's timestamp rather
+      than this server's clock. `null` is the ordinary answer and that is
+      deliberate: measured live, SPY carried 310 same-day contracts and SPX 484,
+      while AAPL had none at all — showing the nearest expiry instead would
+      relabel tomorrow as today for most of the market.
+
 
 ### Phase 4 — Replay and backtest (month 2) — the crown jewel
 

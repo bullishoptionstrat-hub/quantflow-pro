@@ -17,6 +17,8 @@ import { fetchOccVolume, getOccVolume } from './connectors/occ';
 import { describeHttpError } from './httpError';
 import { probeAll, type EntitlementResult } from './entitlement';
 import { resolveMark, markSourceStandings } from './markSources';
+import { CoverageRecorder, type CoverageSample } from '../persistence/coverage';
+import type { CollectionGap } from '../persistence/types';
 import {
   ingestPrint, drainIdle, resetDaily, onSignal,
   type RawPrint, type WireFlowEvent,
@@ -146,10 +148,16 @@ export interface DarkPoolPrint {
 export interface GEXLevel {
   strike: number;
   gex: number;
+  /** See CboeGexLevel.dex — the sign is the contract's own, not a convention. */
+  dex: number;
+  /** Contracts with OI and gamma but no delta, excluded from `dex`. */
+  dexMissing: number;
   callOI: number;
   putOI: number;
   callGamma: number;
   putGamma: number;
+  callDelta: number;
+  putDelta: number;
 }
 
 // ─── In-memory stores ───────────────────────────────────────────────────────
@@ -330,22 +338,37 @@ export function getDarkPoolPrints(): DarkPoolPrint[] {
 }
 
 export function getGEXLevels(symbol: string): GEXLevel[] {
-  // Real chain first. CBOE publishes per-contract gamma and open interest, so
-  // this is a direct computation; generateSyntheticGEX below is a fallback for
-  // symbols CBOE hasn't been polled for yet, not a preference.
+  // CBOE publishes per-contract gamma, delta and open interest, so this is a
+  // direct computation from the vendor's own numbers.
+  //
+  // There is no fallback, and there used to be. `generateSyntheticGEX` built
+  // thirty-one strikes from `Math.random()` over a hardcoded 2024 spot map
+  // (`SPX: 5800`, `NVDA: 140`) and seeded four symbols with it at boot. It is
+  // the same shape as `buildMockChain`, `generateSeedFlow`, `generateDarkPool`
+  // and `generateQuotes`, all deleted for the same reason: a fabricated gamma
+  // profile looks exactly like a real one, and the only thing standing between
+  // it and a chart was a `realData: false` flag the reader had to notice.
+  //
+  // It was already being refused — `GEXChart` treats `realData === false` as
+  // unavailable and draws nothing — so those numbers existed solely to be
+  // thrown away, with a stale price map sitting in the tree for the next
+  // caller to pick up. An empty list is the honest answer to "CBOE has not
+  // been polled for this symbol", and the page has an empty state for it.
   const snap = getCboeSnapshot(symbol);
   if (snap && snap.gex.length > 0) {
     gexCache[symbol] = { levels: snap.gex, fetchedAt: Date.now() };
     return snap.gex;
   }
 
+  // The last real chain, briefly, so a poll in flight does not blank the page.
   const cached = gexCache[symbol];
-  if (cached && Date.now() - cached.fetchedAt < 60_000) {
-    return cached.levels;
-  }
-  const levels = generateSyntheticGEX(symbol);
-  gexCache[symbol] = { levels, fetchedAt: Date.now() };
-  return levels;
+  if (cached && Date.now() - cached.fetchedAt < 60_000) return cached.levels;
+  return [];
+}
+
+/** The same aggregation restricted to contracts expiring today, if any. */
+export function getZeroDteLevels(symbol: string) {
+  return getCboeSnapshot(symbol)?.zeroDte ?? null;
 }
 
 export function getFlowStats() {
@@ -753,13 +776,6 @@ export function startIngestion(io: any): void {
       resetDaily();
       console.log('[ingestion] daily engine state reset');
     }
-  }, 60_000).unref();
-
-  // Refresh GEX every 60 seconds
-  setInterval(() => {
-    ['SPX', 'SPY', 'QQQ', 'NVDA'].forEach((s) => {
-      gexCache[s] = { levels: generateSyntheticGEX(s), fetchedAt: Date.now() };
-    });
   }, 60_000).unref();
 
   // Dark pool simulation refresh every 5 minutes
@@ -1465,14 +1481,75 @@ function startSignalHistory(): void {
 
   // Grade due checkpoints once a minute. The shortest horizon is 15 minutes,
   // so a 60s tick is well inside the lateness tolerance.
+  //
+  // The same tick records collection coverage. `collection_gaps` had a table,
+  // a type, a constraint set and two store implementations, and no caller —
+  // so the apparatus built to stop a window of missing data being read as a
+  // quiet tape had never written a row. See persistence/coverage.ts.
+  coverage = new CoverageRecorder(`run${Date.now()}`);
   setInterval(() => {
     void grader?.tick().catch(() => { /* counted in grader stats */ });
+
+    const gap = coverage?.tick(sampleCoverage(), Date.now());
+    if (gap) {
+      // Fire-and-forget for the same reason recording is: a coverage row must
+      // never be able to take down the process that is collecting.
+      void store.recordGap(gap).catch(() => { /* nothing else to do here */ });
+      lastCoverageGap = gap;
+    }
   }, 60_000).unref();
 
   const p = describePersistence();
   console.log(`[history] store=${p.store} durable=${p.durable} mode=${p.businessMode}`);
   if (!p.durable) console.warn(`[history] ${p.reason}`);
 }
+
+let coverage: CoverageRecorder | undefined;
+let lastCoverageGap: CollectionGap | null = null;
+
+/**
+ * What the coverage recorder needs to know, read off the live board.
+ *
+ * "Collecting" is deliberately **not** "the process is up". A process with
+ * every connector disabled is running perfectly and observing nothing, and
+ * that is precisely the window this table exists to mark. It is also not "any
+ * source is connected": CBOE and FRED being up says nothing about whether an
+ * options print could have been recorded, so the question is asked of the
+ * sources that could actually be persisted.
+ */
+function sampleCoverage(): CoverageSample {
+  const recordable = RECORDABLE_FOR_COVERAGE.filter((s) => sources[s] === 'connected');
+  const stats = describePersistence().recorder;
+  // Real signals only. The simulator runs whenever no live feed does, so
+  // counting synthetic rows here would report a dead deployment as productive
+  // — which is the exact shape of the `78 synthetic, 0 real` track record.
+  const recorded = (stats?.recorded ?? 0) - (stats?.syntheticRecorded ?? 0);
+
+  if (recordable.length > 0) {
+    return { collecting: true, reason: `${recordable.join(', ')} connected`, recorded };
+  }
+  // Name the states rather than just the absence, so a reason read months
+  // later says whether this was an outage, a missing key or a rights refusal.
+  const detail = RECORDABLE_FOR_COVERAGE
+    .map((s) => `${s}=${sources[s] ?? 'unstarted'}`)
+    .join(', ');
+  return {
+    collecting: false,
+    reason: `no recordable source connected (${detail})`,
+    recorded,
+  };
+}
+
+/**
+ * The sources whose prints could reach the durable history.
+ *
+ * Same list as the doctor's `RECORDABLE_SOURCES`, and it has to stay that way
+ * — a source that can be recorded but is not counted here makes a productive
+ * window look like an outage. `coverage.test.ts` holds the two together.
+ */
+const RECORDABLE_FOR_COVERAGE = [
+  'tradier', 'polygon', 'marketdata', 'schwab', 'tastytrade',
+] as const;
 
 /**
  * Rendered into /api/health so the collection state is visible, not assumed.
@@ -1504,6 +1581,16 @@ export function getSignalHistoryStatus() {
     // authenticated call away, at /api/track-record.
     errorsSuppressed: Boolean(p.recorder?.lastError || graderStats?.lastError),
     rights: rightsSnapshot(),
+    /**
+     * Whether this process is currently able to collect, and the gap it is
+     * accumulating if not. A reader looking at "0 real" can otherwise not tell
+     * an idle tape from a process that has been observing nothing for a week.
+     */
+    coverage: {
+      ...sampleCoverage(),
+      openGap: coverage?.getOpenGap() ?? null,
+      lastGap: lastCoverageGap,
+    },
   };
 }
 
@@ -1613,40 +1700,8 @@ function seedInitialData(): void {
 
   addDarkPoolPrints();
 
-  ['SPX', 'SPY', 'QQQ', 'NVDA'].forEach((sym) => {
-    gexCache[sym] = { levels: generateSyntheticGEX(sym), fetchedAt: Date.now() };
-  });
 }
 
-function generateSyntheticGEX(symbol: string): GEXLevel[] {
-  const spotMap: Record<string, number> = {
-    SPX: 5800, SPY: 580, QQQ: 480, NVDA: 140, AAPL: 220, TSLA: 250, MSFT: 410,
-  };
-  const spot = spotMap[symbol] ?? 100;
-  const levels: GEXLevel[] = [];
-
-  for (let i = -15; i <= 15; i++) {
-    const strike = Math.round((spot * (1 + i * 0.005)) / 5) * 5;
-    const distFromSpot = Math.abs(i);
-    const atm = distFromSpot <= 2;
-
-    const callOI = Math.floor((atm ? 50000 : 20000) * Math.exp(-distFromSpot * 0.3) + Math.random() * 5000);
-    const putOI = Math.floor((atm ? 45000 : 18000) * Math.exp(-distFromSpot * 0.3) + Math.random() * 5000);
-    const callGamma = 0.03 * Math.exp(-distFromSpot * 0.4);
-    const putGamma = 0.025 * Math.exp(-distFromSpot * 0.4);
-    const netGEX = (callOI * callGamma - putOI * putGamma) * spot * spot * 0.01;
-
-    levels.push({
-      strike,
-      gex: parseFloat(netGEX.toFixed(2)),
-      callOI, putOI,
-      callGamma: parseFloat(callGamma.toFixed(6)),
-      putGamma: parseFloat(putGamma.toFixed(6)),
-    });
-  }
-
-  return levels.sort((a, b) => a.strike - b.strike);
-}
 
 
 // ─── CBOE delayed options chains ─────────────────────────────────────────────

@@ -142,6 +142,18 @@ const LEDGER: Record<string, string> = {
     'keyword counts this connector accumulated itself and are always defined. ' +
     'Posts mentioning a ticker with no directional keyword score 0, which is ' +
     'the honest reading, rather than NaN.',
+  'ingestion/index.ts: stats?.recorded ?? 0':
+    'Not a vendor reading. `describePersistence().recorder` is null until the ' +
+    'recorder is constructed, and a recorder that does not exist has recorded ' +
+    'nothing — so zero is the true count, not a stand-in for an unknown one. ' +
+    'It feeds `sampleCoverage`, where the alternative reading (unknown) would ' +
+    'be indistinguishable from it: a process with no recorder is not ' +
+    'collecting, which that function already reports on other grounds.',
+  'ingestion/index.ts: stats?.syntheticRecorded ?? 0':
+    'The other side of the same subtraction, and it must default the same way ' +
+    'or the difference is wrong rather than merely unknown — real = recorded ' +
+    '- synthetic, and defaulting one operand but not the other would report ' +
+    'every recorded signal as real.',
   'ingestion/index.ts: unparsedFrames[source] ?? 0':
     'Initialising a counter on first increment. Counting from zero is what a ' +
     'counter does.',
@@ -151,13 +163,6 @@ const LEDGER: Record<string, string> = {
   'ingestion/index.ts: b.ts ?? 0':
     'The other side of that same comparison. Both operands need the default ' +
     'or the sort is asymmetric, which is a different bug from this one.',
-
-  // ── Deliberately synthetic, and labelled as such on the wire.
-  'ingestion/index.ts: spotMap[symbol] ?? 100':
-    'Inside `generateSyntheticGEX`, whose whole output is served with ' +
-    "`source: 'synthetic'` and `realData: false`, and which the frontend " +
-    'declines to draw. A fabricated number inside an declared fabricator is ' +
-    'the honest case this repo already settled on for demo mode.',
 
   // ── Scoring inputs whose default cannot change an outcome. Recorded rather
   // than restructured: the reasoning is what needs to be checkable.

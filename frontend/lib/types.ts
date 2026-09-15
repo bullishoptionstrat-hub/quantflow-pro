@@ -161,32 +161,65 @@ export interface PowerAlert {
 export interface GEXLevel {
   strike: number
   gex: number
+  /**
+   * Open-interest-weighted dollar delta. **No sign convention is applied** —
+   * delta already carries its own, unlike gamma, so this is what the open
+   * interest is long or short rather than "dealer delta exposure".
+   */
+  dex: number
+  /** Contracts here with open interest and gamma but no delta, excluded above. */
+  dexMissing: number
   callOI: number
   putOI: number
   callGamma: number
   putGamma: number
+  callDelta: number
+  putDelta: number
 }
 
 /** `GET /api/gex` — the envelope. `realData` is the field that matters. */
 export interface GEXResponse {
   symbol: string
   levels: GEXLevel[]
+  /**
+   * Same aggregation, contracts expiring on the chain's own date only.
+   * `null` is the ordinary answer — only the index products and a few names
+   * run daily expiries.
+   */
+  zeroDte: { expiry: string; levels: GEXLevel[]; contractCount: number } | null
+  /**
+   * Always `null` now, with `flipUnavailable` saying why.
+   *
+   * The old value was the first per-strike sign change in a strike-sorted
+   * array — on a real AAPL chain with spot at 331.75 that returned 80, a
+   * strike carrying $1,420 of the chain's $1.45bn. Three candidate methods
+   * give three different answers and none is established here, so nothing is
+   * published. The chart already handled a null: it falls back to the largest
+   * |gex| for centring and every flip marker is null-guarded.
+   */
   flipStrike: number | null
+  flipUnavailable?: string
   keyLevels: {
-    maxGEXStrike: number | null
-    maxGEX: number | null
-    minGEXStrike: number | null
-    minGEX: number | null
+    gex: { maxStrike: number | null; max: number | null; minStrike: number | null; min: number | null }
+    dex: { maxStrike: number | null; max: number | null; minStrike: number | null; min: number | null }
+    totalGex: number | null
+    totalDex: number | null
   }
+  /** What a reader has to know to read these numbers. See the route. */
+  assumptions?: Record<string, string>
   updatedAt: string
-  /** `'cboe'` for a real delayed chain, `'synthetic'` for the fallback. */
-  source: 'cboe' | 'synthetic' | string
+  /** `'cboe'`, or `null` when no chain has been received. */
+  source: 'cboe' | null | string
   /**
    * Whether these levels came from a real chain. The route's own comment:
    * "The UI must be able to tell them apart — a fabricated gamma flip looks
-   * exactly like a real one."
+   * exactly like a real one." There is no longer a fabricated path to tell it
+   * apart *from* — `generateSyntheticGEX` is deleted — so this is now always
+   * true when there are levels at all.
    */
   realData: boolean
+  /** Why there is nothing, when there is nothing. */
+  unavailableReason?: string | null
   realtime: boolean
   delayedMinutes: number | null
 }

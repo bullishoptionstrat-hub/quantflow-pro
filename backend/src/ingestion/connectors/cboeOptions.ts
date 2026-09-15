@@ -25,10 +25,41 @@ import { numeric } from '../optionalNumber';
 export interface CboeGexLevel {
   strike: number;
   gex: number;
+  /**
+   * Open-interest-weighted dollar delta at this strike, in dollars of
+   * underlying per contract-set.
+   *
+   *   delta x OI x 100 x spot
+   *
+   * **The sign is the contract's own, and that is the whole difference from
+   * `gex` above.** Gamma is positive for calls and puts alike, so the
+   * call-positive / put-negative split in `gex` is a convention *imposed* to
+   * express an assumed dealer book. Delta already carries its sign — calls
+   * positive, puts negative — so imposing a second one would flip the puts
+   * twice and report a book that is the mirror of the one on the tape.
+   *
+   * Consequently this is **not** "dealer delta exposure": no dealer-side
+   * assumption is applied here. It is what the open interest itself is long or
+   * short, which is the quantity the vendor's own numbers support.
+   */
+  dex: number;
+  /**
+   * Contracts at this strike that had open interest and gamma but no delta,
+   * and so contributed nothing to `dex`.
+   *
+   * Published rather than swallowed: `dex` is a sum, and a sum missing terms
+   * is not the same quantity as a complete one. Zero-filling the absent deltas
+   * would have hidden this entirely, since zero is the additive identity —
+   * which is exactly why `defaultedReadings.test.ts` refuses `?? 0` on a
+   * market reading.
+   */
+  dexMissing: number;
   callOI: number;
   putOI: number;
   callGamma: number;
   putGamma: number;
+  callDelta: number;
+  putDelta: number;
 }
 
 export interface CboeUnusualContract {
@@ -70,12 +101,37 @@ export interface CboeUnusualContract {
   lastTradeTime: string | null;
 }
 
+/**
+ * Same-day expiry, when the chain has one.
+ *
+ * `null` is the common case and it is the honest one. Measured on 2026-09-15:
+ * SPY carried 310 same-day contracts and SPX 484, while AAPL's nearest expiry
+ * was the *next* day — it had no 0DTE at all. Only the index products and a
+ * handful of names run daily expiries, so a "0DTE" panel that quietly showed
+ * the nearest expiry instead would relabel tomorrow's contracts as today's for
+ * most of the market, which is the fabrication this whole file avoids
+ * elsewhere.
+ */
+export interface CboeZeroDte {
+  /** The chain's own trading date, which is also the expiry being shown. */
+  expiry: string;
+  levels: CboeGexLevel[];
+  contractCount: number;
+}
+
 export interface CboeSnapshot {
   symbol: string;
   spot: number;
   /** 30-day implied volatility, or `null` where the chain did not carry it. */
   iv30: number | null;
   gex: CboeGexLevel[];
+  /**
+   * The same aggregation restricted to contracts expiring on the chain's own
+   * date. `null` when the chain carries none — see `CboeZeroDte`.
+   */
+  zeroDte: CboeZeroDte | null;
+  /** The chain's own trading date, from the vendor's clock rather than ours. */
+  tradeDate: string | null;
   unusual: CboeUnusualContract[];
   contractCount: number;
   asOf: string;
@@ -138,6 +194,18 @@ function gexFor(gamma: number, oi: number, spot: number): number {
   return gamma * oi * 100 * spot * spot * 0.01;
 }
 
+/**
+ * Dollar delta: `delta x OI x 100 x spot`.
+ *
+ * One factor of spot, not two — unlike `gexFor`. Delta is already a share
+ * count per contract, so a single spot converts it to dollars; gamma needs a
+ * second factor because it is a *rate of change* of delta and the extra spot
+ * is what scales a $1 move into a 1% one.
+ */
+function dexFor(delta: number, oi: number, spot: number): number {
+  return delta * oi * 100 * spot;
+}
+
 export async function fetchCboeChain(symbol: string): Promise<CboeSnapshot | null> {
   const upper = symbol.toUpperCase();
   const cboeSym = CBOE_SYMBOL[upper] ?? upper;
@@ -156,8 +224,48 @@ export async function fetchCboeChain(symbol: string): Promise<CboeSnapshot | nul
   const spot = numeric(d.current_price) ?? numeric(d.close) ?? 0;
   if (!(spot > 0)) return null;
 
+  // The chain's own date, not `new Date()`. The server's clock can be in any
+  // timezone and the question — "does this contract expire today?" — is asked
+  // in the market's, so the vendor's own timestamp is the only one that
+  // answers it without an assumption.
+  const tradeDate = typeof d.last_trade_time === 'string' && d.last_trade_time.length >= 10
+    ? d.last_trade_time.slice(0, 10)
+    : null;
+
   const byStrike = new Map<number, CboeGexLevel>();
+  const zeroDteByStrike = new Map<number, CboeGexLevel>();
+  let zeroDteContracts = 0;
   const unusual: CboeUnusualContract[] = [];
+
+  /** Accumulate one contract into one strike bucket. */
+  const accumulate = (
+    into: Map<number, CboeGexLevel>,
+    strike: number, right: 'C' | 'P', oi: number, gamma: number,
+    delta: number | null,
+  ): void => {
+    let lvl = into.get(strike);
+    if (!lvl) {
+      lvl = {
+        strike, gex: 0, dex: 0, dexMissing: 0, callOI: 0, putOI: 0,
+        callGamma: 0, putGamma: 0, callDelta: 0, putDelta: 0,
+      };
+      into.set(strike, lvl);
+    }
+    if (right === 'C') {
+      lvl.callOI += oi;
+      lvl.callGamma += gamma;
+      if (delta !== null) lvl.callDelta += delta;
+      lvl.gex += gexFor(gamma, oi, spot);
+    } else {
+      lvl.putOI += oi;
+      lvl.putGamma += gamma;
+      if (delta !== null) lvl.putDelta += delta;
+      lvl.gex -= gexFor(gamma, oi, spot);
+    }
+    // No sign flip, for either right. See `CboeGexLevel.dex`.
+    if (delta === null) lvl.dexMissing++;
+    else lvl.dex += dexFor(delta, oi, spot);
+  };
 
   for (const r of rows) {
     const parsed = parseOsi(String(r.option ?? ''));
@@ -171,22 +279,24 @@ export async function fetchCboeChain(symbol: string): Promise<CboeSnapshot | nul
     const rawOi = numeric(r.open_interest);
     const oi = rawOi ?? 0;
     const gamma = numeric(r.gamma) ?? 0;
+    // Null, not zero, and the zero-fill guard is what forced the distinction.
+    //
+    // `?? 0` was the first version and it is wrong in the way this repo keeps
+    // finding: an option's delta is never actually zero, so a contract the
+    // vendor sent no delta for would have been recorded as one with no
+    // directional exposure and silently folded into the sum. Zero being the
+    // additive identity makes it *invisible* rather than harmless.
+    //
+    // So a deltaless contract is skipped for DEX and counted in `dexMissing`,
+    // and it still joins the gamma aggregation it legitimately belongs to.
+    const delta = numeric(r.delta);
     const volume = numeric(r.volume) ?? 0;
 
     if (oi > 0 && gamma !== 0) {
-      let lvl = byStrike.get(parsed.strike);
-      if (!lvl) {
-        lvl = { strike: parsed.strike, gex: 0, callOI: 0, putOI: 0, callGamma: 0, putGamma: 0 };
-        byStrike.set(parsed.strike, lvl);
-      }
-      if (parsed.right === 'C') {
-        lvl.callOI += oi;
-        lvl.callGamma += gamma;
-        lvl.gex += gexFor(gamma, oi, spot);
-      } else {
-        lvl.putOI += oi;
-        lvl.putGamma += gamma;
-        lvl.gex -= gexFor(gamma, oi, spot);
+      accumulate(byStrike, parsed.strike, parsed.right, oi, gamma, delta);
+      if (tradeDate !== null && parsed.expiry === tradeDate) {
+        accumulate(zeroDteByStrike, parsed.strike, parsed.right, oi, gamma, delta);
+        zeroDteContracts++;
       }
     }
 
@@ -223,6 +333,16 @@ export async function fetchCboeChain(symbol: string): Promise<CboeSnapshot | nul
     spot,
     iv30: numeric(d.iv30),
     gex: [...byStrike.values()].sort((a, b) => a.strike - b.strike),
+    // Gated on there being some: an empty level list under a real expiry would
+    // render as "0DTE gamma is flat today", which is a claim. Nothing is not.
+    zeroDte: tradeDate !== null && zeroDteByStrike.size > 0
+      ? {
+        expiry: tradeDate,
+        levels: [...zeroDteByStrike.values()].sort((a, b) => a.strike - b.strike),
+        contractCount: zeroDteContracts,
+      }
+      : null,
+    tradeDate,
     unusual: unusual.slice(0, 40),
     contractCount: rows.length,
     asOf: d.last_trade_time ?? new Date().toISOString(),
