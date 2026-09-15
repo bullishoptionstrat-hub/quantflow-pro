@@ -34,6 +34,15 @@ interface Health {
   ingestion?: {
     sources?: Record<string, string>
     sourceErrors?: Record<string, string>
+    /**
+     * The "connected but degraded" channel — and until now, nothing rendered
+     * it. It has carried Polygon's missing-NBBO case since long before the
+     * entitlement probe existed, and `mergeEntitlementNotes` now adds a line
+     * here when a vendor refuses the key of a source that is otherwise
+     * contributing. A source can be `connected` and wrong, and this page said
+     * `✓ LIVE` to that.
+     */
+    sourceNotes?: Record<string, string>
     rightsRefusals?: Array<{
       source: string
       datasetId?: string
@@ -53,6 +62,19 @@ const STATUS: Record<string, { label: string; fg: string; bg: string; hint: stri
   disabled:  { label: 'NO CREDENTIALS', fg: '#fde68a', bg: 'rgba(251,191,36,0.12)', hint: 'Set the variable named below in the backend environment.' },
   error:     { label: '⚠ ERROR',        fg: '#fdba74', bg: 'rgba(251,146,60,0.14)', hint: 'The source answered with a failure.' },
   refused:   { label: '⛔ REFUSED',     fg: '#fca5a5', bg: 'rgba(248,113,113,0.15)', hint: 'Stopped on data rights. No key will turn this on.' },
+}
+
+/**
+ * Contributing, and something about it is not right.
+ *
+ * Not a backend state — `sources` has four and this is not a fifth. It is what
+ * `connected` plus a note means, decided here because the note is what the
+ * backend already says and a parallel `disposition` field would be a second
+ * writer on a question three channels already answer.
+ */
+const DEGRADED = {
+  label: '◐ DEGRADED', fg: '#fde68a', bg: 'rgba(251,191,36,0.12)',
+  hint: 'Data is arriving and something about it is qualified. Read the note.',
 }
 
 const card: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 16 }
@@ -91,6 +113,7 @@ export default function SettingsPage() {
 
   const sources = health?.ingestion?.sources ?? {}
   const sourceErrors = health?.ingestion?.sourceErrors ?? {}
+  const sourceNotes = health?.ingestion?.sourceNotes ?? {}
   const refusals = health?.ingestion?.rightsRefusals ?? []
 
   // Live first, then the ones needing attention, then refusals — and
@@ -142,10 +165,16 @@ export default function SettingsPage() {
             ) : (
               <div style={{ padding: '8px 0' }}>
                 {names.map(name => {
-                  const st = STATUS[sources[name]] ?? {
+                  const note = sourceNotes[name]
+                  // A contributing source carrying a note is not plainly live.
+                  // The note is the whole reason this distinction exists: an
+                  // entitlement the vendor refuses, an NBBO lookup that is not
+                  // arriving, frames that failed to parse.
+                  const base = STATUS[sources[name]] ?? {
                     label: sources[name]?.toUpperCase() ?? 'UNKNOWN',
                     fg: 'var(--text-muted)', bg: 'rgba(255,255,255,0.05)', hint: '',
                   }
+                  const st = sources[name] === 'connected' && note ? DEGRADED : base
                   const why = sourceErrors[name]
                   return (
                     <div key={name} style={{ padding: '10px 16px', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
@@ -165,6 +194,16 @@ export default function SettingsPage() {
                       {why && (
                         <div style={{ marginTop: 4, fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.55, wordBreak: 'break-word' }}>
                           {why}
+                        </div>
+                      )}
+                      {/*
+                        Rendered separately from `why` rather than concatenated:
+                        an error is why nothing is arriving, a note is a
+                        qualification on what is. A source can have both.
+                      */}
+                      {note && (
+                        <div style={{ marginTop: 4, fontSize: 10, color: '#fde68a', lineHeight: 1.55, wordBreak: 'break-word' }}>
+                          {note}
                         </div>
                       )}
                     </div>

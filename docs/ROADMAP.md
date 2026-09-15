@@ -328,11 +328,16 @@ every day is sample.
       token. So this buys auditability today and resilience only once 1.3 lands
       — Tradier would rank above Twelve Data automatically.
 
-- [ ] **1.5 — Decide what `refused` should mean to the operator.** Yahoo is
-      `refused on data rights, not a fault` and that distinction is correct and
-      well made. But nine `disabled` + one `refused` + one `error` all render
-      as "not working" on a status board. Worth one pass so the board says
-      *why* at a glance.
+- [x] **1.5 — Decide what `refused` should mean to the operator.** *Done
+      2026-09-15.* The `disabled` / `refused` / `error` distinction was already
+      well made on the settings board. The real gap was one layer over: the
+      backend's fourth channel, `sourceNotes` — the "connected but degraded"
+      vocabulary — **had never been read by the browser at all**, so a source
+      could be contributing with its NBBO lookups refused, or with the vendor
+      refusing its key, and the page said `✓ LIVE` in green. Notes now render
+      in their own line, and `connected` + a note reads `◐ DEGRADED`. No new
+      backend field: a derived `disposition` would be a seventh channel
+      answering what three already answer.
 
 - [ ] **2.1** Watch `/api/track-record` climb toward n=30. Let it run. The
       floor exists so you don't fool yourself; respect it.
