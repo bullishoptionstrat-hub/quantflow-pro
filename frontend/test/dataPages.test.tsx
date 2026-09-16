@@ -106,14 +106,45 @@ describe('GEX chart', () => {
     expect(screen.queryByText(/RESISTANCE/)).toBeNull()
   })
 
-  test('reports the flip the backend computed', async () => {
+  test('shows no flip when the backend publishes none', async () => {
+    // This asserted that the chart rendered `$${gex.flipStrike}`. The backend
+    // no longer computes one: its old rule was the first per-strike sign
+    // change in a strike-sorted array, which on a real AAPL chain with spot at
+    // 331.75 returned 80 — a strike holding $1,420 of the chain's $1.45bn.
+    // Three candidate methods give three answers and none is established, so
+    // `flipStrike` is null with `flipUnavailable` saying why.
+    //
+    // Re-pointed rather than deleted: what must stay true is that the chart
+    // reports the backend's flip and never substitutes one, which is the same
+    // guarantee this test always made — the value it checks has just become
+    // "none".
     const gex = fixture('gex')
+    expect(gex.flipStrike).toBeNull()
+    expect(typeof gex.flipUnavailable).toBe('string')
+
     mockApi({ '/api/gex': gex })
     const { GEXChart } = await import('@/components/gex/GEXChart')
 
     render(<GEXChart />)
-    await waitFor(() => {
-      expect(screen.getByText(new RegExp(`\\$${gex.flipStrike.toLocaleString()}`))).toBeDefined()
-    })
+    await waitFor(() => expect(screen.getByText(/LARGEST GAMMA EXPOSURE/i)).toBeDefined())
+    expect(screen.queryByText(/GAMMA FLIP/)).toBeNull()
+    expect(screen.queryByText(/flip at/)).toBeNull()
+  })
+
+  test('renders a real chain from the recorded fixture', async () => {
+    // The fixture is a live capture, so this is the end-to-end shape check:
+    // 446 strikes of real Cboe gamma, and the provenance badge that goes with
+    // a delayed chain.
+    const gex = fixture('gex')
+    expect(gex.realData).toBe(true)
+    expect(gex.levels.length).toBeGreaterThan(100)
+    expect(gex.levels[0]).toHaveProperty('dex')
+    expect(gex.levels[0]).toHaveProperty('dexMissing')
+
+    mockApi({ '/api/gex': gex })
+    const { GEXChart } = await import('@/components/gex/GEXChart')
+
+    render(<GEXChart />)
+    await waitFor(() => expect(screen.getByText(/CBOE/i)).toBeDefined())
   })
 })

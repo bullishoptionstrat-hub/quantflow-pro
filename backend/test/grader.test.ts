@@ -28,14 +28,25 @@ function rec(over: Partial<SignalRecord> = {}): SignalRecord {
   };
 }
 
-/** A clock and a spot feed the test drives directly. */
+/**
+ * A clock and a mark feed the test drives directly.
+ *
+ * The lookup returns a `Mark`, not a bare number — provenance is part of the
+ * value so an outcome cannot be recorded without it. `TEST_MARK_SOURCE` stands
+ * in for whichever vendor the registry would have resolved.
+ */
+const TEST_MARK_SOURCE = 'twelvedata';
+const asMark = (price: number | undefined) =>
+  price === undefined ? undefined
+    : { price, source: TEST_MARK_SOURCE, rightsClass: 'UNVERIFIED' };
+
 function harness(prices: number[]) {
   const store = new InMemorySignalStore();
   let now = T0 + 600;
   let idx = 0;
   const g = new SignalGrader(
     store,
-    () => prices[Math.min(idx, prices.length - 1)],
+    () => asMark(prices[Math.min(idx, prices.length - 1)]),
     {},
     () => now,
   );
@@ -199,4 +210,58 @@ test('stats tally graded, ungraded and label counts', async () => {
   assert.equal(s.graded, 1);
   assert.equal(s.positive, 1);
   assert.equal(s.ungraded, 1);
+});
+
+test('a graded outcome records which source priced each mark', async () => {
+  // The claim this makes durable: no row carries a price whose origin is
+  // recoverable only by knowing which vendor happened to be wired in that day.
+  // Before the mark registry, `entryMark: 500` was the whole story.
+  const h = harness([500, 505]);
+  h.grader.register(rec());
+  h.setPriceIndex(1);
+  h.advanceTo(T0 + 530 + M15);
+  await h.grader.tick();
+
+  const [o] = await h.store.listOutcomes('k1');
+  assert.equal(o!.entryMarkSource, TEST_MARK_SOURCE);
+  assert.equal(o!.exitMarkSource, TEST_MARK_SOURCE);
+});
+
+test('an outcome with no mark carries no source either', async () => {
+  // The pairing the schema CHECK enforces, asserted here on the writing side:
+  // a source without a mark would be an attribution for a price that does not
+  // exist, which is worse than an absence.
+  const h = harness([]);           // the lookup finds nothing
+  h.grader.register(rec());
+  h.advanceTo(T0 + 530 + M15);
+  await h.grader.tick();
+
+  const [o] = await h.store.listOutcomes('k1');
+  assert.equal(o!.label, 'UNGRADED');
+  assert.equal(o!.entryMark, undefined);
+  assert.equal(o!.entryMarkSource, undefined);
+  assert.equal(o!.exitMark, undefined);
+  assert.equal(o!.exitMarkSource, undefined);
+});
+
+test('entry and exit marks are attributed independently', async () => {
+  // They can differ: a vendor can drop out between registration and a
+  // checkpoint, and an excursion measured across two price sources is worth
+  // being able to spot after the fact rather than never.
+  const store = new InMemorySignalStore();
+  let now = T0 + 600;
+  let leg = 0;
+  const marks = [
+    { price: 500, source: 'twelvedata', rightsClass: 'UNVERIFIED' },
+    { price: 505, source: 'tradier', rightsClass: 'PERMITTED' },
+  ];
+  const g = new SignalGrader(store, () => marks[Math.min(leg, 1)], {}, () => now);
+  g.register(rec());
+  leg = 1;
+  now = T0 + 530 + M15;
+  await g.tick();
+
+  const [o] = await store.listOutcomes('k1');
+  assert.equal(o!.entryMarkSource, 'twelvedata');
+  assert.equal(o!.exitMarkSource, 'tradier');
 });

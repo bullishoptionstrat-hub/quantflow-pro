@@ -101,28 +101,26 @@ test('every blocked check says what to do about it', () => {
   }
 });
 
-test('the grader really does depend on the variable the doctor names', () => {
-  // The check is only worth anything if TwelveData is genuinely the grader's
-  // sole price source. If a fallback were ever added, this claim would go
-  // stale in the least visible way — an operator setting a key they no longer
-  // need, or not setting one they do.
+test('the grader really does take its mark from the registry the doctor reports', () => {
+  // This test used to assert the opposite shape: that the grader read
+  // `getSpotPrice` and that `getSpotPrice` came from TWELVE_DATA_API_KEY. Its
+  // own comment said the claim would go stale "in the least visible way" if a
+  // fallback were ever added — an operator setting a key they no longer need,
+  // or not setting one they do. The fallback has now been added, so the claim
+  // is re-pointed rather than deleted: what must stay true is that the doctor's
+  // check 4 and the running grader consult the *same* registry.
   const ingestion = readFileSync(join(__dirname, '..', 'src', 'ingestion', 'index.ts'), 'utf8');
-  // Matches an expression body as well as a block one. The block was required
-  // by an earlier spelling of this regex, and `getSpotPrice` returning
-  // `number | null` removed the `px > 0 ? px : undefined` guard that made a
-  // block necessary — so the test failed on a change that strengthened exactly
-  // the dependency it exists to assert. The claim is where the mark comes
-  // from, not how many braces surround it.
   assert.match(
     ingestion,
-    /new SignalGrader\(store,\s*\(underlying\)\s*=>[\s\S]{0,200}?getSpotPrice\(underlying\)/,
-    'the grader should still take its mark from getSpotPrice',
+    /new SignalGrader\(store,\s*\(underlying\)\s*=>[\s\S]{0,200}?resolveMark\(underlying\)/,
+    'the grader should take its mark from resolveMark',
   );
-  const twelve = readFileSync(
-    join(__dirname, '..', 'src', 'ingestion', 'connectors', 'twelveData.ts'), 'utf8',
-  );
-  assert.match(twelve, /process\.env\.TWELVE_DATA_API_KEY/,
-    'and getSpotPrice should still come from the connector the doctor names');
+  const doctor = readFileSync(
+    join(__dirname, '..', 'tools', 'collection', 'doctor.ts'), 'utf8');
+  assert.match(doctor, /markSourceStandings\(/,
+    'and check 4 should report that same registry, not a hardcoded variable');
+  assert.ok(!doctor.includes("has(env, [SPOT_SOURCE_VAR])"),
+    'check 4 must not decide a mark is available from one env var being set');
 });
 
 test('the doctor covers every recordable source the registry permits', () => {

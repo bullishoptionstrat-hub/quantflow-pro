@@ -113,7 +113,21 @@ export interface ClassifiedSignal {
   score: number;
   scoreBreakdown: Record<string, number>;
   /** For MULTI_LEG: best-effort structure guess. Never a trade trigger. */
-  spreadGuess?: "VERTICAL" | "CALENDAR" | "STRADDLE_STRANGLE" | "UNKNOWN";
+  /**
+   * The structure two legs form, when it can be named.
+   *
+   * `RISK_REVERSAL` and `STRADDLE_STRANGLE` are both a call and a put at one
+   * expiry, and they are told apart by whether the legs oppose each other —
+   * a directional bet financed by the other wing, versus a bet on movement in
+   * either direction. `UNKNOWN` when a leg's side is `AMBIGUOUS`: a structure
+   * defined by opposition cannot be named from a leg with no polarity.
+   */
+  spreadGuess?:
+    | "VERTICAL"
+    | "CALENDAR"
+    | "STRADDLE_STRANGLE"
+    | "RISK_REVERSAL"
+    | "UNKNOWN";
   /** Audit trail: every print id that formed this signal. */
   printIds: string[];
   /** True when the feeding source is synthetic/replay — must surface in UI. */

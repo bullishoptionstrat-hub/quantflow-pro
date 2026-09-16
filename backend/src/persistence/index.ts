@@ -95,3 +95,7 @@ export function __resetPersistenceForTests(): void {
   mode = undefined;
   selection = { kind: 'none', durable: false, reason: 'not initialised' };
 }
+export {
+  CoverageRecorder, classifyWindow, summariseCoverage,
+  type CoverageSample, type WindowVerdict,
+} from './coverage';

@@ -31,6 +31,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const CONNECTORS = join(__dirname, '..', 'src', 'ingestion', 'connectors');
+/** The timer rule is about every poller in the service, not one directory. */
+const SRC = join(__dirname, '..', 'src');
 
 test('a coin with no price is not a quote', async () => {
   const gecko = await loadGecko([
@@ -175,11 +177,33 @@ test('every connector poller releases the event loop', () => {
   // alive, so any process that imports a connector and expects to exit — a
   // CLI, a test, a one-shot script — waited forever on a timer that would
   // never matter to it. This test found it by hanging.
-  const { readdirSync } = require('node:fs') as typeof import('node:fs');
+  //
+  // The scope used to be `CONNECTORS` — one directory. That is the boundary
+  // problem this repo keeps finding: the zero-fill ledger drew its own edge and
+  // the worst offender was outside it; the dotenv guard opened a scope of one
+  // filename and `tools/` was on the other side. Here the rule is "every poller
+  // releases the event loop" and the scan covered the twenty timers in
+  // `connectors/` while **nine in `src/ingestion/index.ts` were never looked
+  // at**. They are all inside `start*` functions reached only from `server.ts`,
+  // which holds the loop open with its own listener, so nothing was hanging —
+  // this was a guard whose scope did not match its own stated rule, not nine
+  // live defects. It is widened rather than exception-listed, because an
+  // exception list is exactly how the committed archives survived fifty audits.
+  const { readdirSync, statSync } = require('node:fs') as typeof import('node:fs');
   const offenders: string[] = [];
 
-  for (const f of readdirSync(CONNECTORS).filter((n) => n.endsWith('.ts'))) {
-    const src = readFileSync(join(CONNECTORS, f), 'utf8');
+  const walk = (dir: string, out: string[] = []): string[] => {
+    for (const e of readdirSync(dir)) {
+      const full = join(dir, e);
+      if (statSync(full).isDirectory()) walk(full, out);
+      else if (full.endsWith('.ts')) out.push(full);
+    }
+    return out;
+  };
+
+  for (const path of walk(SRC)) {
+    const f = path;
+    const src = readFileSync(path, 'utf8');
     // Each `setInterval(` must have `.unref()` before the statement ends.
     let i = src.indexOf('setInterval(');
     while (i !== -1) {

@@ -158,7 +158,17 @@ export class InMemorySignalStore implements SignalStore {
         `is usable — state what actually happened.`,
       );
     }
-    this.gaps.push(gap);
+    // Upsert on `id`, matching `supabaseStore.recordGap`, which does an
+    // `upsert`. This pushed, so the two stores disagreed about the same call:
+    // an open gap re-recorded each tick as it was extended became one row in
+    // Postgres and one row per tick in memory — so the in-memory coverage
+    // summary would have counted the same window dozens of times, and the
+    // tests that drive the in-memory store would not have caught the
+    // difference. A store seam that behaves differently under test than in
+    // production is worse than no seam.
+    const existing = this.gaps.findIndex((g) => g.id === gap.id);
+    if (existing >= 0) this.gaps[existing] = gap;
+    else this.gaps.push(gap);
     if (this.gaps.length > MAX_GAPS) this.gaps.shift();
   }
 

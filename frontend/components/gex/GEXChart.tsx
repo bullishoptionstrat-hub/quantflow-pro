@@ -218,8 +218,8 @@ export function GEXChart() {
                     {/* Says what the number is, not what it predicts. The old
                         column asserted SUPPORT or RESISTANCE from a coin flip. */}
                     {l.strike === gex?.flipStrike ? <span style={{ color: '#fbbf24', fontWeight: 700 }}>GAMMA FLIP</span>
-                      : l.strike === gex?.keyLevels.maxGEXStrike ? 'largest positive'
-                      : l.strike === gex?.keyLevels.minGEXStrike ? 'largest negative'
+                      : l.strike === gex?.keyLevels.gex.maxStrike ? 'largest positive'
+                      : l.strike === gex?.keyLevels.gex.minStrike ? 'largest negative'
                       : '—'}
                   </td>
                 </tr>

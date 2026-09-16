@@ -280,3 +280,130 @@ test("a signal that needs no clamp carries no clamp term", () => {
   assert.equal(breakdown.clamp, undefined);
   assert.equal(Object.values(breakdown).reduce((a, v) => a + v, 0), score);
 });
+
+// ─── Structure naming: what two legs are, and when it refuses to say ─────────
+//
+// A call and a put at one expiry were ALL labelled STRADDLE_STRANGLE. That is
+// only right when both legs are on the same side. A long call against a SHORT
+// put is a risk reversal — a directional bet financed by selling the other
+// wing — and it is the opposite kind of position from a long strangle, which
+// is a bet on movement in either direction. One label was covering two views
+// that disagree about direction.
+
+/** Drive one two-leg structure and return the engine's verdict. */
+function structure(
+  legs: Array<{
+    right: "C" | "P"; strike: number; expiry?: string;
+    at: "bid" | "ask" | "mid" | "leanBuy" | "leanSell";
+  }>,
+): ClassifiedSignal {
+  resetSeq();
+  const engine = new FlowEngine({}, () => undefined, () => T0 + 50);
+  const built = legs.map((l) => contract("SPY", l.right, l.strike, l.expiry));
+  built.forEach((c) =>
+    engine.onQuote({ contractSymbol: c.symbol, bid: 1.0, ask: 2.0, ts: T0 - 10 }));
+
+  const out: ClassifiedSignal[] = [];
+  legs.forEach((l, i) => {
+    // At the ask reads BUY, at the bid SELL, at the mid AMBIGUOUS — the
+    // engine's own quote rule, not a flag set by this test.
+    const price =
+      l.at === "ask" ? 2.0
+      : l.at === "bid" ? 1.0
+      : l.at === "leanBuy" ? 1.8    // above mid, inside the spread
+      : l.at === "leanSell" ? 1.2   // below mid, inside the spread
+      : 1.5;
+    out.push(...engine.onTrade({
+      id: `t${i}`, ts: T0 + i, price, size: 200, exchange: "CBOE",
+      conditions: [], contract: built[i]!,
+    }));
+  });
+  out.push(...engine.flush());
+  return out.find((s) => s.kind === "MULTI_LEG")!;
+}
+
+test("a call bought against a put sold is a risk reversal", () => {
+  const sig = structure([
+    { right: "C", strike: 620, at: "ask" },
+    { right: "P", strike: 600, at: "bid" },
+  ]);
+  assert.equal(sig.spreadGuess, "RISK_REVERSAL");
+  assert.deepEqual(sig.legs.map((l) => l.side).sort(), ["BUY", "SELL"]);
+});
+
+test("a call and a put both bought is a strangle, not a reversal", () => {
+  // The distinction the old rule could not make. Both long is a bet on
+  // movement either way; long one and short the other is a bet on direction.
+  const sig = structure([
+    { right: "C", strike: 620, at: "ask" },
+    { right: "P", strike: 600, at: "ask" },
+  ]);
+  assert.equal(sig.spreadGuess, "STRADDLE_STRANGLE");
+});
+
+test("both legs sold is also a straddle/strangle, from the other side", () => {
+  const sig = structure([
+    { right: "C", strike: 620, at: "bid" },
+    { right: "P", strike: 600, at: "bid" },
+  ]);
+  assert.equal(sig.spreadGuess, "STRADDLE_STRANGLE");
+});
+
+test("an AMBIGUOUS leg makes the structure unnameable, not guessable", () => {
+  // The load-bearing case. The engine refuses to infer a side without a fresh
+  // NBBO, and a structure defined by whether its legs oppose each other cannot
+  // be named from a leg with no polarity. Naming it anyway would put a
+  // directional label on a position whose direction the engine has already
+  // declined to state.
+  const sig = structure([
+    { right: "C", strike: 620, at: "ask" },
+    { right: "P", strike: 600, at: "mid" },
+  ]);
+  assert.ok(sig.legs.some((l) => l.side === "AMBIGUOUS"), "the premise");
+  assert.equal(sig.spreadGuess, "UNKNOWN");
+});
+
+test("same-right structures are unaffected by side", () => {
+  // Verticals and calendars are named by their contracts alone. Routing them
+  // through the polarity check would make a spread with one ambiguous leg
+  // unnameable for no reason — its name never depended on direction.
+  const vertical = structure([
+    { right: "C", strike: 620, at: "ask" },
+    { right: "C", strike: 630, at: "mid" },
+  ]);
+  assert.equal(vertical.spreadGuess, "VERTICAL");
+
+  const calendar = structure([
+    { right: "C", strike: 620, at: "ask" },
+    { right: "C", strike: 620, expiry: "2026-07-17", at: "mid" },
+  ]);
+  assert.equal(calendar.spreadGuess, "CALENDAR");
+});
+
+test("a lean counts as its direction, and the reason is that it is priced once", () => {
+  // A deliberate decision, and it needs a guard or it is only a comment. A
+  // `*_LEAN` already encodes a direction, just less confidently — and that
+  // confidence is already priced, because the ambiguity penalty lives in the
+  // score. Discounting it a second time here would double-count one
+  // uncertainty and make most real two-sided structures unnameable.
+  const reversal = structure([
+    { right: "C", strike: 620, at: "leanBuy" },
+    { right: "P", strike: 600, at: "leanSell" },
+  ]);
+  assert.deepEqual(reversal.legs.map((l) => l.side).sort(), ["BUY_LEAN", "SELL_LEAN"]);
+  assert.equal(reversal.spreadGuess, "RISK_REVERSAL");
+
+  // And two leans the same way are still a strangle, not a reversal.
+  const strangle = structure([
+    { right: "C", strike: 620, at: "leanBuy" },
+    { right: "P", strike: 600, at: "leanBuy" },
+  ]);
+  assert.equal(strangle.spreadGuess, "STRADDLE_STRANGLE");
+
+  // A lean against a firm side is still opposition.
+  const mixed = structure([
+    { right: "C", strike: 620, at: "ask" },
+    { right: "P", strike: 600, at: "leanSell" },
+  ]);
+  assert.equal(mixed.spreadGuess, "RISK_REVERSAL");
+});

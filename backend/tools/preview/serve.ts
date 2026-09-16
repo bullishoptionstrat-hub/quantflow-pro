@@ -24,6 +24,10 @@
  * state it had when the capture was taken. That is the honest shape of a
  * snapshot and the banner in the frontend says as much.
  */
+// `.env` before the graph — this file reads DEMO_MODE, and the preview is
+// run from a developer's shell where that lives in `backend/.env`.
+import 'dotenv/config';
+
 import { createServer } from 'node:http';
 import { readFileSync, existsSync, readdirSync, copyFileSync, mkdirSync } from 'node:fs';
 import { extname, join, resolve, basename } from 'node:path';
