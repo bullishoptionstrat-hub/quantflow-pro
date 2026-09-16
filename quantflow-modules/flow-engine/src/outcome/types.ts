@@ -120,7 +120,7 @@ export class InMemoryOutcomeStore implements OutcomeStore {
  * tracker read `legs[0]` and paired it with `signal.side` — so on a MULTI_LEG
  * whose small leg printed first, the two describe different contracts.
  *
- * A bought $102k SPY call alongside a $2.2k put — a bullish risk reversal —
+ * A bought $102k SPY call alongside a bought $2.2k put — a long strangle —
  * graded as **BEARISH**, because the put arrived five milliseconds earlier.
  * Single-leg signals are unaffected, which is why this survived: it is only
  * wrong on the structures where direction is hardest to read by eye.

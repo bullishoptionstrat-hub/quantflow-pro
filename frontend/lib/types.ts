@@ -75,7 +75,18 @@ export interface FlowEvent {
   score_breakdown?: Record<string, number>
   /** Present on MULTI_LEG: the full structure. The event is the dominant leg. */
   legs?: FlowEventLeg[]
-  spread_guess?: 'VERTICAL' | 'CALENDAR' | 'STRADDLE_STRANGLE' | 'UNKNOWN'
+  /**
+   * The structure two legs form. `RISK_REVERSAL` and `STRADDLE_STRANGLE` are
+   * both a call and a put at one expiry and are told apart by whether the legs
+   * oppose each other — a directional bet financed by the other wing, versus a
+   * bet on movement either way. `UNKNOWN` when a leg's side is AMBIGUOUS.
+   */
+  spread_guess?:
+    | 'VERTICAL'
+    | 'CALENDAR'
+    | 'STRADDLE_STRANGLE'
+    | 'RISK_REVERSAL'
+    | 'UNKNOWN'
   /** Audit trail: the print ids that formed this signal. */
   print_ids?: string[]
   /** True when the source was simulated, replayed, or chain-derived. */

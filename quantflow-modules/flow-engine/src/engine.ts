@@ -306,6 +306,40 @@ export class FlowEngine {
   }
 }
 
+/**
+ * Name the structure two legs form, or refuse to.
+ *
+ * `RISK_REVERSAL` is the addition, and it is a correction rather than a new
+ * label: a call and a put at the same expiry were **all** classified
+ * `STRADDLE_STRANGLE`, which is only right when both legs are on the same side.
+ * A long call against a *short* put is a risk reversal — a directional bet
+ * financed by selling the other wing — and it is the opposite kind of position
+ * from a long strangle, which is a bet on movement in either direction. One
+ * label was covering two views that disagree about direction.
+ *
+ * **Side is load-bearing here, and `AMBIGUOUS` is why this can refuse.** The
+ * engine declines to infer a side without a fresh NBBO, and a structure defined
+ * by whether its legs oppose each other cannot be named when a leg has no
+ * polarity at all. That answer is `UNKNOWN`. Guessing would put a directional
+ * name on a position whose direction the engine has already declined to state —
+ * the same mistake as `side: AMBIGUOUS` being resolved to a guess upstream.
+ *
+ * A `*_LEAN` **does** count as its polarity. The lean already encodes a
+ * direction, only less confidently, and that confidence is already priced: the
+ * ambiguity penalty lives in the score. Discounting it a second time here would
+ * double-count one uncertainty.
+ *
+ * What this deliberately does not do: butterflies, condors and any other
+ * structure of more than two legs stay `UNKNOWN`. They need grouping logic that
+ * does not exist, and nothing downstream reads `spreadGuess` to make a decision
+ * — adding union members nobody consumes is cost without a reader.
+ */
+function polarityOf(side: InferredSide): "LONG" | "SHORT" | null {
+  if (side === "BUY" || side === "BUY_LEAN") return "LONG";
+  if (side === "SELL" || side === "SELL_LEAN") return "SHORT";
+  return null;   // AMBIGUOUS — no direction was established, so none is used.
+}
+
 function guessSpread(legs: SignalLeg[]): NonNullable<ClassifiedSignal["spreadGuess"]> {
   if (legs.length !== 2) return "UNKNOWN";
   const [a, b] = legs;
@@ -315,7 +349,11 @@ function guessSpread(legs: SignalLeg[]): NonNullable<ClassifiedSignal["spreadGue
     return "VERTICAL";
   if (ca.right === cb.right && ca.strike === cb.strike && ca.expiry !== cb.expiry)
     return "CALENDAR";
-  if (ca.right !== cb.right && ca.expiry === cb.expiry)
-    return "STRADDLE_STRANGLE";
+  if (ca.right !== cb.right && ca.expiry === cb.expiry) {
+    const pa = polarityOf(a.side), pb = polarityOf(b.side);
+    // One leg with no established side makes the distinction unknowable.
+    if (pa === null || pb === null) return "UNKNOWN";
+    return pa === pb ? "STRADDLE_STRANGLE" : "RISK_REVERSAL";
+  }
   return "UNKNOWN";
 }

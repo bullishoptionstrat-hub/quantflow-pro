@@ -168,7 +168,14 @@ test("report aggregates honestly: hit rate excludes UNGRADED but counts it", asy
 // ---------------------------------------------------------------------------
 
 /**
- * A bullish risk reversal graded as BEARISH.
+ * A long strangle graded as BEARISH.
+ *
+ * Called "a bullish risk reversal" here until 2026-09-16, and it is not one:
+ * both legs are lifted at the ask, so the engine infers BUY on each. A risk
+ * reversal is long one wing and SHORT the other. Driving this exact fixture
+ * reports `side=BUY` on both legs and `spreadGuess: STRADDLE_STRANGLE`, which
+ * is correct. The finding below is unaffected — the tracker really did read
+ * `legs[0]` and pair it with `signal.side` — only the structure was misnamed.
  *
  * `buildSignal` takes `ClassifiedSignal.side` from the highest-premium leg but
  * stores `legs` in the order their contract+side groups were first seen. The

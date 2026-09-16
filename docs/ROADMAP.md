@@ -422,11 +422,20 @@ was collected, and it is worthless before Phase 0.
       `MAX_EXCURSION` labelled as a best-moment measure and not a held return,
       `INSUFFICIENT_SAMPLE` below n=30. A backtester that drops these is a
       backtester that lies — which is the entire failure mode of the category.
-- [ ] **4.4 — Multi-leg structure recognition.** You group legs and pick a
-      dominant one. Naming the shape — vertical, calendar, risk reversal,
-      straddle — is a classifier over data you already assemble, and ledger
-      line 74 shows you already have the hard case (the $102k/$2.2k risk
-      reversal) as a test fixture.
+- [x] **4.4 — Multi-leg structure recognition.** *Done 2026-09-16, narrowly.*
+      The classifier existed and had one real defect: every call-and-put pair at
+      one expiry was `STRADDLE_STRANGLE`, ignoring `leg.side`. A long call
+      against a **short** put is a risk reversal — the opposite kind of position
+      from a long strangle. `RISK_REVERSAL` separates them; an `AMBIGUOUS` leg
+      yields `UNKNOWN` rather than a guess.
+      **Not done, deliberately:** straddle-vs-strangle and diagonal are label
+      refinements with no downstream reader, and butterflies/condors need
+      >2-leg grouping that does not exist. Adding union members nothing consumes
+      is cost without a reader.
+      Checking the premise also found that ledger line 74 had misnamed its own
+      fixture — both legs are bought, so it is a long strangle, not the "bullish
+      risk reversal" it claimed. Corrected in all four places.
+
 
 ### Phase 5 — The daily surface (ongoing)
 
