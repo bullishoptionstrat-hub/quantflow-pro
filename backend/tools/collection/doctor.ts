@@ -52,6 +52,7 @@ import {
 } from '../../src/ingestion/entitlement';
 import { mayOperateConnector } from '../../src/provenance/rights';
 import { markSourceStandings } from '../../src/ingestion/markSources';
+import { classifyServiceKey } from '../../src/persistence/serviceKey';
 
 export type Status = 'ok' | 'blocked' | 'warn';
 
@@ -191,32 +192,51 @@ export function runChecks(env: NodeJS.ProcessEnv = process.env): Check[] {
   }
 
   // ── 3. Somewhere for it to go ─────────────────────────────────────────────
+  //
+  // The third instance of the same shape, and still the one not closed by a
+  // probe. "records survive a restart" was a capability claim built from two
+  // set strings — checks 2 and 4 made exactly that move and this tool refuses
+  // it there.
+  //
+  // It is *narrower* now without being probed. `classifyServiceKey` reads the
+  // credential's own claims offline and can prove several configurations wrong
+  // outright: a publishable or anon key in the service slot (the two sit
+  // adjacent in the Supabase dashboard, and the history tables force RLS with
+  // no policies, so that key writes nothing), a lapsed key, or a key issued for
+  // a different project than SUPABASE_URL names. Each of those is now `blocked`
+  // rather than a `warn` an operator would read past.
+  //
+  // What it still does **not** do is confirm the success path. That needs a
+  // real `SUPABASE_SERVICE_KEY` to measure "this key writes signal_history"
+  // against, and a key whose shape is right is not a key that works. So the
+  // right-shape branch stays a `warn` with the same sentence it always had —
+  // see ROADMAP 1.1c, which this narrows and does not close.
   const durable = has(env, ['SUPABASE_URL', 'SUPABASE_SERVICE_KEY']);
-  checks.push(durable ? {
-    // The third instance of the same shape, and the one not closed by a probe.
-    //
-    // "records survive a restart" is a capability claim built from two set
-    // strings — checks 2 and 4 made exactly that move and this tool now refuses
-    // it there. A wrong project URL or a revoked service key passes this test
-    // and then fails every write, which is what `signal_write_incidents` exists
-    // in the schema to catch. There is no probe here because none could be
-    // *measured*: no Supabase project has been available to check the status
-    // codes against, and shipping an unverified status map would be the guess
-    // `httpError.ts` argues against. So the claim is narrowed instead.
-    name: 'Durable storage',
-    status: 'warn',
-    detail: 'SUPABASE_URL and SUPABASE_SERVICE_KEY are set. Whether they reach a ' +
-            'project, and whether the key can write the four history tables, has ' +
-            'not been checked here.',
-    fix: 'Watch `signal_write_incidents` and /api/health `history.durable` after the ' +
-         'first real signal — a bad URL or a revoked service key passes this check ' +
-         'and fails every write.',
-  } : {
+  const keyVerdict = classifyServiceKey(env.SUPABASE_URL, env.SUPABASE_SERVICE_KEY);
+  checks.push(!durable ? {
     name: 'Durable storage',
     status: 'blocked',
     detail: 'The signal history is in memory and is lost on every restart.',
     fix: 'Set SUPABASE_URL and SUPABASE_SERVICE_KEY. Until then nothing accumulates, ' +
          'however long the process runs.',
+  } : !keyVerdict.usable ? {
+    name: 'Durable storage',
+    status: 'blocked',
+    detail: `Both variables are set, and the credential in SUPABASE_SERVICE_KEY cannot ` +
+            `write.\n          ${keyVerdict.reason}\n          Basis: ${keyVerdict.basis}`,
+    fix: 'Copy the service_role key (Supabase dashboard → Project Settings → API → ' +
+         'Service role, or an sb_secret_ key) into SUPABASE_SERVICE_KEY. This is the ' +
+         'one failure here that looks exactly like success: the client constructs, ' +
+         'every insert is refused by RLS, and nothing reports an error.',
+  } : {
+    name: 'Durable storage',
+    status: 'warn',
+    detail: `SUPABASE_URL and SUPABASE_SERVICE_KEY are set and the credential's shape ` +
+            `is right (${keyVerdict.shape}). Whether they reach a project, and whether ` +
+            `the key can write the four history tables, has not been checked here.`,
+    fix: 'Watch `signal_write_incidents` and /api/health `history.durable` after the ' +
+         'first real signal — a revoked key or a project missing the migrations passes ' +
+         'this check and fails every write.',
   });
 
   // ── 4. A mark to grade against ────────────────────────────────────────────

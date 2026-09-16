@@ -12,6 +12,7 @@ import { SupabaseSignalStore } from './supabaseStore';
 import { SignalRecorder } from './recorder';
 import { resolveBusinessMode, type BusinessMode } from '../provenance/rights';
 import type { SignalStore } from './types';
+import { classifyServiceKey, type ServiceKeyVerdict } from './serviceKey';
 
 export * from './types';
 export * from './identity';
@@ -19,10 +20,13 @@ export { InMemorySignalStore } from './memoryStore';
 export { SupabaseSignalStore } from './supabaseStore';
 export { SignalRecorder, type RecorderStats } from './recorder';
 export { SignalGrader, type GraderStats, type SpotLookup } from './grader';
+export { classifyServiceKey, projectRefFromUrl,
+  type ServiceKeyShape, type ServiceKeyVerdict } from './serviceKey';
 
 let store: SignalStore | undefined;
 let recorder: SignalRecorder | undefined;
 let mode: BusinessMode | undefined;
+let serviceKey: ServiceKeyVerdict | undefined;
 let selection = {
   kind: 'none' as 'memory' | 'supabase' | 'none',
   durable: false,
@@ -49,13 +53,28 @@ export function initPersistence(env: NodeJS.ProcessEnv = process.env): {
   const key = env.SUPABASE_SERVICE_KEY;
 
   if (url && key) {
+    // The store is still built from what the operator configured — falling back
+    // to memory on a key this module merely *distrusts* would be a silent
+    // substitution, and silent substitution is what this file exists to
+    // prevent. What changes is the claim made about it.
     store = new SupabaseSignalStore(createClient(url, key, {
       auth: { persistSession: false, autoRefreshToken: false },
     }));
+    // `durable: true` used to follow from two non-empty strings, with the
+    // reason "history survives restarts" — a capability read off configuration,
+    // the same defect 1.1a removed from the doctor's check 2. The anon key and
+    // the service key are adjacent in the Supabase dashboard and pasting the
+    // wrong one is silent: the client constructs, every insert is refused by
+    // RLS, and this field said the history was durable behind a store that had
+    // never kept a row.
+    serviceKey = classifyServiceKey(url, key);
     selection = {
       kind: 'supabase',
-      durable: true,
-      reason: 'SUPABASE_URL and SUPABASE_SERVICE_KEY are set — history survives restarts.',
+      durable: serviceKey.usable,
+      reason: serviceKey.usable
+        ? `${serviceKey.reason} History survives restarts if it does.`
+        : `${serviceKey.reason} Until that is fixed the store is configured but ` +
+          `records nothing, which is worse than in-memory: it looks durable.`,
     };
   } else {
     store = new InMemorySignalStore();
@@ -83,6 +102,17 @@ export function describePersistence() {
     store: selection.kind,
     durable: selection.durable,
     reason: selection.reason,
+    /**
+     * What the configured credential is, as far as its shape says — never the
+     * credential. `null` when no Supabase store was built.
+     *
+     * Published because "durable: false" on its own sends an operator to check
+     * whether the variables are set, and they are; the fault is *which* key is
+     * in one of them.
+     */
+    serviceKey: serviceKey
+      ? { shape: serviceKey.shape, usable: serviceKey.usable, basis: serviceKey.basis }
+      : null,
     businessMode: mode ?? '(uninitialised)',
     recorder: recorder?.getStats() ?? null,
   };

@@ -241,13 +241,21 @@ accumulating in wall-clock time while you build everything else.
       tables the grader writes (`signal_history`, `signal_outcomes`,
       `signal_write_incidents`, `collection_gaps`) live only in the migration.
       Set `SUPABASE_URL` / `SUPABASE_SERVICE_KEY`.
-- [ ] **0.3 — `TWELVE_DATA_API_KEY`** on the free Basic tier, **then
+- [x] **0.3 — `TWELVE_DATA_API_KEY`** *Done 2026-09-16.* Set, and probed rather
+      than assumed: `entitled`, HTTP 200 from `api.twelvedata.com`. Verifying it
+      end to end is what found the health-reporting gap and the credit
+      arithmetic — see the two CLAUDE.md notes and PR #58. The REST batch
+      requests 10 symbols against an 8/min cap and can never succeed; whether
+      that matters depends on whether the WebSocket carries the board during a
+      session, which is still unmeasured. ~~on the free Basic tier, **then
       `npm run collection:doctor -- --probe`**. Setting the key is not the
       exit condition — that is the exact move 1.1a removed from this tool.
       Twelve Data's entitlement to `/price` on the `WATCHED` symbols is
       unverified on the free tier, and their public `demo` key already refuses
       SPY while serving AAPL, so a symbol-scoped plan is a real shape here. 8 credits/min is
-      ample for spot marks on a short watchlist. Unblocks the grader today.
+      ample for spot marks on a short watchlist. Unblocks the grader today.~~
+      (The last sentence was wrong in a way worth keeping visible: 8 credits/min
+      is ample for a *short* watchlist, and this one is ten symbols.)
 - [ ] **0.4 — Decide the retention question** and write the answer into
       `rights.ts`. Twelve Data §16.1 caps retention at "duration permitted by
       subscription" and §2.3 bars commercial use of free-tier data. In
@@ -276,10 +284,21 @@ every day is sample.
       back through them, each failing exactly the intended one. Check 3
       (`Durable storage`) was the same defect and is narrowed, not probed —
       see 1.1c.
-- [ ] **1.1c — Probe Supabase, once there is a project to measure against.**
-      Check 3 claims two set strings mean records survive a restart. It is
-      narrowed to a `warn` rather than probed, because a status map that has
-      not been measured is the guess the other two probes avoided.
+- [ ] **1.1c — Probe Supabase. Narrowed 2026-09-16, still open.**
+      Check 3 claimed two set strings mean records survive a restart — and so
+      did `initPersistence`, which set `durable: true` with the reason *"history
+      survives restarts"*. `src/persistence/serviceKey.ts` now classifies the
+      credential **offline** and both consumers read the verdict: an anon or
+      publishable key in the service slot, a lapsed key, or a key issued for
+      another project are each `blocked` with the fault named. Measured against
+      the live project, which issues both key eras side by side.
+      **Why this does not close the item.** The success path is "this key writes
+      `signal_history`", and measuring it needs a real `SUPABASE_SERVICE_KEY` in
+      the environment — which must be set in `backend/.env` by hand and never
+      pasted into a transcript. A probe built from what is reachable today would
+      have `entitled` as the one branch never observed, which is the shape
+      `entitlement.ts` refuses. The right-shape branch therefore stays a `warn`
+      with the sentence it always had: shape is not validity.
 - [x] **1.1b — Probe at startup, not only from the tool.** *Done 2026-09-15.*
       `startEntitlementProbes()` sweeps at boot and hourly (`.unref()`ed);
       `/api/health` gains an `entitlement` block with a per-source verdict and
