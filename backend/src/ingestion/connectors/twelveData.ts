@@ -6,6 +6,7 @@
 import axios from 'axios';
 import WebSocket from 'ws';
 import { numeric } from '../optionalNumber';
+import { describeHttpError } from '../httpError';
 
 const API_KEY = process.env.TWELVE_DATA_API_KEY || '';
 const BASE = 'https://api.twelvedata.com';
@@ -79,13 +80,58 @@ export function quoteTimestamp(raw: unknown): number {
   return n < 1e12 ? Math.round(n * 1000) : Math.round(n);
 }
 
+/**
+ * Health of the last REST cycle, reported to /api/health.
+ *
+ * `degraded` exists because this connector has two paths and they fail
+ * independently. The WebSocket carries the board during a session; the REST
+ * batch is a fallback. A dead fallback while the stream delivers is a real
+ * fact about the deployment and not an outage, and collapsing the two into
+ * one boolean forces a choice between overstating and hiding it.
+ *
+ * Same shape as `FREDHealth` for the same reason — see the wiring in
+ * `startIngestion`, which routes `degraded` to the note channel.
+ */
+export interface TwelveDataHealth {
+  ok: boolean;
+  /** `ok` and `degraded` together: contributing, but not by every path. */
+  degraded?: boolean;
+  /** Operator-facing, and public: this reaches the unauthenticated /api/health. */
+  reason?: string;
+}
+
 const spotCache = new Map<string, SpotQuote>();
 let onSpotUpdate: ((q: SpotQuote) => void) | null = null;
+let onHealth: ((h: TwelveDataHealth) => void) | null = null;
 let wsCreditsUsed = 0;
+
+/**
+ * Receipt time of the last cache write, by either path.
+ *
+ * Deliberately not `SpotQuote.timestamp`: that is the *vendor's* stamp, which
+ * off-hours is the last session's close and would read as stale on a perfectly
+ * healthy stream. The question this answers is narrower and is about us — did
+ * anything at all deliver recently — so it is measured on our clock.
+ */
+let lastCacheWriteAt = 0;
 
 export function onTwelveDataSpot(handler: (q: SpotQuote) => void): void {
   onSpotUpdate = handler;
 }
+
+export function onTwelveDataHealth(handler: (h: TwelveDataHealth) => void): void {
+  onHealth = handler;
+}
+
+/**
+ * How long after the last delivered quote the stream is still credited with
+ * carrying the board. Two REST cycles: one missed poll is a blip, two with
+ * nothing from the socket either means nothing is arriving.
+ */
+export const STREAM_GRACE_MS = 120_000;
+
+/** Exported for tests; the running process only ever reads it through health. */
+export function lastDeliveryAt(): number { return lastCacheWriteAt; }
 
 export function getSpotQuotes(): Map<string, SpotQuote> {
   return spotCache;
@@ -129,6 +175,7 @@ function startWebSocket(): void {
           source: 'twelvedata',
         };
         spotCache.set(msg.symbol, quote);
+        lastCacheWriteAt = Date.now();
         onSpotUpdate?.(quote);
         wsCreditsUsed++;
       }
@@ -139,6 +186,33 @@ function startWebSocket(): void {
   ws.on('close', () => { setTimeout(startWebSocket, 5000).unref(); });
 }
 
+/**
+ * Why a failing cycle is *reported* and not just logged.
+ *
+ * `startConnector` records what `start()` returned once and never looks again,
+ * and `fetchQuotesBatch` swallowed every failure in its own try/catch — so
+ * `startTwelveData` resolved cleanly on a batch that had already failed and the
+ * board read `connected` with an empty cache behind it. That is the third
+ * instance of the family that gave Stooq `onStooqHealth` and CoinGecko its
+ * own, and this is the one that matters most: `markSources` lists exactly
+ * `['twelvedata']`, so every graded outcome takes its mark from here. A silent
+ * failure on this source is indistinguishable from a quiet market.
+ *
+ * Measured against the live API on 2026-09-16, free Basic plan:
+ *
+ *   1 symbol   → HTTP 200, a real SPY quote
+ *   10 symbols → HTTP 429, "You have run out of API credits for the current
+ *                minute. 10 API credits were used, with the current limit
+ *                being 8."
+ *
+ * Twelve Data charges one credit per symbol per request, so `WATCHED.length`
+ * *is* the credit cost of a cycle, and 10 against a cap of 8 cannot succeed —
+ * not intermittently, ever. The batch strategy is deliberately left alone here:
+ * whether the REST fallback needs to succeed at all depends on whether the
+ * WebSocket carries the board during a session, and that is a market-hours
+ * measurement. This change makes the failure *visible* so that measurement has
+ * something to read.
+ */
 async function fetchQuotesBatch(): Promise<void> {
   try {
     const symbols = WATCHED.join(',');
@@ -147,13 +221,20 @@ async function fetchQuotesBatch(): Promise<void> {
       timeout: 8000,
     });
 
+    let priced = 0;
+    let refused = 0;
+
     const process = (sym: string, q: any) => {
-      if (!q || q.status === 'error') return;
+      // A per-symbol `status: 'error'` is the vendor declining that symbol —
+      // counted, because ten of them is a rejected key and returning silently
+      // from all ten used to look identical to a successful cycle.
+      if (!q) return;
+      if (q.status === 'error') { refused++; return; }
       // `parseFloat(q.close ?? q.price ?? 0)` published $0.00 into the spot
       // cache for a symbol the batch answered without a price — and the cache
       // feeds every socket's ticker tape.
       const price = numeric(q.close) ?? numeric(q.price);
-      if (price === null || price <= 0) return;
+      if (price === null || price <= 0) { refused++; return; }
       const quote: SpotQuote = {
         symbol: sym,
         price,
@@ -164,18 +245,68 @@ async function fetchQuotesBatch(): Promise<void> {
         source: 'twelvedata',
       };
       spotCache.set(sym, quote);
+      lastCacheWriteAt = Date.now();
       onSpotUpdate?.(quote);
+      priced++;
     };
 
     // Response is either a single object or a map of symbol→data
-    if (data.symbol) {
+    if (data?.symbol) {
       process(data.symbol, data);
+    } else if (data?.status === 'error') {
+      // Twelve Data answers some refusals with HTTP 200 and an error body —
+      // the same asymmetry `classifyProbeStatus` exists for. Read as a map of
+      // symbols this would be one entry named `status`, and the cycle would
+      // report success having priced nothing.
+      reportFailure(`HTTP 200 with an error body — ${describeBody(data)}`);
+      return;
     } else {
-      Object.entries(data).forEach(([sym, q]) => process(sym, q as any));
+      Object.entries(data ?? {}).forEach(([sym, q]) => process(sym, q as any));
+    }
+
+    if (priced > 0) {
+      onHealth?.({ ok: true });
+    } else {
+      reportFailure(
+        `Twelve Data returned no priced symbol${refused > 0 ? ` (${refused} refused)` : ''}.`,
+      );
     }
   } catch (err: any) {
-    console.error('[twelvedata] quote batch error:', err.message);
+    const detail = describeHttpError(err);
+    const reason = err?.response?.status === 429
+      // The vendor's own words carry the arithmetic; what it cannot know is
+      // that the number it is quoting back is our batch size.
+      ? `${detail} This deployment requests ${WATCHED.length} symbols per cycle ` +
+        `and Twelve Data charges one credit per symbol.`
+      : detail;
+    reportFailure(reason);
   }
+}
+
+/**
+ * A failed REST cycle, told apart from a dead source.
+ *
+ * The stream and the batch are independent paths into one cache. If the socket
+ * delivered a quote within `STREAM_GRACE_MS` the board is still being fed and
+ * saying `error` would be false — but so would saying nothing, which is the
+ * state this whole change exists to end. It goes out as degraded: connected,
+ * with the reason attached. With nothing arriving by either path there is no
+ * such distinction left to draw, and it is an outright failure.
+ */
+function reportFailure(reason: string): void {
+  const streaming = lastCacheWriteAt > 0 && Date.now() - lastCacheWriteAt < STREAM_GRACE_MS;
+  if (streaming) {
+    console.warn('[twelvedata] REST batch failed, stream still delivering:', reason);
+    onHealth?.({ ok: true, degraded: true, reason: `REST quote batch failing: ${reason}` });
+  } else {
+    console.warn('[twelvedata] quote batch error:', reason);
+    onHealth?.({ ok: false, reason });
+  }
+}
+
+/** The vendor's message from a 200-with-error body, scrubbed and clipped. */
+function describeBody(data: any): string {
+  return describeHttpError({ response: { status: 200, data } }).replace(/^HTTP 200 — /, '');
 }
 
 export async function startTwelveData(): Promise<void> {
