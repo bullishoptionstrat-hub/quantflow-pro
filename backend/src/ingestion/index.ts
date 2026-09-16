@@ -38,7 +38,7 @@ import { startMarketData, onMarketDataFlow } from './connectors/marketData';
 import { startSchwab, onSchwabFlow } from './connectors/schwab';
 import { startTastytrade, onTastytradeFlow } from './connectors/tastytrade';
 import {
-  startTwelveData, onTwelveDataSpot,
+  startTwelveData, onTwelveDataSpot, onTwelveDataHealth,
   getSpotQuotes as getTwelveDataSpotQuotes, getSpotPrice,
 } from './connectors/twelveData';
 import {
@@ -623,6 +623,29 @@ export function startIngestion(io: any): void {
   // Wire quote updates to broadcast via Socket.IO
   onTwelveDataSpot((q) => {
     if (ioInstance) ioInstance.emit('spot_update', q);
+  });
+  // The same reason as Stooq, CoinGecko and FRED below — and the sharpest
+  // case of it. `markSources` lists exactly `['twelvedata']`, so this is the
+  // source every graded outcome takes its mark from. It reported `connected`
+  // with no error and no note while every 60s poll came back HTTP 429, which
+  // is indistinguishable from a working feed in a quiet market.
+  //
+  // `degraded` routes through the note channel rather than `sourceErrors`
+  // because the stream and the batch fail independently: a dead REST fallback
+  // while the socket delivers is a real fact about the deployment, not an
+  // outage, and the settings page already renders connected-with-a-note as
+  // DEGRADED.
+  onTwelveDataHealth((h) => {
+    if (h.ok) {
+      sources['twelvedata'] = 'connected';
+      delete sourceErrors['twelvedata'];
+      if (h.degraded && h.reason) connectorNotes['twelvedata'] = h.reason;
+      else delete connectorNotes['twelvedata'];
+    } else {
+      sources['twelvedata'] = 'error';
+      sourceErrors['twelvedata'] = h.reason ?? 'Twelve Data fetch failed.';
+      delete connectorNotes['twelvedata'];
+    }
   });
   // Yahoo has a second publication path that is not a print: the spot quote
   // goes straight out over the socket. Subscribing to it for a refused source
