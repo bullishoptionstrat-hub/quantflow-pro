@@ -1,0 +1,44 @@
+-- Stop granting EXECUTE on `handle_new_user` to everyone.
+--
+-- Supabase's linter flags it twice — `anon_security_definer_function_executable`
+-- and its `authenticated` twin: a `SECURITY DEFINER` function living in the
+-- exposed `public` schema, with EXECUTE held by `anon`, `authenticated` and
+-- `PUBLIC`, and therefore advertised at `/rest/v1/rpc/handle_new_user`. It runs
+-- with the definer's rights and writes `public.user_profiles`.
+--
+-- Two things were measured before changing anything, because the trigger this
+-- function serves is `on_auth_user_created` on `auth.users` — the live signup
+-- path, with real accounts already behind it.
+--
+-- 1. THE RPC PATH IS NOT ACTUALLY REACHABLE. The function returns `trigger`,
+--    and PostgreSQL refuses a direct call before the body runs:
+--
+--        select public.handle_new_user();
+--        ERROR: trigger functions can only be called as triggers
+--
+--    So the lint is a pattern match on (SECURITY DEFINER + granted to anon +
+--    exposed schema) that does not account for the return type. This is
+--    hygiene — a grant that serves no purpose and advertises a definer
+--    function — not a live hole. Saying otherwise would overstate it, and
+--    overstating a finding is the same failure as missing one.
+--
+-- 2. REVOKING DOES NOT BREAK THE TRIGGER. The obvious fear is that `PUBLIC`
+--    covers `supabase_auth_admin`, which is the role that inserts into
+--    `auth.users` and so fires this trigger. PostgreSQL checks EXECUTE at
+--    CREATE TRIGGER time, not at fire time — proven on this database rather
+--    than recalled, with a throwaway table, function and unprivileged role in
+--    a transaction that was rolled back:
+--
+--        TRIGGER_FIRES_WITHOUT_EXECUTE=t | has_execute=f
+--
+--    A caller with no EXECUTE on the trigger function still fires it.
+--
+-- `postgres` (the owner) and `service_role` keep their grants: the owner's is
+-- implicit and unrevokable in practice, and `service_role` is the trusted
+-- backend path this repo already relies on to bypass RLS. Neither is flagged,
+-- and widening the change past what was established is how a migration
+-- acquires a second, unargued purpose.
+
+revoke execute on function public.handle_new_user() from public;
+revoke execute on function public.handle_new_user() from anon;
+revoke execute on function public.handle_new_user() from authenticated;

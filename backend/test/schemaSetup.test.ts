@@ -137,3 +137,43 @@ test('every function the SQL defines pins its search_path', () => {
   assert.deepEqual(unpinned, [],
     `these functions leave search_path to the caller: ${unpinned.join(', ')}`);
 });
+
+test('a SECURITY DEFINER function is not left executable by anon', () => {
+  // `handle_new_user` is SECURITY DEFINER, lives in the exposed `public`
+  // schema, and writes `user_profiles` with the definer's rights. Postgres
+  // grants EXECUTE to PUBLIC on every new function, so it was advertised at
+  // /rest/v1/rpc/handle_new_user to `anon` and `authenticated` by default —
+  // nobody chose that, which is exactly why it needs a rule rather than
+  // vigilance.
+  //
+  // It was not reachable in practice: the function returns `trigger`, and
+  // Postgres refuses a direct call before the body runs. That makes it hygiene
+  // rather than a hole, and the next SECURITY DEFINER function added here may
+  // not return `trigger`.
+  //
+  // Checked against the SQL rather than the live database for the same reason
+  // as the search_path guard: a test cannot reach the deployment, but it can
+  // hold that the repo never defines a definer function without saying who may
+  // call it.
+  const files = [join(SUPABASE, 'schema.sql'), ...migrations()];
+  const sql = files.map((f) => readFileSync(f, 'utf8')).join('\n');
+
+  // `create function ... security definer` up to the body delimiter.
+  const definers = [...sql.matchAll(
+    /create\s+(?:or\s+replace\s+)?function\s+(?:public\.)?(\w+)\s*\([\s\S]{0,400}?security\s+definer/gi,
+  )].map((m) => m[1]!);
+  assert.ok(definers.length > 0, 'premise: the SQL defines at least one SECURITY DEFINER function');
+
+  const exposed = [...new Set(definers)].filter((fn) => {
+    const revoked = (role: string) => new RegExp(
+      `revoke\\s+execute\\s+on\\s+function\\s+(?:public\\.)?${fn}\\s*\\(\\s*\\)\\s+from\\s+${role}\\b`,
+      'i').test(sql);
+    // `public` is the grant that actually reaches anon and authenticated, but
+    // both are revoked by name too: an explicit grant to either would survive
+    // revoking PUBLIC alone, and both had one here.
+    return !(revoked('public') && revoked('anon') && revoked('authenticated'));
+  });
+
+  assert.deepEqual(exposed, [],
+    `SECURITY DEFINER functions still executable by anon/authenticated: ${exposed.join(', ')}`);
+});
