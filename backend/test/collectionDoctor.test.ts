@@ -19,12 +19,35 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { runChecks, type Check } from '../tools/collection/doctor';
 
+/**
+ * A Supabase-shaped legacy key, for fixtures.
+ *
+ * `SUPABASE_SERVICE_KEY: 'key'` used to satisfy check 3, because the check
+ * asked only whether the string was non-empty. It no longer does:
+ * `classifyServiceKey` reads the credential's own claims and a placeholder is
+ * `unrecognised`, which is blocked. The fixture is made realistic rather than
+ * the check made lax — a four-letter string standing in for a service key is
+ * precisely the configuration the narrowing exists to catch.
+ *
+ * The signature is not real and does not need to be: this is a shape check, not
+ * an authentication, and it says so. A forged claim passes here and fails at
+ * Supabase, which is why the right-shape branch is still only a `warn`.
+ */
+function supabaseKey(role: string, ref = 'abcdefghijklmnopqrst', exp = 4102444800): string {
+  const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  return [
+    b64({ alg: 'HS256', typ: 'JWT' }),
+    b64({ iss: 'supabase', ref, role, iat: 1781238858, exp }),
+    'not-a-real-signature',
+  ].join('.');
+}
+
 /** An environment with every link satisfied. */
 const COMPLETE: NodeJS.ProcessEnv = {
   BUSINESS_MODE: 'PRIVATE_RESEARCH',
   TRADIER_TOKEN: 'tok',
-  SUPABASE_URL: 'https://x.supabase.co',
-  SUPABASE_SERVICE_KEY: 'key',
+  SUPABASE_URL: 'https://abcdefghijklmnopqrst.supabase.co',
+  SUPABASE_SERVICE_KEY: supabaseKey('service_role'),
   TWELVE_DATA_API_KEY: 'td',
 } as NodeJS.ProcessEnv;
 
@@ -62,7 +85,8 @@ test('a half-set credential does not count as set', () => {
   // Schwab needs three variables. Two of them is not a configured connector,
   // and reporting it as one is how "why is nothing recording" starts.
   const env = { BUSINESS_MODE: 'PRIVATE_RESEARCH', SCHWAB_APP_KEY: 'a', SCHWAB_APP_SECRET: 'b',
-    SUPABASE_URL: 'u', SUPABASE_SERVICE_KEY: 'k', TWELVE_DATA_API_KEY: 't' } as NodeJS.ProcessEnv;
+    SUPABASE_URL: COMPLETE.SUPABASE_URL, SUPABASE_SERVICE_KEY: COMPLETE.SUPABASE_SERVICE_KEY,
+    TWELVE_DATA_API_KEY: 't' } as NodeJS.ProcessEnv;
   assert.deepEqual(blocked(runChecks(env)), ['A source permitted to persist']);
 
   env.SCHWAB_REFRESH_TOKEN = 'c';
@@ -132,4 +156,27 @@ test('the doctor covers every recordable source the registry permits', () => {
   for (const s of ['tradier', 'polygon', 'marketdata', 'schwab', 'tastytrade']) {
     assert.ok(doctor.includes(`'${s}'`), `RECORDABLE_SOURCES should list ${s}`);
   }
+});
+
+test('a publishable key in the service slot blocks, and is not a missing-variable fault', () => {
+  // The anon and service keys sit adjacent in the Supabase dashboard. This is
+  // the failure that looks exactly like success — the client constructs, every
+  // insert is refused by RLS, and nothing reports an error — so it must not
+  // read as the same `warn` a correctly configured deployment gets.
+  const env = { ...COMPLETE, SUPABASE_SERVICE_KEY: supabaseKey('anon') } as NodeJS.ProcessEnv;
+  assert.deepEqual(blocked(runChecks(env)), ['Durable storage']);
+  const c = named(runChecks(env), 'Durable storage');
+  assert.match(c.detail, /role claim is "anon"/);
+  assert.match(c.fix, /service_role/);
+  // The variable *is* set; a fix line telling the operator to set it would send
+  // them looking at the one thing that is already right.
+  assert.ok(!/Set SUPABASE_URL and SUPABASE_SERVICE_KEY/.test(c.fix));
+});
+
+test('a service key from another project blocks', () => {
+  const env = { ...COMPLETE,
+    SUPABASE_SERVICE_KEY: supabaseKey('service_role', 'zyxwvutsrqponmlkjihg'),
+  } as NodeJS.ProcessEnv;
+  assert.deepEqual(blocked(runChecks(env)), ['Durable storage']);
+  assert.match(named(runChecks(env), 'Durable storage').detail, /another deployment/);
 });
