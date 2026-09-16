@@ -97,3 +97,43 @@ test('schema.sql and the initial migration do not drift', () => {
     'schema.sql and the initial migration disagree about which tables exist',
   );
 });
+
+test('every function the SQL defines pins its search_path', () => {
+  // Supabase's linter flagged `function_search_path_mutable` on both trigger
+  // functions in this project the first time it was run against a live
+  // database — including `enforce_outcome_immutability`, the trigger standing
+  // between `signal_outcomes` and an edit. A function with no `search_path`
+  // resolves its unqualified names against the *caller's* setting, so whoever
+  // fires the trigger has a vote in what the guard's identifiers mean.
+  //
+  // Both were SECURITY INVOKER, which is why it was a WARN and not an
+  // incident. The rule is written down here anyway, because the next function
+  // added to this schema will not necessarily be.
+  //
+  // The check is on `create function` in the SQL rather than on the live
+  // database: a test cannot reach the deployment, and what it *can* hold is
+  // that the repo never asks for a function without saying where its names
+  // resolve. `alter function ... set search_path` counts — that is how the two
+  // existing ones were fixed, so the bodies stay owned by the files that
+  // declare them.
+  const sql = [join(SUPABASE, 'schema.sql'), ...migrations()]
+    .map((f) => readFileSync(f, 'utf8')).join('\n');
+
+  const defined = [...sql.matchAll(
+    /create\s+(?:or\s+replace\s+)?function\s+(?:public\.)?(\w+)\s*\(/gi)].map((m) => m[1]!);
+  assert.ok(defined.length > 0, 'premise: the SQL defines at least one function');
+
+  const unpinned = [...new Set(defined)].filter((fn) => {
+    // Either the definition sets it, or a later `alter function` does.
+    const atDefinition = new RegExp(
+      `create\\s+(?:or\\s+replace\\s+)?function\\s+(?:public\\.)?${fn}\\s*\\([^;]*?set\\s+search_path`,
+      'is').test(sql);
+    const atAlter = new RegExp(
+      `alter\\s+function\\s+(?:public\\.)?${fn}\\s*\\([^;]*?\\)\\s*set\\s+search_path`,
+      'is').test(sql);
+    return !atDefinition && !atAlter;
+  });
+
+  assert.deepEqual(unpinned, [],
+    `these functions leave search_path to the caller: ${unpinned.join(', ')}`);
+});
