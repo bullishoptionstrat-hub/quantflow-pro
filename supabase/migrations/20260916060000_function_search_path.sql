@@ -1,0 +1,35 @@
+-- Pin the search_path on both trigger functions.
+--
+-- Supabase's database linter flags `function_search_path_mutable` on any
+-- function with no `search_path` set: the resolution of every unqualified name
+-- inside the body then depends on the *caller's* setting, so whoever fires the
+-- trigger gets a say in what the function's identifiers mean.
+--
+-- Both functions here are `SECURITY INVOKER`, which is the reason this is a
+-- WARN and not an incident — they run with the caller's own rights, so a
+-- hijacked name resolves to something the caller could already have called.
+-- It is still the wrong property for `enforce_outcome_immutability`, which is
+-- the trigger standing between `signal_outcomes` and an edit. A guard whose
+-- behaviour depends on the caller is a guard the caller has a vote in.
+--
+-- `''` rather than `'public'`, and both bodies were read before choosing it:
+--
+--   * `enforce_outcome_immutability` references no table and calls no
+--     function. It reads `tg_op`, `old` and `new` and raises. There is nothing
+--     for a search_path to resolve.
+--   * `handle_updated_at` is `new.updated_at = now()`. `now()` lives in
+--     `pg_catalog`, which is implicitly in scope whatever the setting says.
+--
+-- So neither needs a schema on the path, and an empty one is the narrowest
+-- thing that is true. `alter function` rather than a redefinition, so the
+-- bodies stay owned by the files that declare them — `20260829120000` and
+-- `schema.sql` respectively — and cannot drift from them here.
+--
+-- Deliberately NOT touched: `handle_new_user`, which already pins
+-- `search_path = 'public'` and is flagged by two different lints for being a
+-- `SECURITY DEFINER` function executable by `anon` and `authenticated`. That
+-- is a pre-existing decision about who may call it, not a search_path problem,
+-- and revoking EXECUTE is a separate change with a separate argument.
+
+alter function public.enforce_outcome_immutability() set search_path = '';
+alter function public.handle_updated_at()            set search_path = '';
