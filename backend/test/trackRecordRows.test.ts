@@ -146,6 +146,31 @@ test('median is the median, including across an even sample', () => {
 
 // ─── One copy, because the two had already drifted ──────────────────────────
 
+test('a store-specific note survives the shared note list', () => {
+  // Collapsing the two copies dropped one: the memory store's eviction warning,
+  // which exists because its 50,000-signal cap means a rate can describe a
+  // retained window rather than the whole record. The Supabase store has no cap
+  // and the claim would be false there, so it cannot join the shared list — it
+  // comes through the store channel and lands last.
+  const rows = tallyToRows([bucket('M15', MIN_PUBLISHABLE_SAMPLE, M15)]);
+  const mine = '1234 oldest signal(s) have been evicted from this in-memory store';
+  const notes = reportNotes(
+    rows, { synthetic: 2, eventTimeOnlyBasis: 0, rightsRefused: 0 }, [mine]);
+  assert.ok(notes.includes(mine), 'a store-specific note must reach the reader');
+  assert.equal(notes[notes.length - 1], mine, 'and it lands after the shared prose');
+  assert.ok(notes.some((n) => /synthetic signal\(s\) were excluded/.test(n)),
+    'without displacing any of it');
+});
+
+test('the memory store still warns when it has evicted signals', () => {
+  const src = readFileSync(
+    join(__dirname, '..', 'src', 'persistence', 'memoryStore.ts'), 'utf8');
+  assert.match(src, /this\.evicted > 0/,
+    'the eviction warning was dropped by the refactor that shared these notes');
+  assert.match(src, /reportNotes\(rows, excluded, storeNotes\)/,
+    'and it must reach the reader through the store channel');
+});
+
 test('neither store builds its own rows or its own prose', () => {
   // `memoryStore` and `supabaseStore` each had a full copy of the bucket→row
   // mapping and the note list. They differed: the Supabase copy warned that
@@ -179,6 +204,40 @@ test('an unknown horizon has no nominal length, and is not a number anyway', () 
   assert.equal(nominalHorizonMs('EXPIRY'), undefined);
   assert.equal(nominalHorizonMs('nonsense'), undefined);
   assert.equal(nominalHorizonMs('M15'), 15 * 60_000);
+
+  // `in` walks the prototype chain, so the first version of this lookup
+  // answered `Object.prototype.toString` — a **function** — through a
+  // signature promising `number | undefined`. Measured, not reasoned about:
+  // 'toString', 'constructor' and 'hasOwnProperty' all came back as functions,
+  // and a function reaching `nominalMs` publishes `NaN` in a note. It is the
+  // precise defect the comment on that function claims to avoid, introduced by
+  // the commit that wrote the comment.
+  for (const inherited of ['toString', 'constructor', 'hasOwnProperty', 'valueOf', '__proto__']) {
+    const v = nominalHorizonMs(inherited);
+    assert.equal(v, undefined, `${inherited} must not resolve through the prototype`);
+    assert.notEqual(typeof v, 'function', `${inherited} must never return a function`);
+  }
+});
+
+test('a bucket larger than the argument limit still reports min and max', () => {
+  // `Math.min(...xs)` passes every element as an argument. The in-memory store
+  // caps at 50,000 signals but the Supabase table it exists to be replaced by
+  // does not, so a long-accumulated bucket would have thrown a RangeError and
+  // turned the whole endpoint into a 500 — at exactly the point where the
+  // track record finally had enough sample to be worth reading.
+  const t = emptyTally('SWEEP', 'D1');
+  const n = 200_000;
+  for (let i = 0; i < n; i++) {
+    tallyOutcome(t, {
+      label: 'POSITIVE', excursion: 0.01,
+      entryMarkAt: 0, exitMarkAt: 1_000 + (i % 7),
+    });
+  }
+  const [row] = tallyToRows([t]);
+  const mi = row!.measuredInterval!;
+  assert.equal(mi.n, n);
+  assert.equal(mi.minMs, 1_000);
+  assert.equal(mi.maxMs, 1_006);
 });
 
 test('one table of horizon lengths, not two', () => {

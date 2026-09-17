@@ -208,12 +208,26 @@ export class InMemorySignalStore implements SignalStore {
     // existed only in the other copy, and this is the store that actually
     // answers the endpoint.
     const rows = tallyToRows(tallies.values());
+
+    // The one note only this store can make. Eviction is a property of the
+    // in-memory cap, not of the record, so it cannot live in the shared list —
+    // and the first version of this refactor dropped it entirely, which would
+    // have let a retained-window rate present itself as the whole history.
+    const storeNotes: string[] = [];
+    if (this.evicted > 0) {
+      storeNotes.push(
+        `${this.evicted} oldest signal(s) have been evicted from this in-memory store ` +
+        `(cap ${MAX_SIGNALS}). Rates here describe the retained window only. Configure ` +
+        'a Supabase store for a record that survives a restart.',
+      );
+    }
+
     return {
       generatedAt: new Date().toISOString(),
       rows,
       excluded,
       minSample: MIN_PUBLISHABLE_SAMPLE,
-      notes: reportNotes(rows, excluded),
+      notes: reportNotes(rows, excluded, storeNotes),
     };
   }
 

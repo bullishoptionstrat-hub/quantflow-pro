@@ -31,6 +31,34 @@ const T_GAPS = 'collection_gaps';
 const iso = (ms: number) => new Date(ms).toISOString();
 const ms = (s: string) => Date.parse(s);
 
+/**
+ * A `numeric` column, which PostgREST serializes as a **JSON string**.
+ *
+ * Postgres `numeric` is arbitrary-precision and a JSON number is a float64, so
+ * PostgREST sends `"0.023"` rather than `0.023` to avoid deciding for you what
+ * to round. `toRecord` has always known this — `Number(d.total_premium)`,
+ * `Number(d.total_size)`, `Number(d.score)` — and the outcome read path did
+ * not: `excursion`, `entry_mark` and `exit_mark` came back as strings through
+ * a type declaring `number`.
+ *
+ * It surfaced when `trackRecord`'s excursion handling moved into the shared
+ * tally, which gates on `typeof === 'number'`. The old inline copy coerced with
+ * `Number(o.excursion)`; the refactor dropped the coercion, so every
+ * Supabase-backed row would have published a `hitRate` with `medianExcursion`
+ * silently missing. The gate did not create the defect, it *revealed* it —
+ * three sibling fields had been strings-as-numbers all along, and nothing had
+ * ever compared one against a number.
+ *
+ * Empty string is `undefined`, not `Number('') === 0`: a blank is not a zero,
+ * which is the rule this repo states everywhere else.
+ */
+const num = (v: unknown): number | undefined => {
+  if (v === null || v === undefined) return undefined;
+  if (typeof v === 'string' && v.trim() === '') return undefined;
+  const n = typeof v === 'number' ? v : Number(v);
+  return Number.isFinite(n) ? n : undefined;
+};
+
 export class SupabaseSignalStore implements SignalStore {
   readonly kind = 'supabase' as const;
 
@@ -165,9 +193,9 @@ export class SupabaseSignalStore implements SignalStore {
       signalKey: r.signal_key,
       horizon: r.horizon,
       label: r.label,
-      excursion: r.excursion ?? undefined,
-      entryMark: r.entry_mark ?? undefined,
-      exitMark: r.exit_mark ?? undefined,
+      excursion: num(r.excursion),
+      entryMark: num(r.entry_mark),
+      exitMark: num(r.exit_mark),
       entryMarkSource: r.entry_mark_source ?? undefined,
       exitMarkSource: r.exit_mark_source ?? undefined,
       entryMarkAt: r.entry_mark_at ? ms(r.entry_mark_at) : undefined,
@@ -278,7 +306,7 @@ export class SupabaseSignalStore implements SignalStore {
           // undefined rather than becoming a zero the tally would believe.
           tallyOutcome(t, {
             label: o.label,
-            excursion: o.excursion ?? undefined,
+            excursion: num(o.excursion),
             entryMarkAt: o.entry_mark_at ? ms(o.entry_mark_at) : undefined,
             exitMarkAt: o.exit_mark_at ? ms(o.exit_mark_at) : undefined,
           });
