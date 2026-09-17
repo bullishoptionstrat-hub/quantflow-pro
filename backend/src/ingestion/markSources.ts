@@ -61,10 +61,15 @@ const SOURCES: readonly MarkSource[] = [
     lookup: getSpotPrice,
     needs: ['TWELVE_DATA_API_KEY'],
     note:
-      'The WebSocket spot cache. UNVERIFIED for PERSIST — Section 16.1 caps ' +
-      'retention at the subscription\'s permitted duration and this ' +
-      'deployment\'s subscription is not established — so it is used, ranked ' +
-      'last, and recorded as UNVERIFIED on every outcome it prices.',
+      'The spot cache, filled by two paths with different reach: measured ' +
+      '2026-09-17, the WebSocket plan accepts only QQQ and AAPL of the ten ' +
+      'watched symbols, so the other eight — SPY included — are priced by ' +
+      'REST alone, on a rotation the free tier\'s 800 credits/day paces at ' +
+      'roughly 19 minutes. That is longer than the M15 horizon. UNVERIFIED ' +
+      'for PERSIST — Section 16.1 caps retention at the subscription\'s ' +
+      'permitted duration and this deployment\'s subscription is not ' +
+      'established — so it is used, ranked last, and recorded as UNVERIFIED ' +
+      'on every outcome it prices.',
   },
 ];
 

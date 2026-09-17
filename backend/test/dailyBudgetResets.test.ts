@@ -33,7 +33,7 @@ const CONNECTORS = join(__dirname, '..', 'src', 'ingestion', 'connectors');
 const stripComments = (s: string) => s.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
 
 /** The connectors that meter themselves against a daily quota. */
-const METERED = ['marketData.ts', 'newsApi.ts', 'fmp.ts', 'flashAlpha.ts'];
+const METERED = ['marketData.ts', 'newsApi.ts', 'fmp.ts', 'flashAlpha.ts', 'twelveData.ts'];
 
 test('the reset fires on every midnight, not just the first', () => {
   mock.timers.enable({ apis: ['setTimeout', 'Date'] });

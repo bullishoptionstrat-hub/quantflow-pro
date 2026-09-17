@@ -167,6 +167,10 @@ test('a publishable key in the service slot blocks, and is not a missing-variabl
   assert.deepEqual(blocked(runChecks(env)), ['Durable storage']);
   const c = named(runChecks(env), 'Durable storage');
   assert.match(c.detail, /role claim is "anon"/);
+  // `fix` is optional on a Check, so assert it exists before reading it — the
+  // suite passed here while `tsc -p tsconfig.test.json` did not, which is the
+  // half of `npm run verify` that only fails when someone runs the gate.
+  assert.ok(c.fix, 'a blocked check must carry a fix line');
   assert.match(c.fix, /service_role/);
   // The variable *is* set; a fix line telling the operator to set it would send
   // them looking at the one thing that is already right.
