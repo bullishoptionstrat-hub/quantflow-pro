@@ -143,7 +143,10 @@ test('the grader picks up a recorded real signal and grades it at M15', async (t
   let now = Date.now();
   const grader = new SignalGrader(
     store,
-    () => ({ price: spot, source: 'twelvedata', rightsClass: 'UNVERIFIED' }),
+    // `asOf: now` is what a live feed hands back — the price is true as of the
+    // moment it was asked. The grader refuses marks it cannot place in time,
+    // and the staleness branches have their own fixtures in grader.test.ts.
+    () => ({ price: spot, source: 'twelvedata', rightsClass: 'UNVERIFIED', asOf: now }),
     {},
     () => now,
   );

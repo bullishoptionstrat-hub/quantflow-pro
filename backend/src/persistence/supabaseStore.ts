@@ -138,6 +138,11 @@ export class SupabaseSignalStore implements SignalStore {
       // CHECK holds the pairing: a mark without a source is not recordable.
       entry_mark_source: rec.entryMarkSource ?? null,
       exit_mark_source: rec.exitMarkSource ?? null,
+      // `iso`/`ms`, not the raw epoch: these are `timestamptz` like every other
+      // instant in this schema, and a bare number would round-trip as a string
+      // the reader has to guess the unit of.
+      entry_mark_at: rec.entryMarkAt === undefined ? null : iso(rec.entryMarkAt),
+      exit_mark_at: rec.exitMarkAt === undefined ? null : iso(rec.exitMarkAt),
       due_at: iso(rec.dueAt),
       evaluated_at: iso(rec.evaluatedAt),
       ungraded_reason: rec.ungradedReason ?? null,
@@ -162,6 +167,8 @@ export class SupabaseSignalStore implements SignalStore {
       exitMark: r.exit_mark ?? undefined,
       entryMarkSource: r.entry_mark_source ?? undefined,
       exitMarkSource: r.exit_mark_source ?? undefined,
+      entryMarkAt: r.entry_mark_at ? ms(r.entry_mark_at) : undefined,
+      exitMarkAt: r.exit_mark_at ? ms(r.exit_mark_at) : undefined,
       dueAt: ms(r.due_at),
       evaluatedAt: ms(r.evaluated_at),
       ungradedReason: r.ungraded_reason ?? undefined,

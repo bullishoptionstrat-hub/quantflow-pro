@@ -33,14 +33,21 @@
 import {
   classifySource, resolveBusinessMode, type BusinessMode, type RightsClass,
 } from '../provenance/rights';
-import { getSpotPrice } from './connectors/twelveData';
+import { getSpotMark } from './connectors/twelveData';
 import type { Mark } from '../persistence/grader';
 
 interface MarkSource {
   /** Connector source string, as `SOURCE_TO_DATASET` knows it. */
   source: string;
-  /** The cached price, or null when this source has nothing for that symbol. */
-  lookup(underlying: string): number | null;
+  /**
+   * The cached price *and its vendor stamp*, or null when this source has
+   * nothing for that symbol.
+   *
+   * The stamp is part of the return rather than a second call, so a source
+   * cannot supply a price this registry is unable to date — the same
+   * structural argument that put `source` on `Mark`.
+   */
+  lookup(underlying: string): { price: number; asOf: number } | null;
   /**
    * The env vars its connector needs.
    *
@@ -58,7 +65,7 @@ interface MarkSource {
 const SOURCES: readonly MarkSource[] = [
   {
     source: 'twelvedata',
-    lookup: getSpotPrice,
+    lookup: getSpotMark,
     needs: ['TWELVE_DATA_API_KEY'],
     note:
       'The spot cache, filled by two paths with different reach: measured ' +
@@ -196,9 +203,14 @@ export function resolveMark(underlying: string, mode?: BusinessMode): Mark | und
   // source with no price for this symbol. Testing the key as well would put the
   // same fact in two places and invite them to disagree.
   for (const s of orderedUsable(m)) {
-    const price = s.lookup(underlying);
-    if (price === null || !(price > 0)) continue;
-    return { price, source: s.source, rightsClass: s.rightsClass };
+    const hit = s.lookup(underlying);
+    if (hit === null || !(hit.price > 0)) continue;
+    // A mark this registry cannot date is not a usable mark. Defaulting the
+    // stamp — to now, or to zero — is the `?? 0` move with a clock instead of
+    // a price, and it would defeat the grader's staleness refusals by handing
+    // them a number they cannot doubt.
+    if (!Number.isFinite(hit.asOf) || hit.asOf <= 0) continue;
+    return { price: hit.price, source: s.source, rightsClass: s.rightsClass, asOf: hit.asOf };
   }
   return undefined;
 }

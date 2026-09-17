@@ -14,6 +14,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   markSourceStandings, resolveMark, registeredMarkSources, markSourceCredentials,
 } from '../src/ingestion/markSources';
@@ -51,6 +53,29 @@ test('a mark carries its source and its rights standing', () => {
   // Undefined is the normal answer with no connector running, and it is the
   // honest one: no source had a price, so there is no mark and no source to
   // attribute. A zero here would be a -100% excursion against a live entry.
+});
+
+test('a mark carries its stamp, and one that cannot be dated is refused', () => {
+  const m = resolveMark('SPY');
+  if (m !== undefined) {
+    assert.equal(typeof m.asOf, 'number');
+    assert.ok(Number.isFinite(m.asOf) && m.asOf > 0);
+  }
+
+  // The behavioural half of this rule lives where a cache can be populated —
+  // `spotQuoteHonesty.test.ts` drives the only registered source and asserts
+  // its stamp is the vendor's. What is asserted here is that the registry
+  // *screens* the stamp on the way through, because that is the branch a
+  // second source would arrive on: `resolveMark` returns undefined rather
+  // than dating a mark itself. Defaulting the clock is the `?? 0` move with a
+  // timestamp instead of a price, and it would hand the grader's staleness
+  // refusals a number they cannot doubt.
+  const src = readFileSync(
+    join(__dirname, '..', 'src', 'ingestion', 'markSources.ts'), 'utf8');
+  assert.match(src, /Number\.isFinite\(hit\.asOf\)/,
+    'resolveMark must screen the stamp it was handed');
+  assert.ok(!/asOf:\s*Date\.now\(\)/.test(src),
+    'the registry must never stamp a mark with its own clock');
 });
 
 test('ranking is derived from rights, not written down', () => {

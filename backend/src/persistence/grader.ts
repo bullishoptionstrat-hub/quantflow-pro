@@ -87,6 +87,21 @@ export interface Mark {
   source: string;
   /** Its PERSIST standing in the mode that resolved it. Never `PROHIBITED`. */
   rightsClass: string;
+  /**
+   * When this price was true, on the **vendor's** clock.
+   *
+   * The same argument as `source`, one step further: provenance made it
+   * impossible to record a mark without knowing where it came from, and this
+   * makes it impossible to record one without knowing *when*. Without it the
+   * grader measured a move between two prices having never established that
+   * one came after the other — invisible while the cache refreshed every 60
+   * seconds, and reachable the moment it refreshed every 19 minutes.
+   *
+   * It is the vendor's stamp and not our receipt time, because the question is
+   * when the market was at this price, not when we heard about it. Off-hours
+   * those differ by hours, and the receipt-time answer is the flattering one.
+   */
+  asOf: number;
 }
 
 /** Current mark for an underlying, or undefined when not observable. */
@@ -191,8 +206,10 @@ export class SignalGrader {
             excursion: outcome.excursion,
             entryMark: p.entryMark?.price,
             entryMarkSource: p.entryMark?.source,
+            entryMarkAt: p.entryMark?.asOf,
             exitMark: outcome.exitMark,
             exitMarkSource: outcome.exitMarkSource,
+            exitMarkAt: outcome.exitMarkAt,
             dueAt,
             evaluatedAt: now,
             ungradedReason: outcome.ungradedReason,
@@ -226,6 +243,7 @@ export class SignalGrader {
     excursion?: number;
     exitMark?: number;
     exitMarkSource?: string;
+    exitMarkAt?: number;
     ungradedReason?: string;
   } {
     // An AMBIGUOUS side yields no implied direction, and a signal with no
@@ -248,6 +266,25 @@ export class SignalGrader {
         ungradedReason:
           `No usable entry mark for ${p.underlying} at the decision instant. The gap ` +
           'is recorded rather than interpolated from a neighbouring quote.',
+      };
+    }
+
+    // An entry mark may legitimately predate the decision — it is the last
+    // price before that instant — but not by more than the shortest horizon
+    // this grader measures. Past that the denominator of every excursion is a
+    // price from before the signal existed, which is wrong rather than
+    // imprecise. The bound is `HORIZON_OFFSETS_MS.M15` rather than a constant
+    // chosen here: a mark that cannot support the shortest checkpoint cannot
+    // support any of them.
+    const entryAge = p.decisionAt - p.entryMark.asOf;
+    if (entryAge > HORIZON_OFFSETS_MS.M15) {
+      return {
+        label: 'UNGRADED',
+        ungradedReason:
+          `Entry mark for ${p.underlying} is stamped ${Math.round(entryAge / 60_000)} ` +
+          `minutes before the decision instant, which is longer than the shortest ` +
+          `horizon this grader measures. The move would be measured from a price ` +
+          `that predates the signal.`,
       };
     }
 
@@ -280,9 +317,39 @@ export class SignalGrader {
       };
     }
 
-    // Both marks are recorded with their source. They can differ — a vendor
-    // can fall out between registration and a checkpoint — and an excursion
-    // measured across two different price sources is worth being able to spot.
+    // The checkpoint is observed by the *mark's* clock, not by ours. `now` is
+    // when this tick ran; `exit.asOf` is when the price it read was true, and a
+    // cache refreshed every 19 minutes routinely hands back a price stamped
+    // before the checkpoint it is being used to grade. At M15 that price can
+    // predate `decisionAt` itself, so the "move" is measured backwards across
+    // the signal.
+    if (exit.asOf < dueAt) {
+      return {
+        label: 'UNGRADED',
+        ungradedReason:
+          `The ${horizon} mark for ${p.underlying} is stamped ` +
+          `${Math.round((dueAt - exit.asOf) / 60_000)} minutes before the checkpoint ` +
+          `came due, so it never observed it. The mark source refreshes more slowly ` +
+          `than this horizon is long.`,
+      };
+    }
+
+    // Same rule as `isForwardObservation`, applied to the prices rather than to
+    // the process clock: two marks with the same stamp measure no interval, and
+    // an exit stamped before the entry measures one backwards.
+    if (!(exit.asOf > p.entryMark.asOf)) {
+      return {
+        label: 'UNGRADED',
+        ungradedReason:
+          `The ${horizon} mark for ${p.underlying} is not stamped after the entry ` +
+          `mark, so no forward interval was measured between them.`,
+      };
+    }
+
+    // Both marks are recorded with their source and their stamp. All four can
+    // differ — a vendor can fall out between registration and a checkpoint —
+    // and an excursion measured across two sources, or across an interval that
+    // is not the horizon it is filed under, is worth being able to spot later.
     const exitMark = exit.price;
     const rawMove = (exitMark - p.entryMark.price) / p.entryMark.price;
     // Signed in the direction the signal implied: a bearish signal followed by
@@ -294,6 +361,6 @@ export class SignalGrader {
     else if (excursion < -this.cfg.flatBandPct) label = 'NEGATIVE';
     else label = 'FLAT';
 
-    return { label, excursion, exitMark, exitMarkSource: exit.source };
+    return { label, excursion, exitMark, exitMarkSource: exit.source, exitMarkAt: exit.asOf };
   }
 }

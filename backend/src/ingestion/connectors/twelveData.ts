@@ -365,6 +365,28 @@ export function getSpotPrice(symbol: string): number | null {
   return spotCache.get(symbol)?.price ?? null;
 }
 
+/**
+ * The mark for a symbol *with the stamp the vendor gave it*, or null.
+ *
+ * Added beside `getSpotPrice` rather than replacing it: that name is referenced
+ * in `entitlement.ts`, `finnhub.ts`, `fred.ts` and `rights.ts`, and the bare
+ * price is still what the ticker tape wants. What the grader needs and could
+ * never ask for is *when the price was true*.
+ *
+ * `SpotQuote.timestamp` is the vendor's own stamp, normalized to milliseconds
+ * by `quoteTimestamp` — deliberately not `lastDeliveryBySymbol`, which is when
+ * we received it. Those differ by the whole point: off-hours the vendor's stamp
+ * is the last session's close, and reporting a mark as fresh because it arrived
+ * recently is the manufactured freshness `RawPrint.quoteTs` exists to prevent.
+ * A price from the last close cannot measure a fifteen-minute move, and the
+ * grader can only know that if it is told the price's own age.
+ */
+export function getSpotMark(symbol: string): { price: number; asOf: number } | null {
+  const q = spotCache.get(symbol);
+  if (!q || !(q.price > 0)) return null;
+  return { price: q.price, asOf: q.timestamp };
+}
+
 function startWebSocket(): void {
   const ws = new WebSocket(`${WS_URL}?apikey=${API_KEY}`);
 
