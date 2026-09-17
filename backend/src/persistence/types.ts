@@ -193,7 +193,15 @@ export const HORIZON_NOMINAL_MS: Record<Exclude<OutcomeHorizon, 'EXPIRY'>, numbe
  * guarded by the `in` check that makes it sound.
  */
 export function nominalHorizonMs(horizon: string): number | undefined {
-  return horizon in HORIZON_NOMINAL_MS
+  // `hasOwnProperty`, not `in`: `in` walks the prototype chain, so
+  // `nominalHorizonMs('toString')` answered `Object.prototype.toString` — a
+  // **function**, returned through a signature promising `number | undefined`.
+  // That is the exact defect the paragraph above claims to have avoided, and it
+  // was introduced by the commit that wrote the paragraph. Measured, not
+  // reasoned about: 'toString', 'constructor' and 'hasOwnProperty' all came
+  // back as functions, and `NaN` in a published note is where it would have
+  // surfaced.
+  return Object.prototype.hasOwnProperty.call(HORIZON_NOMINAL_MS, horizon)
     ? HORIZON_NOMINAL_MS[horizon as Exclude<OutcomeHorizon, 'EXPIRY'>]
     : undefined;
 }

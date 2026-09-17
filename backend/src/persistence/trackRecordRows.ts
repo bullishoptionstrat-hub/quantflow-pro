@@ -92,8 +92,21 @@ function intervalOf(t: OutcomeTally): MeasuredInterval | undefined {
   if (nominal !== undefined) mi.nominalMs = nominal;
   if (t.intervals.length > 0) {
     mi.medianMs = median(t.intervals);
-    mi.minMs = Math.min(...t.intervals);
-    mi.maxMs = Math.max(...t.intervals);
+    // Folded rather than spread. `Math.min(...xs)` passes every element as an
+    // argument, and the Supabase history has no cap — a bucket larger than
+    // Node's argument limit would make this throw instead of returning the
+    // report, turning an accumulated track record into a 500. The in-memory
+    // store caps at 50,000 signals; the table it is meant to be replaced by
+    // does not, so the limit is reachable exactly once the endpoint starts
+    // mattering.
+    let lo = t.intervals[0]!;
+    let hi = lo;
+    for (const v of t.intervals) {
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+    mi.minMs = lo;
+    mi.maxMs = hi;
   }
   return mi;
 }
@@ -143,6 +156,19 @@ const mins = (ms: number) => Math.round(ms / 60_000);
 export function reportNotes(
   rows: TrackRecordRow[],
   excluded: { synthetic: number; eventTimeOnlyBasis: number; rightsRefused: number },
+  /**
+   * Notes only one store can make, appended last.
+   *
+   * This parameter exists because collapsing the two copies **dropped one**:
+   * the in-memory store warned when its 50,000-signal cap had evicted the
+   * oldest rows, so `/api/track-record` could otherwise present a
+   * retained-window rate as the whole record. A shared note list cannot carry
+   * that — the Supabase store has no cap and the claim would be false there —
+   * and deleting it was the same defect this module was written to fix, in the
+   * opposite direction and introduced by the fix. Store-specific facts come
+   * through here; shared prose never does.
+   */
+  storeNotes: readonly string[] = [],
 ): string[] {
   const notes: string[] = [];
 
@@ -232,5 +258,6 @@ export function reportNotes(
     );
   }
 
+  notes.push(...storeNotes);
   return notes;
 }
