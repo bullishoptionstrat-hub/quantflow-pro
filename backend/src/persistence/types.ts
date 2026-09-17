@@ -164,6 +164,40 @@ export interface CollectionGap {
 /** Below this many graded outcomes, no rate is published. */
 export const MIN_PUBLISHABLE_SAMPLE = 30;
 
+/**
+ * How long each horizon nominally is, measured from `decisionAt`.
+ *
+ * Moved here from `grader.ts` (which re-exports it) because it stopped being
+ * only the grader's business: `/api/track-record` needs it to say whether the
+ * interval a row was *measured* over matches the horizon it is *filed* under.
+ * `EXPIRY` has no fixed length and is absent rather than guessed.
+ */
+export const HORIZON_NOMINAL_MS: Record<Exclude<OutcomeHorizon, 'EXPIRY'>, number> = {
+  M15: 15 * 60_000,
+  H1: 60 * 60_000,
+  D1: 24 * 60 * 60_000,
+};
+
+/**
+ * The nominal length of a horizon named by an arbitrary string, or `undefined`.
+ *
+ * The table keeps its narrow type, so the grader indexes it with a key the
+ * compiler has checked. Callers reading a horizon out of a *row* have only a
+ * string — it came from a database column or a bucket key — and widening the
+ * table to `Record<string, number>` to serve them would have made
+ * `HORIZON_NOMINAL_MS['nonsense']` typecheck as a `number` while returning
+ * undefined. That is the shape of every defect in this repo's ledger: a type
+ * promising something the value does not.
+ *
+ * So the widening lives here, in a return type that admits it, and the cast is
+ * guarded by the `in` check that makes it sound.
+ */
+export function nominalHorizonMs(horizon: string): number | undefined {
+  return horizon in HORIZON_NOMINAL_MS
+    ? HORIZON_NOMINAL_MS[horizon as Exclude<OutcomeHorizon, 'EXPIRY'>]
+    : undefined;
+}
+
 export interface TrackRecordRow {
   kind: string;
   horizon: OutcomeHorizon;
@@ -174,6 +208,42 @@ export interface TrackRecordRow {
   hitRate?: number;
   medianExcursion?: number;
   suppressionReason?: 'INSUFFICIENT_SAMPLE';
+  /**
+   * What this bucket's graded rows were actually measured over.
+   *
+   * Present whenever anything graded, including when the rate itself is
+   * suppressed — the sample-size gate is about not publishing a *rate* on thin
+   * evidence, not about withholding the evidence's shape.
+   */
+  measuredInterval?: MeasuredInterval;
+}
+
+/**
+ * The interval a bucket's outcomes were measured over, beside the horizon they
+ * are filed under.
+ *
+ * The horizon is a *schedule*: when the checkpoint fell due. The mark stamps
+ * are the *measurement*. On a mark source that refreshes more slowly than a
+ * horizon is long — the free-tier rotation in `connectors/twelveData.ts` — a
+ * row filed under `M15` can be measured over anything from fifteen minutes to
+ * an hour, and a hit rate pooled across those is not a fifteen-minute hit
+ * rate. Every platform in this category publishes the label and not the
+ * interval; this publishes both.
+ */
+export interface MeasuredInterval {
+  /** Graded outcomes carrying both mark stamps. */
+  n: number;
+  /** Graded outcomes carrying neither, which cannot say what they measured. */
+  nUndated: number;
+  /**
+   * Omitted when `n` is 0 — never a zero standing in for "unknown", which is
+   * the rule this file states for every other optional reading.
+   */
+  medianMs?: number;
+  minMs?: number;
+  maxMs?: number;
+  /** The horizon's nominal length. Absent for `EXPIRY`, which has none. */
+  nominalMs?: number;
 }
 
 export interface TrackRecordReport {

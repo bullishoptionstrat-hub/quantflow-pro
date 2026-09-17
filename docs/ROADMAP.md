@@ -370,8 +370,17 @@ every day is sample.
       backend field: a derived `disposition` would be a seventh channel
       answering what three already answer.
 
-- [ ] **2.5 — Make the published rate say what it measured.** *Opened
-      2026-09-17 by 2.4.* `entry_mark_at` / `exit_mark_at` now record the
+- [x] **2.5 — Make the published rate say what it measured.** *Opened and
+      closed 2026-09-17.* `MeasuredInterval` ships on every graded row —
+      n, undated count, median/min/max and the horizon's own nominal length —
+      and a note fires only when the median exceeds the nominal. Reported, not
+      corrected: correcting means picking a tolerance and discarding rows.
+      Found on the way, and worse than the item: **the row-and-note logic
+      already had two copies and they had drifted**, with the "three readings
+      of the same signals" warning present only in the Supabase store — the
+      one that has never run. Collapsed into `persistence/trackRecordRows.ts`.
+      Unexercised in production (`real: 0`), which is stated rather than
+      implied. *The original description:* `entry_mark_at` / `exit_mark_at` now record the
       interval each outcome was actually measured over, and on this tier an
       `M15` row can span anywhere from fifteen minutes to an hour. Nothing
       reads those columns yet, so `/api/track-record` would publish an "M15
