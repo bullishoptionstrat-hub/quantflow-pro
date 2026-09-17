@@ -129,6 +129,31 @@ test('an error row is skipped rather than published at zero', async () => {
   } finally { td.restore(); }
 });
 
+test('getSpotMark carries the vendor\'s stamp, not our receipt time', async () => {
+  // The grader refuses a mark it cannot place in time, so this stamp decides
+  // whether an outcome can be graded at all — which makes *which clock* it
+  // comes from load-bearing rather than incidental.
+  //
+  // Off-hours the two answers differ by hours: the vendor's stamp is the last
+  // session's close, and receipt time says "just now". Receipt time is the
+  // flattering one, and it would report a price from Friday's close as fresh
+  // enough to grade a fifteen-minute move on Sunday. Same rule as
+  // `RawPrint.quoteTs`.
+  const stamp = 1789000000; // seconds, as Twelve Data sends them
+  const td = load({ SPY: { symbol: 'SPY', close: '661.74', timestamp: stamp } });
+  try {
+    await td.startTwelveData();
+    const mark = td.getSpotMark('SPY');
+    assert.ok(mark, 'a priced symbol must produce a mark');
+    assert.equal(mark.price, 661.74);
+    assert.equal(mark.asOf, stamp * 1000, 'the vendor\'s stamp, normalized to ms');
+    assert.ok(Math.abs(mark.asOf - Date.now()) > 60_000,
+      'a fixture stamped in the past must not come back dated now — that is the ' +
+      'receipt-time answer this test exists to refuse');
+    assert.equal(td.getSpotMark('QQQ'), null, 'never quoted is null, not a zero-priced mark');
+  } finally { td.restore(); }
+});
+
 test('getSpotPrice answers null for a symbol it has never quoted', async () => {
   // It answered `0`, and its one caller — the grader's mark source — defended
   // against that with `px > 0 ? px : undefined`. The sentinel is gone rather

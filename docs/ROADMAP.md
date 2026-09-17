@@ -370,6 +370,20 @@ every day is sample.
       backend field: a derived `disposition` would be a seventh channel
       answering what three already answer.
 
+- [ ] **2.5 — Make the published rate say what it measured.** *Opened
+      2026-09-17 by 2.4.* `entry_mark_at` / `exit_mark_at` now record the
+      interval each outcome was actually measured over, and on this tier an
+      `M15` row can span anywhere from fifteen minutes to an hour. Nothing
+      reads those columns yet, so `/api/track-record` would publish an "M15
+      hit rate" pooled across intervals of very different lengths — which is
+      the category's characteristic lie, arrived at honestly. The fix is to
+      report the measured interval per horizon beside the rate (median and
+      spread, or a refusal above some multiple of the nominal horizon), in the
+      same spirit as `labelRule: 'MAX_EXCURSION'` and the `eventTimeOnly`
+      count: state what the number is, do not quietly widen what it covers.
+      Deliberately not a tolerance constant picked in 2.4 — the right shape is
+      disclosure, and it belongs in the route that publishes.
+
 - [ ] **2.1** Watch `/api/track-record` climb toward n=30. Let it run. The
       floor exists so you don't fool yourself; respect it.
 - [x] **2.2 — A collection heartbeat.** *Done 2026-09-15 — and it was not
@@ -386,7 +400,7 @@ every day is sample.
       "Collecting for 11 days · 3 gaps totalling 47 min · 22 of 30 graded."
       You need to *see* the clock running or you won't trust the number when
       it arrives.
-- [ ] **2.4 — Give a mark an as-of.** *Opened 2026-09-17.* `MarkLookup` is
+- [x] **2.4 — Give a mark an as-of.** *Opened and closed 2026-09-17.* `Mark.asOf` carries the vendor's stamp; three refusals (exit before `dueAt`, exit not after entry, entry older than the shortest horizon) replace a silent division; `entry_mark_at`/`exit_mark_at` persist with a CHECK requiring the pair to be ordered. The defect was worse than this item described: not merely that staleness was unnoticed, but that **the grader never established the two prices were in order at all** — at M15 the exit mark could predate the decision, so the move was measured backwards. Same shape as the NBBO look-ahead in ledger note 22. Cost, stated carefully: M15 still grades for a REST-priced symbol — the first mark at or after `dueAt` arrives within a rotation and `maxLatenessMs` bounds it transitively — but the interval such a row is measured over can reach an hour, and about a fifth are refused for a stale entry. The horizon is the schedule; the stamps are the measurement. See 2.5. *The original description, which was accurate but incomplete rather than wrong:* `MarkLookup` is
       `(underlying) => {price, source, rightsClass}` and `markSources` supplies
       a bare cache read, so a mark taken from the 19-minute REST rotation is
       indistinguishable from one taken off the stream a second ago. The

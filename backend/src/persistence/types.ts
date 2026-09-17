@@ -106,6 +106,19 @@ export interface OutcomeRecord {
    */
   entryMarkSource?: string;
   exitMarkSource?: string;
+  /**
+   * When each mark was true, on the vendor's clock. Present exactly when the
+   * mark is.
+   *
+   * The horizon on this row is a *scheduling* label — when the checkpoint fell
+   * due — and these two are what was actually measured between. They are
+   * persisted rather than collapsed into a duration for the same reason
+   * `MAX_EXCURSION` is named on the payload instead of being presented as a
+   * held return: a reader months later should be able to see that an `M15` row
+   * spanned nineteen minutes, not take the label's word for it.
+   */
+  entryMarkAt?: number;
+  exitMarkAt?: number;
   /** When the checkpoint fell due, and when it was actually evaluated. */
   dueAt: number;
   evaluatedAt: number;
