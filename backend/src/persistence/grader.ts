@@ -28,6 +28,7 @@
  * without anyone editing a number.
  */
 import { impliedDirectionOf } from '../flow-engine/outcome/types';
+import { HORIZON_NOMINAL_MS } from './types';
 import type { ImpliedDirection } from '../flow-engine/outcome/types';
 import { isForwardObservation } from './identity';
 import type {
@@ -37,12 +38,16 @@ import type {
   SignalStore,
 } from './types';
 
-/** Offsets from `decisionAt`. EXPIRY is not graded — see the note in grade(). */
-export const HORIZON_OFFSETS_MS: Record<Exclude<OutcomeHorizon, 'EXPIRY'>, number> = {
-  M15: 15 * 60_000,
-  H1: 60 * 60_000,
-  D1: 24 * 60 * 60_000,
-};
+/**
+ * Offsets from `decisionAt`. EXPIRY is not graded — see the note in grade().
+ *
+ * The values live in `types.ts` as `HORIZON_NOMINAL_MS` now that
+ * `/api/track-record` needs them too — it compares the interval a row was
+ * measured over against the horizon it is filed under. Re-exported under this
+ * name because the grader is where the offsets are *applied*, and one table of
+ * horizon lengths beats two that can disagree.
+ */
+export const HORIZON_OFFSETS_MS = HORIZON_NOMINAL_MS;
 
 export interface GraderConfig {
   /**
