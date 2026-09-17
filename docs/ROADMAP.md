@@ -244,10 +244,22 @@ accumulating in wall-clock time while you build everything else.
 - [x] **0.3 — `TWELVE_DATA_API_KEY`** *Done 2026-09-16.* Set, and probed rather
       than assumed: `entitled`, HTTP 200 from `api.twelvedata.com`. Verifying it
       end to end is what found the health-reporting gap and the credit
-      arithmetic — see the two CLAUDE.md notes and PR #58. The REST batch
-      requests 10 symbols against an 8/min cap and can never succeed; whether
-      that matters depends on whether the WebSocket carries the board during a
-      session, which is still unmeasured. ~~on the free Basic tier, **then
+      arithmetic — see the two CLAUDE.md notes and PR #58. **The open caveat
+      here was answered 2026-09-17, and its premise was wrong.** The WebSocket
+      does not carry the board: the subscribe ack accepts **QQQ and AAPL and
+      refuses the other eight**, SPY included, so REST was never a fallback —
+      it is the only path to a mark for most of the watchlist, and it could not
+      complete a cycle. Both are fixed: the rotation is scoped from the ack,
+      cut to the per-minute cap less a reservation for the entitlement probe
+      (which the first live boot proved was needed — the boot pass refused the
+      probe), and paced off the 800/day cap at ~19 min for eight symbols, with
+      a `scheduleDailyReset` counter as the backstop pacing cannot provide
+      across Render's restarts. Note what this does *not* buy: a 19-minute mark
+      cannot grade an M15 horizon, and `Mark` carries no as-of for the grader
+      to notice — see 2.4. ~~The REST batch requests 10 symbols against an
+      8/min cap and can never succeed; whether that matters depends on whether
+      the WebSocket carries the board during a session, which is still
+      unmeasured.~~ ~~on the free Basic tier, **then
       `npm run collection:doctor -- --probe`**. Setting the key is not the
       exit condition — that is the exact move 1.1a removed from this tool.
       Twelve Data's entitlement to `/price` on the `WATCHED` symbols is
@@ -374,6 +386,18 @@ every day is sample.
       "Collecting for 11 days · 3 gaps totalling 47 min · 22 of 30 graded."
       You need to *see* the clock running or you won't trust the number when
       it arrives.
+- [ ] **2.4 — Give a mark an as-of.** *Opened 2026-09-17.* `MarkLookup` is
+      `(underlying) => {price, source, rightsClass}` and `markSources` supplies
+      a bare cache read, so a mark taken from the 19-minute REST rotation is
+      indistinguishable from one taken off the stream a second ago. The
+      staleness is published to the operator on `/api/health` and is invisible
+      to the grader. Same shape as 1.4 — a mark could not be recorded without
+      its provenance, and can still be recorded without its age — and the fix
+      is the same kind of change: an as-of on `Mark`, a column beside
+      `entry_mark_source`, and a grader that refuses or labels a mark older
+      than the horizon it grades. Deliberately not folded into the connector
+      PR that found it.
+
 - [x] **2.3 — Record the entitlement state on every persisted signal.**
       *Closed 2026-09-15 with no code, which is the honest answer.*
       `SignalRecord` already persists `source`, `datasetId`, `rightsClass` and
