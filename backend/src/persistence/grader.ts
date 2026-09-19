@@ -28,10 +28,11 @@
  * without anyone editing a number.
  */
 import { impliedDirectionOf } from '../flow-engine/outcome/types';
-import { HORIZON_NOMINAL_MS } from './types';
+import { GRADED_HORIZONS, HORIZON_NOMINAL_MS } from './types';
 import type { ImpliedDirection } from '../flow-engine/outcome/types';
 import { isForwardObservation } from './identity';
 import type {
+  GradedHorizon,
   OutcomeHorizon,
   OutcomeLabelValue,
   SignalRecord,
@@ -64,11 +65,37 @@ export interface GraderConfig {
    * fabricated measurement.
    */
   maxLatenessMs: number;
+  /**
+   * How far AFTER the decision instant an entry mark may be stamped.
+   *
+   * Not zero, because the live path cannot achieve zero: `register()` runs
+   * once the recorder's write resolves, so the mark is fetched a short moment
+   * after `decisionAt` and a vendor stamp from that moment is the honest
+   * answer to "what was the price when this signal was decided". Refusing it
+   * outright would make every real signal UNGRADED.
+   *
+   * Not unbounded either, which is what it was: the age is a subtraction, so a
+   * mark from the future made it negative and sailed through the too-early
+   * guard — the same hole `nbbo.ts` had when a quote stamped after the trade
+   * produced a negative age. Harmless while the gap was recording latency;
+   * catastrophic the moment a restart resumes a signal from hours ago and
+   * prices its entry at today's close.
+   *
+   * 60s is three orders of magnitude below the shortest horizon, so a mark
+   * inside it cannot materially move an M15 measurement, and it is far above
+   * any plausible recording latency or vendor clock skew. This is a named
+   * tolerance rather than a derived bound because the quantity it covers —
+   * registration latency — has no proxy anywhere on the row. Recovery does not
+   * rely on it: that path never re-takes a mark at all, so this is the second
+   * line, not the first.
+   */
+  maxEntryMarkLookaheadMs: number;
 }
 
 export const DEFAULT_GRADER_CONFIG: GraderConfig = {
   flatBandPct: 0.001,
   maxLatenessMs: 30 * 60_000,
+  maxEntryMarkLookaheadMs: 60_000,
 };
 
 /**
@@ -115,11 +142,105 @@ export type MarkLookup = (underlying: string) => Mark | undefined;
 /** @deprecated The bare-number shape. Kept only as a name for older callers. */
 export type SpotLookup = MarkLookup;
 
+/**
+ * The leg carrying the most premium, which is the one the signal is about.
+ *
+ * Mirrors `dominantLegOf()` in the flow-engine module. Duplicated rather than
+ * imported because it operates on `StoredLeg` — the persisted shape — and the
+ * vendored engine must stay byte-identical to its module. Held to the module's
+ * answer by a test.
+ */
+export function dominantStoredLeg<T extends { totalPremium: number }>(
+  legs: readonly T[],
+): T | undefined {
+  let best = legs[0];
+  for (const leg of legs) {
+    if (best === undefined || leg.totalPremium > best.totalPremium) best = leg;
+  }
+  return best;
+}
+
+/**
+ * Structures that express no direction, and so cannot be graded as though
+ * they did.
+ *
+ * Read off the engine's own `spreadGuess` rather than re-derived here, so
+ * there is one classifier and not two. A straddle or strangle is long (or
+ * short) both wings — a position on movement. Its "direction" is not merely
+ * hard to read, it does not exist, and a directional hit rate computed over a
+ * population containing them is measuring something else.
+ *
+ * A risk reversal IS directional (long one wing, short the other) and is
+ * deliberately absent from this list. So is `UNKNOWN`: an unclassified
+ * structure is not established to be non-directional, and refusing everything
+ * the classifier could not name would silently empty the track record.
+ */
+const UNDIRECTED_STRUCTURES = new Set(['STRADDLE_STRANGLE']);
+
+export function undirectedStructure(
+  rec: { spreadGuess?: string },
+): boolean {
+  return rec.spreadGuess !== undefined && UNDIRECTED_STRUCTURES.has(rec.spreadGuess);
+}
+
+/** What a restart recovers about a signal whose grading was interrupted. */
+export interface ResumedState {
+  /** Horizons with no live outcome row yet. */
+  remaining: readonly GradedHorizon[];
+  /** The entry mark observed before the restart, when one was recorded. */
+  entryMark?: Mark;
+}
+
+export interface RecoveryReport {
+  examined: number;
+  resumed: number;
+  /** Already graded at every horizon the grader writes. */
+  alreadyComplete: number;
+  /** Of those resumed, how many recovered a usable entry mark. */
+  withEntryMark: number;
+  failed: number;
+}
+
+/**
+ * Rebuild the entry mark from an outcome row that already recorded one.
+ *
+ * The three persisted fields are price, source and stamp; `rightsClass` is the
+ * fourth member of `Mark` and is not on the row, so it is resolved by the
+ * caller from the live registry. When the caller cannot name a class for that
+ * source, the mark is refused rather than stamped with a placeholder: a
+ * recovered mark whose rights standing is invented is precisely the kind of
+ * unrecorded assumption `Mark.source` was introduced to eliminate.
+ */
+export function recoverEntryMark(
+  outs: readonly { entryMark?: number; entryMarkSource?: string; entryMarkAt?: number }[],
+  rightsFor: (markSource: string) => string | undefined,
+): Mark | undefined {
+  for (const o of outs) {
+    if (o.entryMark === undefined || !(o.entryMark > 0)) continue;
+    if (!o.entryMarkSource) continue;
+    if (o.entryMarkAt === undefined || !Number.isFinite(o.entryMarkAt) || o.entryMarkAt <= 0) {
+      continue;
+    }
+    const rightsClass = rightsFor(o.entryMarkSource);
+    if (!rightsClass) continue;
+    return {
+      price: o.entryMark,
+      source: o.entryMarkSource,
+      rightsClass,
+      asOf: o.entryMarkAt,
+    };
+  }
+  return undefined;
+}
+
 interface Pending {
   signalKey: string;
   underlying: string;
   decisionAt: number;
   direction: ImpliedDirection;
+  /** Why the direction is NONE, so the UNGRADED reason can say which. */
+  undirected: boolean;
+  spreadGuess?: string;
   entryMark?: Mark;
   /** Horizons still to grade. */
   remaining: Set<OutcomeHorizon>;
@@ -163,29 +284,137 @@ export class SignalGrader {
    * produce a hit rate on a random number generator, and the track record
    * excludes them anyway.
    */
-  register(rec: SignalRecord): void {
+  register(rec: SignalRecord, resumed?: ResumedState): void {
     if (rec.synthetic) return;
     if (this.pending.has(rec.signalKey)) return;
 
-    const dominant = rec.legs[0];
+    // The DOMINANT leg — highest premium — not `legs[0]`.
+    //
+    // The engine stores legs in the order their contract+side groups were
+    // first seen, so `legs[0]` is whichever leg printed first. On the fixture
+    // this repo already documents — a bought $102k SPY call alongside a bought
+    // $2.2k put, the small put printing five milliseconds earlier — the
+    // grader took its direction from the $2.2k put. Measured: a +2% move in
+    // the underlying, which is what the $102k call was positioned for, graded
+    // NEGATIVE.
+    //
+    // `dominantLegOf()` was written for exactly this and lives in the
+    // flow-engine module, which nothing in `src/` imports — so the fix landed
+    // in the deprecated standalone tracker and the production grader kept the
+    // defect. The rule is reimplemented here rather than imported because the
+    // record's `StoredLeg` is a different type from the engine's leg, and
+    // `vendorMirror.test.ts` holds the engine copy byte-identical to its
+    // module. `graderDirection.test.ts` holds the two to the same answer.
+    const dominant = dominantStoredLeg(rec.legs);
     if (!dominant) return;
 
-    const direction = impliedDirectionOf(
+    // A structure whose direction is undefined is not graded directionally.
+    //
+    // A long strangle is two long wings: a bet on movement, not on direction.
+    // Taking its "direction" from the larger leg produces a confident
+    // bullish/bearish label for a position that expresses neither, and pools
+    // it into a directional hit rate. The engine already classifies the
+    // structure; this reads that classification instead of overriding it.
+    const undirected = undirectedStructure(rec);
+    const direction = undirected ? 'NONE' : impliedDirectionOf(
       dominant.side as Parameters<typeof impliedDirectionOf>[0],
       dominant.right,
     );
+
+    const remaining = new Set<OutcomeHorizon>(
+      resumed ? resumed.remaining : GRADED_HORIZONS,
+    );
+    if (remaining.size === 0) return;
 
     this.pending.set(rec.signalKey, {
       signalKey: rec.signalKey,
       underlying: rec.underlying,
       decisionAt: rec.decisionAt,
       direction,
-      // Entry mark is taken now, at registration — which is at or just after
-      // the decision instant. Taking it later would measure from a price the
-      // signal itself may have moved.
-      entryMark: this.spot(rec.underlying),
-      remaining: new Set<OutcomeHorizon>(['M15', 'H1', 'D1']),
+      undirected,
+      spreadGuess: rec.spreadGuess,
+      // Live path: the entry mark is taken now, at registration — at or just
+      // after the decision instant. Taking it later would measure from a price
+      // the signal itself may have moved.
+      //
+      // Recovery path: taking a mark *now* would be a price from long after
+      // the decision, which is lookahead of exactly the kind `decisionAt`
+      // exists to prevent. So a resumed signal uses only the entry mark that
+      // was actually observed and persisted at the time; when none was, it
+      // carries none and grades UNGRADED with the reason. Inventing one here
+      // would turn a lost checkpoint into a confident, wrong measurement.
+      entryMark: resumed ? resumed.entryMark : this.spot(rec.underlying),
+      remaining,
     });
+  }
+
+  /**
+   * Re-register signals whose grading is unfinished, after a restart.
+   *
+   * `pending` is process memory. Every checkpoint scheduled before a restart
+   * was silently abandoned: the row stayed in `signal_history` with no outcome
+   * and nothing ever looked at it again. `listUngraded()` was implemented in
+   * both stores, declared on the interface, exercised by two tests — and
+   * called by nothing in `src/`. This is that caller.
+   *
+   * Two properties make recovery honest rather than merely productive:
+   *
+   *   - **A horizon already graded is not graded again.** The live outcome
+   *     rows say which are done; only the remainder is rescheduled. Outcomes
+   *     are append-only, so a second write would not overwrite the first — it
+   *     would sit beside it as a second reading of one checkpoint.
+   *
+   *   - **An entry mark is never re-taken.** It is recovered from an outcome
+   *     row that already recorded one, or it is absent. A signal that was
+   *     never graded at any horizon before the restart therefore has no entry
+   *     mark, and grades UNGRADED. That is the honest answer, and it makes the
+   *     restart loss *visible* in the record instead of leaving the signal to
+   *     vanish — the same argument `collection_gaps` makes about outages.
+   */
+  async recover(
+    limit = 500,
+    rightsFor: (markSource: string) => string | undefined = () => undefined,
+  ): Promise<RecoveryReport> {
+    const report: RecoveryReport = {
+      examined: 0, resumed: 0, alreadyComplete: 0, withEntryMark: 0, failed: 0,
+    };
+
+    // The window: how far back a checkpoint can be and still be worth
+    // resuming. Derived, not picked — the longest horizon this grader
+    // schedules, plus the lateness it will still grade within. A signal older
+    // than that has no checkpoint left that could produce anything but
+    // UNGRADED, and scanning for it would make boot a function of how much
+    // history exists rather than of how much is pending.
+    const since = this.now()
+      - (HORIZON_OFFSETS_MS.D1 + this.cfg.maxLatenessMs);
+
+    let open: SignalRecord[];
+    try {
+      open = await this.store.listUngraded(limit, since);
+    } catch (err) {
+      this.stats.lastError = err instanceof Error ? err.message : String(err);
+      report.failed++;
+      return report;
+    }
+
+    for (const rec of open) {
+      report.examined++;
+      try {
+        const outs = await this.store.listOutcomes(rec.signalKey);
+        const done = new Set(outs.map((o) => o.horizon));
+        const remaining = GRADED_HORIZONS.filter((h) => !done.has(h));
+        if (remaining.length === 0) { report.alreadyComplete++; continue; }
+
+        const entryMark = recoverEntryMark(outs, rightsFor);
+        if (entryMark) report.withEntryMark++;
+        this.register(rec, { remaining, entryMark });
+        report.resumed++;
+      } catch (err) {
+        this.stats.lastError = err instanceof Error ? err.message : String(err);
+        report.failed++;
+      }
+    }
+    return report;
   }
 
   /**
@@ -259,9 +488,13 @@ export class SignalGrader {
     if (p.direction === 'NONE') {
       return {
         label: 'UNGRADED',
-        ungradedReason:
-          'Side is AMBIGUOUS, so the signal implies no direction. Grading it would ' +
-          'require assuming a side the engine explicitly declined to infer.',
+        ungradedReason: p.undirected
+          ? `Structure is ${p.spreadGuess}, which expresses no direction — it is a ` +
+            `position on movement, not on which way. Grading it bullish or bearish ` +
+            `from its larger leg would put a directionless position into a ` +
+            `directional hit rate.`
+          : 'Side is AMBIGUOUS, so the signal implies no direction. Grading it would ' +
+            'require assuming a side the engine explicitly declined to infer.',
       };
     }
 
@@ -281,6 +514,31 @@ export class SignalGrader {
     // imprecise. The bound is `HORIZON_OFFSETS_MS.M15` rather than a constant
     // chosen here: a mark that cannot support the shortest checkpoint cannot
     // support any of them.
+    // An entry mark stamped AFTER the decision is lookahead: the excursion's
+    // denominator would be a price the signal itself may already have moved.
+    // Only the too-early direction was guarded, because `entryAge` is a
+    // subtraction and a mark from the future makes it negative — the same
+    // shape as the NBBO staleness hole, where a quote stamped after the trade
+    // produced a negative age and sailed through. Invisible while the mark was
+    // taken microseconds after the decision; systematic the moment a restart
+    // resumes a signal from hours ago.
+    //
+    // The cost is stated rather than tuned away: a vendor clock running ahead
+    // of ours turns honest marks into UNGRADED rows. That is the safe
+    // direction, and it is the one this codebase takes everywhere else that
+    // two clocks have to be ordered.
+    const lookahead = p.entryMark.asOf - p.decisionAt;
+    if (lookahead > this.cfg.maxEntryMarkLookaheadMs) {
+      return {
+        label: 'UNGRADED',
+        ungradedReason:
+          `Entry mark for ${p.underlying} is stamped ${Math.round(lookahead / 1000)}s ` +
+          `AFTER the decision instant, beyond the tolerance for registration ` +
+          `latency. It is a price from after the signal, so measuring from it ` +
+          `would credit the signal with information it did not have.`,
+      };
+    }
+
     const entryAge = p.decisionAt - p.entryMark.asOf;
     if (entryAge > HORIZON_OFFSETS_MS.M15) {
       return {

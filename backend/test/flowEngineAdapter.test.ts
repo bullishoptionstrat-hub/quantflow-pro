@@ -78,16 +78,26 @@ test('a print with no quote stays AMBIGUOUS and takes the score penalty', () => 
   assert.equal(sig.score_breakdown.ambiguousPenalty, -15);
 });
 
-test('a multi-venue fill classifies as SWEEP and splits size across venues', () => {
+test('a record declaring several venues reports them as evidence, not as fills', () => {
+  // This test previously asserted the fabrication as the contract — "one print
+  // id per venue", "size is split across venues" — which is how the defect
+  // survived: the decomposition was not an oversight, it was pinned. One
+  // upstream record is one observed execution; the venue list is evidence
+  // about where the order touched and says nothing about the split.
   resetDaily();
   const [sig] = ingestAndDrain(print({
     symbol: 'SWEEPY', size: 300, exchanges: ['CBOE', 'PHLX', 'AMEX'],
   }));
   assert.ok(sig);
-  assert.equal(sig.order_type, 'SWEEP');
-  assert.equal(sig.exchange_count, 3);
-  assert.equal(sig.total_size, 300, 'size is split across venues, not multiplied');
-  assert.equal(sig.print_ids.length, 3, 'one print id per venue');
+  assert.equal(sig.print_ids.length, 1, 'one record, one event id');
+  assert.equal(sig.total_size, 300, 'the size is neither split nor multiplied');
+  assert.equal(sig.exchange_count, 1, 'one venue was actually observed');
+  assert.deepEqual([...sig.venue_evidence].sort(), ['AMEX', 'CBOE', 'PHLX'],
+    'the declared venues are kept, not discarded');
+  assert.equal(sig.venue_allocation, 'UNKNOWN',
+    'because how the 300 split across those three was never reported');
+  assert.notEqual(sig.order_type, 'SWEEP',
+    'and the sweep label is not manufactured from a declared list');
 });
 
 test('wire event carries the frontend contract plus the engine fields', () => {

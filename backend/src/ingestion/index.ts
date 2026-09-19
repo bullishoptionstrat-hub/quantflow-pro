@@ -16,7 +16,7 @@ import { fetchCboeChain, getCboeSnapshot, getCboeSymbols } from './connectors/cb
 import { fetchOccVolume, getOccVolume } from './connectors/occ';
 import { describeHttpError } from './httpError';
 import { probeAll, type EntitlementResult } from './entitlement';
-import { resolveMark, markSourceStandings } from './markSources';
+import { resolveMark, markSourceStandings, markRightsClass } from './markSources';
 import { CoverageRecorder, type CoverageSample } from '../persistence/coverage';
 import type { CollectionGap } from '../persistence/types';
 import {
@@ -25,6 +25,7 @@ import {
 } from './flowEngineAdapter';
 import {
   initPersistence, describePersistence, SignalGrader,
+  type RecoveryReport,
   type SignalRecord,
 } from '../persistence';
 import {
@@ -1382,6 +1383,14 @@ function simulatePrints(symbol: string, spot: number, ts: number): RawPrint[] {
     : roll < 0.80 ? parseFloat((bid + spread * 0.75).toFixed(2))
     : parseFloat(((bid + ask) / 2).toFixed(2));
 
+  // A simulated sweep is simulated as what a sweep actually is: several
+  // executions, at several venues, close together in time. It used to be one
+  // record carrying a venue *list*, which the adapter then split into one
+  // fabricated print per venue — so the simulation was relying on the
+  // fabrication to look like a sweep, and it was the only producer of the
+  // multi-venue input that triggered it. Generating the prints here is honest
+  // (this code really is inventing N executions, and says so via `synthetic`)
+  // and it keeps the adapter free to treat a declared venue list as evidence.
   const venues = Math.random() < 0.35
     ? ['CBOE', 'PHLX', 'AMEX', 'ISE'].slice(0, 2 + Math.floor(Math.random() * 3))
     : ['CBOE'];
@@ -1396,7 +1405,7 @@ function simulatePrints(symbol: string, spot: number, ts: number): RawPrint[] {
     right,
     price: fill,
     size,
-    exchanges: venues,
+    exchange: venues[0],
     bid,
     ask,
     openInterest: oi,
@@ -1408,25 +1417,43 @@ function simulatePrints(symbol: string, spot: number, ts: number): RawPrint[] {
     synthetic: true,
   };
 
+  // One execution per venue, each with its own id, its own size and its own
+  // instant — a real multi-venue sweep is a burst of separate prints, and the
+  // engine clusters them because they are separate.
+  const legs: RawPrint[] = venues.map((venue, i) => {
+    const perVenue = Math.max(1, Math.floor(size / venues.length));
+    return {
+      ...base,
+      id: `${base.id}-v${i}`,
+      // Milliseconds apart, inside the engine's sweep window, which is what
+      // makes them one burst rather than unrelated trades.
+      ts: ts + i * 3,
+      size: i === venues.length - 1
+        ? size - perVenue * (venues.length - 1)
+        : perVenue,
+      exchange: venue,
+    };
+  });
+
   // 12% of orders are a two-leg vertical: same right and expiry, second strike,
   // both legs printing inside the engine's multi-leg window.
   if (Math.random() < 0.12) {
     const farStrike = strike + (right === 'C' ? 10 : -10);
     const farPrice = parseFloat(Math.max(0.05, fill * 0.45).toFixed(2));
-    return [base, {
+    return [...legs, {
       ...base,
       id: `${base.id}-leg2`,
-      ts: ts + 5,
+      ts: ts + venues.length * 3 + 5,
       strike: farStrike,
       price: farPrice,
       bid: parseFloat(Math.max(0.01, farPrice - 0.05).toFixed(2)),
       ask: parseFloat((farPrice + 0.05).toFixed(2)),
-      exchanges: ['CBOE'],
+      exchange: 'CBOE',
       iso: false,
     }];
   }
 
-  return [base];
+  return legs;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -1455,6 +1482,18 @@ let batchTimer: ReturnType<typeof setTimeout> | null = null;
 // ─── Durable signal history ─────────────────────────────────────────────────
 
 let grader: SignalGrader | undefined;
+
+/**
+ * How many unfinished signals one startup recovery will resume.
+ *
+ * Bounded because recovery runs at boot and issues one `listOutcomes` read per
+ * signal; an unbounded scan of a long history would make startup a function of
+ * how much history exists. Anything beyond the bound stays unresumed and is
+ * reported rather than silently dropped.
+ */
+const RECOVERY_LIMIT = 500;
+
+let lastRecovery: RecoveryReport | undefined;
 
 /**
  * Subscribe the recorder and grader to the engine's output.
@@ -1490,6 +1529,40 @@ function startSignalHistory(): void {
   // every outcome records which source priced it. See ingestion/markSources.ts
   // for why that registry is currently one entry long.
   grader = new SignalGrader(store, (underlying) => resolveMark(underlying));
+
+  // Resume checkpoints the last process did not live to observe.
+  //
+  // The grader's schedule is process memory, so before this every restart
+  // silently abandoned every pending M15/H1/D1: the signal row survived in
+  // `signal_history`, no outcome was ever written for it, and nothing looked
+  // again. On a host that sleeps after 15 minutes of inactivity — which is the
+  // documented deployment target, and 15 minutes is also the shortest horizon
+  // — that is close to every checkpoint this system has ever scheduled.
+  //
+  // Fire-and-forget for the same reason recording is: recovery must never be
+  // able to stop the process that is collecting. A failure is counted in the
+  // grader's stats and surfaced on /api/health.
+  void grader.recover(RECOVERY_LIMIT, (src) => markRightsClass(src))
+    .then((r) => {
+      lastRecovery = r;
+      if (r.examined === 0) return;
+      console.log(
+        `[history] recovery: examined=${r.examined} resumed=${r.resumed} ` +
+        `complete=${r.alreadyComplete} withEntryMark=${r.withEntryMark} failed=${r.failed}`,
+      );
+      // A resumed signal with no recovered entry mark can only grade UNGRADED.
+      // Said out loud because it is the visible cost of the restart, and the
+      // alternative — taking a fresh mark now — would hide it behind a number.
+      const noMark = r.resumed - r.withEntryMark;
+      if (noMark > 0) {
+        console.warn(
+          `[history] ${noMark} resumed signal(s) have no observed entry mark and ` +
+          `will grade UNGRADED: the process was not running when their entry ` +
+          `price should have been taken.`,
+        );
+      }
+    })
+    .catch(() => { /* counted in grader stats */ });
 
   onSignal((sig, origin) => {
     // Fire-and-forget: recording must never add latency to the live tape or
@@ -1600,6 +1673,17 @@ export function getSignalHistoryStatus() {
     ...p,
     recorder: scrub(p.recorder),
     grader: scrub(graderStats),
+    /**
+     * What the last startup recovery resumed, or `null` before it has run.
+     *
+     * Published because the interesting number is `resumed - withEntryMark`:
+     * signals whose checkpoints were rescheduled but whose entry price was
+     * never observed, and which can therefore only ever grade UNGRADED. That
+     * is the measurable cost of a restart, and leaving it out of the health
+     * payload would put this fix in the same position as the apparatus it
+     * repairs — correct, and invisible.
+     */
+    recovery: lastRecovery ?? null,
     // Flags that something failed without saying what. The detail is one
     // authenticated call away, at /api/track-record.
     errorsSuppressed: Boolean(p.recorder?.lastError || graderStats?.lastError),
