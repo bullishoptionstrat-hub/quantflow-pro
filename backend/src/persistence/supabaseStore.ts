@@ -12,6 +12,10 @@ import {
   emptyTally, tallyOutcome, tallyToRows, reportNotes, type OutcomeTally,
 } from './trackRecordRows';
 import {
+  assembleBacktest, matchesScanner,
+  type BacktestReport, type MatchedSignal, type ScannerFilter,
+} from './backtest';
+import {
   MIN_PUBLISHABLE_SAMPLE,
   type CollectionGap,
   type OutcomeRecord,
@@ -324,6 +328,101 @@ export class SupabaseSignalStore implements SignalStore {
       rows, excluded, minSample: MIN_PUBLISHABLE_SAMPLE,
       notes: reportNotes(rows, excluded),
     };
+  }
+
+  /**
+   * A scanner backtest over the durable record.
+   *
+   * Unlike `trackRecord`, this must *not* pre-filter synthetic / event-time /
+   * rights-refused signals out at the database, because `assembleBacktest`
+   * counts them as scoped exclusions — a reader wants to know how much of each
+   * their filter selected. So the candidate read applies only the constraints
+   * that are exact as SQL (numeric bounds, the time window, the ISO flag), and
+   * the string set-membership and case-insensitivity are applied in process by
+   * the *same* `matchesScanner` the in-memory store uses. Two stores, one
+   * predicate: the alternative — `ilike`/`in` gymnastics in PostgREST — would
+   * be a second copy of the matcher free to disagree with the first.
+   *
+   * Grading is not repeated. The outcomes are read back exactly as
+   * `trackRecord` reads them, through the shared tally.
+   */
+  async backtest(filter: ScannerFilter): Promise<BacktestReport> {
+    let q = this.db
+      .from(T_SIGNALS)
+      .select('signal_key, kind, underlying, side, total_premium, total_size, score, iso, decision_at, synthetic, decision_basis, rights_class');
+    // Only the exact-as-SQL constraints go to the database. `iso` is pushed
+    // only when the filter demands ISO — `isoOnly: false`/absent is not a
+    // constraint, and `.eq('iso', false)` would wrongly exclude ISO prints.
+    if (filter.minPremium !== undefined) q = q.gte('total_premium', filter.minPremium);
+    if (filter.minSize !== undefined) q = q.gte('total_size', filter.minSize);
+    if (filter.minScore !== undefined) q = q.gte('score', filter.minScore);
+    if (filter.isoOnly === true) q = q.eq('iso', true);
+    if (filter.from !== undefined) q = q.gte('decision_at', iso(filter.from));
+    if (filter.to !== undefined) q = q.lte('decision_at', iso(filter.to));
+
+    const { data: sigs, error } = await q;
+    if (error) throw new Error(`backtest signal scan failed: ${error.message}`);
+
+    // The string constraints and case-insensitivity, applied by the shared
+    // predicate against the same shape the memory store matches on.
+    const candidates = (sigs ?? []).filter((s) =>
+      matchesScanner(
+        {
+          kind: s.kind,
+          underlying: s.underlying,
+          side: s.side,
+          totalPremium: Number(s.total_premium),
+          totalSize: Number(s.total_size),
+          score: Number(s.score),
+          iso: s.iso,
+          decisionAt: ms(s.decision_at),
+        } as SignalRecord,
+        filter,
+      ),
+    );
+
+    const signalByKey = new Map<string, MatchedSignal>(
+      candidates.map((s) => [
+        s.signal_key,
+        {
+          signal: {
+            kind: s.kind,
+            synthetic: s.synthetic,
+            decisionBasis: s.decision_basis,
+            rightsClass: s.rights_class,
+          },
+          outcomes: [],
+        },
+      ]),
+    );
+
+    if (signalByKey.size > 0) {
+      const keys = [...signalByKey.keys()];
+      // Chunked for the same URL-length reason as `trackRecord`.
+      for (let i = 0; i < keys.length; i += 500) {
+        const chunk = keys.slice(i, i + 500);
+        const { data: outs, error: oErr } = await this.db
+          .from(T_OUTCOMES)
+          .select('signal_key, horizon, label, excursion, entry_mark_at, exit_mark_at')
+          .is('superseded_at', null).in('signal_key', chunk);
+        if (oErr) throw new Error(`backtest outcomes failed: ${oErr.message}`);
+        for (const o of outs ?? []) {
+          const m = signalByKey.get(o.signal_key);
+          if (!m) continue;
+          m.outcomes.push({
+            horizon: o.horizon,
+            label: o.label,
+            excursion: num(o.excursion),
+            entryMarkAt: o.entry_mark_at ? ms(o.entry_mark_at) : undefined,
+            exitMarkAt: o.exit_mark_at ? ms(o.exit_mark_at) : undefined,
+          });
+        }
+      }
+    }
+
+    // No store-specific note here: the Supabase table has no cap, so the
+    // eviction warning the memory store adds would be false.
+    return assembleBacktest(filter, [...signalByKey.values()]);
   }
 
   /**

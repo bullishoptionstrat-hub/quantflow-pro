@@ -24,6 +24,10 @@ import {
   emptyTally, tallyOutcome, tallyToRows, reportNotes, type OutcomeTally,
 } from './trackRecordRows';
 import {
+  assembleBacktest, matchesScanner,
+  type BacktestReport, type MatchedSignal, type ScannerFilter,
+} from './backtest';
+import {
   MIN_PUBLISHABLE_SAMPLE,
   type CollectionGap,
   type OutcomeRecord,
@@ -213,22 +217,51 @@ export class InMemorySignalStore implements SignalStore {
     // in-memory cap, not of the record, so it cannot live in the shared list —
     // and the first version of this refactor dropped it entirely, which would
     // have let a retained-window rate present itself as the whole history.
-    const storeNotes: string[] = [];
-    if (this.evicted > 0) {
-      storeNotes.push(
-        `${this.evicted} oldest signal(s) have been evicted from this in-memory store ` +
-        `(cap ${MAX_SIGNALS}). Rates here describe the retained window only. Configure ` +
-        'a Supabase store for a record that survives a restart.',
-      );
-    }
-
     return {
       generatedAt: new Date().toISOString(),
       rows,
       excluded,
       minSample: MIN_PUBLISHABLE_SAMPLE,
-      notes: reportNotes(rows, excluded, storeNotes),
+      notes: reportNotes(rows, excluded, this.evictionNotes()),
     };
+  }
+
+  /**
+   * A scanner backtest over the retained population.
+   *
+   * Gathering (walk the maps, join outcomes to signals) is this store's
+   * business; everything after — exclusions, tally, rows, prose — is
+   * `assembleBacktest`, which is the same shared machinery `trackRecord` uses.
+   * A backtest grades nothing: it reads back outcomes the grader already wrote.
+   *
+   * The eviction note travels through the same store-specific channel it does
+   * for the track record — a rate over a retained window is a retained-window
+   * rate whether or not a filter narrowed it.
+   */
+  async backtest(filter: ScannerFilter): Promise<BacktestReport> {
+    const matched: MatchedSignal[] = [];
+    for (const sig of this.signals.values()) {
+      if (!matchesScanner(sig, filter)) continue;
+      const live = this.outcomes.get(sig.signalKey);
+      matched.push({
+        signal: sig,
+        outcomes: live ? [...live.values()] : [],
+      });
+    }
+    return assembleBacktest(filter, matched, this.evictionNotes());
+  }
+
+  /**
+   * The store-specific notes for this deployment's cap, shared by both the
+   * track record and any backtest. Empty when nothing has been evicted.
+   */
+  private evictionNotes(): string[] {
+    if (this.evicted === 0) return [];
+    return [
+      `${this.evicted} oldest signal(s) have been evicted from this in-memory store ` +
+      `(cap ${MAX_SIGNALS}). Rates here describe the retained window only. Configure ` +
+      'a Supabase store for a record that survives a restart.',
+    ];
   }
 
   private evictIfNeeded(): void {

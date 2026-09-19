@@ -12,7 +12,7 @@ it says so — the same rule `CLAUDE.md` applies to the code applies to this fil
 
 | Check | Result |
 |---|---|
-| `backend` — `npm test` | **437 / 437 pass** (~105s) |
+| `backend` — `npm test` | **591 / 591 pass** (~105s) |
 | `frontend` — vitest | 127 tests (per ledger) |
 | `quantflow-modules/flow-engine` | 24 tests (per ledger) |
 | Working tree | clean, on `main`, 54 merged PRs |
@@ -474,20 +474,52 @@ already fetch the chain that produces all of them.
 This is the feature that makes accumulated history worth more than the day it
 was collected, and it is worthless before Phase 0.
 
-- [ ] **4.1 — Scanner backtest.** Tradytics' pitch — "large call sweeps within
-      15 minutes of a key level, here is how that performed across hundreds of
-      past instances" — is, in your architecture, *a filter applied to
-      `signal_history` joined to `signal_outcomes`*. The grader already
-      computes the label. You are closer to this than to any other item here.
-- [ ] **4.2 — Reuse the grader, do not write a second one.** Ledger line 74
-      already records what happens when grading logic gets a second home:
-      `outcomeDecision.test.ts` exists to hold two copies in agreement. Don't
-      create a third.
-- [ ] **4.3 — Carry every honesty flag into the backtest result.**
-      `EVENT_TIME_ONLY` rows excluded, `AMBIGUOUS` counted not guessed,
-      `MAX_EXCURSION` labelled as a best-moment measure and not a held return,
-      `INSUFFICIENT_SAMPLE` below n=30. A backtester that drops these is a
-      backtester that lies — which is the entire failure mode of the category.
+- [x] **4.1 — Scanner backtest.** *Done — built and proven against fixtures,
+      never yet run on a real graded signal.* Tradytics' pitch — "large call
+      sweeps within 15 min of a key level, here is how that performed across
+      hundreds of past instances" — is, in this architecture, exactly *a filter
+      applied to `signal_history` joined to `signal_outcomes`*, and that is what
+      shipped. `persistence/backtest.ts` holds `matchesScanner` (kinds,
+      underlyings, sides, min premium/size/score, ISO-only, a `decisionAt`
+      window — case-insensitive set membership, inclusive numeric bounds) and
+      `assembleBacktest`; both stores gained a `backtest(filter)` that gathers
+      the matched population and hands it to the shared assembler.
+      `POST /api/backtest` publishes it on the same demo-capable, sample-gated
+      tier as `/api/track-record`, and rejects a malformed filter (an empty
+      `kinds: []`, a non-finite bound, an inverted window) with a 400 rather
+      than a confidently-empty result. **The honest caveat, kept visible:**
+      `/api/track-record` still reports `real: 0`, so every property below is
+      proven by 40 tests over fixtures and one live smoke run against the
+      *simulation* feed — the backtester works, and it has never once
+      backtested a real options signal, because Phase 0 has not opened the pipe.
+      It is worth exactly what the data behind it is worth, which today is zero.
+- [x] **4.2 — Reuse the grader, do not write a second one.** *Done, and it is
+      the load-bearing design choice.* A backtest grades nothing: grading
+      happened once, when `SignalGrader` wrote the outcome. `backtest.ts` reaches
+      its POSITIVE/NEGATIVE/FLAT counts through the *same* `tallyOutcome` →
+      `tallyToRows` → `reportNotes` path `/api/track-record` uses — the one copy
+      that `trackRecordRows.ts` collapsed the two stores into. Ledger line 74's
+      rule was "hold two copies in agreement rather than allow a third"; a
+      backtest computing its own labels would have been that third copy. Two
+      guards hold it: a source check asserting `backtest.ts` carries no
+      `flatBandPct`/label arithmetic/`median` of its own, and a behavioural one
+      — a match-all backtest must return rows *byte-identical* to the track
+      record's (`assert.deepEqual(bt.rows, tr.rows)`). Two numbers there would
+      mean two grading paths had diverged; there is only one.
+- [x] **4.3 — Carry every honesty flag into the backtest result.** *Done — for
+      free, which was the point.* Because the tally is shared, the backtest
+      inherits all of them and *cannot* drop one without editing the shared
+      module and failing its tests: synthetic signals never enter a rate (and a
+      filter cannot smuggle them in — proven), `EVENT_TIME_ONLY` and
+      rights-refused signals are excluded and counted scoped to the filter,
+      `UNGRADED` outcomes stay in the denominator and never pad a thin sample
+      into publishability, `INSUFFICIENT_SAMPLE` suppresses a rate below n=30
+      while still showing the sample, and the measured-interval disclosure
+      (`MAX_EXCURSION`, median-vs-nominal) travels on every row. A backtester
+      that drops these is the entire failure mode of the category; this one
+      structurally can't. The exclusion counts are scoped to the *matched*
+      population, so a reader can see how much of each their filter selected for
+      against `/api/track-record`'s global counts.
 - [x] **4.4 — Multi-leg structure recognition.** *Done 2026-09-16, narrowly.*
       The classifier existed and had one real defect: every call-and-put pair at
       one expiry was `STRADDLE_STRANGLE`, ignoring `leg.side`. A long call
@@ -528,7 +560,7 @@ Only after there is something to show. Ordered by "will you open it every day":
 | **Week 1** | Fix the doctor's `credentialed ≠ entitled` blind spot. Fund a Tradier account (cost not verified — see 1.3). | Finding A means you currently have *no* options feed while being told you do. Tradier is the only PERSIST-legal real-time path. |
 | **Weeks 2–4** | Wait, visibly. Surface the collection heartbeat. | n=30 is calendar time. Build Phase 3 while it runs. |
 | **Week 3+** | DEX / vanna / charm / gamma-flip / 0DTE — and say on the chart that it's modelled. | Cheapest real gap vs. the field, and the honesty note is a differentiator none of them offer. |
-| **Month 2** | Scanner backtest over your own graded history. | The one thing that compounds — and the one thing nobody else can sell you about *your* filters. |
+| **Month 2** | Scanner backtest over your own graded history. **Built (PR pending) — waiting on data.** | The one thing that compounds — and the one thing nobody else can sell you about *your* filters. The engine ships; it grades nothing new until Phase 0 opens the pipe. |
 
 ### And the thing to keep
 
