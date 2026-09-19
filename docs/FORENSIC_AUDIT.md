@@ -19,7 +19,7 @@ status and evidence and are not fixed here.
 |---|---|
 | `backend` (`npm run verify`) | **612 pass / 0 fail**, typecheck clean |
 | `frontend` (`npm run verify`) | **132 pass / 0 fail**, typecheck clean |
-| `quantflow-modules/flow-engine` | **not independently run** — deps not installed in this environment |
+| `quantflow-modules/flow-engine` | **30 pass / 0 fail** (run while fixing F-10; CLAUDE.md says 24, which is stale) |
 
 The backend suite was 587 at session start and one test failed:
 `socketHandlers.test.ts` loads `socket.io-client` from `frontend/node_modules`.
@@ -309,12 +309,48 @@ the row, and it does not. A naming and comment defect, not a live mislabel.
 
 ---
 
-## F-10 — A universal 20:00Z expiry is assumed in three places ❌ OPEN
+## F-10 — A universal 20:00Z expiry, in three places ⚠️ PARTLY FIXED
 
-`score.ts:102`, `outcome/tracker.ts:64` and `flowEngineAdapter.ts:543` each
-parse `${date}T20:00:00Z` as expiry. That is ~4pm ET, and it is wrong for AM-settled
-index options, wrong across DST, and wrong on early closes. DTE feeds the score
-(§33).
+`score.ts`, `outcome/tracker.ts` and `flowEngineAdapter.ts` each parsed
+`${date}T20:00:00Z` under the comment "~4pm ET close".
+
+**Measured, because the size of this matters to what it deserves:**
+
+```
+2026-01-16T20:00:00Z -> 15:00 ET        (EST — an hour early)
+2026-06-19T20:00:00Z -> 16:00 ET        (EDT — correct)
+
+DTE bucket flips (2/7/21/45 days): 33 of 20,572 sampled trade instants = 0.16%
+max score swing when it flips:     3 of 100
+```
+
+So the comment is false for about five months a year, and the arithmetic
+barely moves. It was fixed anyway, on the narrow grounds that it is **exactly
+fixable without a calendar to maintain** — the IANA database ships with Node —
+and that a false comment is its own defect here.
+
+`flow-engine/expiry.ts` is the one home, imported by all three call sites
+(which had also disagreed with each other about rounding). It resolves 16:00
+`America/New_York` by asking the tz database which UTC offset lands there,
+rather than encoding this year's DST rule as arithmetic.
+
+**Still open, and deliberately not guessed at:**
+
+- **AM-settled index options.** SPX monthlies stop trading the preceding
+  Thursday and settle from Friday's open, so their last tradeable instant is
+  about a day earlier than this returns. SPXW weeklys are PM-settled and are
+  correct. Separating them needs per-product settlement data this tree does
+  not carry.
+- **Half-days and holidays.** An early close is 13:00 ET. A holiday calendar
+  is a thing to maintain, and CLAUDE.md records what happened the last time one
+  was assumed instead: a `MARKET OPEN` indicator green on Thanksgiving.
+
+**A note on the guard, since it is the interesting part.** The first version
+carried a date-shape regex in front of the lookup. The mutation that deleted it
+failed **no test** — the round-trip check already rejects everything it would
+have. An unreachable guard is a check with nothing to check, so it was removed
+rather than kept for comfort, and the rejection test was widened to prove the
+remaining guard does the work.
 
 ---
 
@@ -348,5 +384,5 @@ verify (§83).
 | F-7 | No entitled options-event source | OPEN, **external blocker** |
 | F-8 | No corrections / cancels / ordering | OPEN |
 | F-9 | `excursion` misnamed | OPEN |
-| F-10 | Universal 20:00Z expiry | OPEN |
+| F-10 | Universal 20:00Z expiry | **PARTLY FIXED**, 6 tests, 3 mutations; AM-settlement and holidays open |
 | F-11 | Plaintext `api_keys.key_value`; disclosed credentials | OPEN, **external** |

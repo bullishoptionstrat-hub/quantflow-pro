@@ -19,6 +19,7 @@
  */
 import { FlowEngine } from '../flow-engine/engine';
 import { sideBucket } from '../flow-engine/nbbo';
+import { daysToExpiry as engineDaysToExpiry } from '../flow-engine/expiry';
 import type {
   ClassifiedSignal,
   ContractStats,
@@ -617,10 +618,18 @@ export function sentimentOf(
   return bullish ? 'BULLISH' : 'BEARISH';
 }
 
+/**
+ * Whole days to expiry for the wire, from the engine's own instant.
+ *
+ * This had its own `T20:00:00Z` parse — the third copy of one rule, and the
+ * two that computed a number disagreed about rounding as well as being wrong
+ * in winter. The instant now comes from `flow-engine/expiry.ts`; the rounding
+ * stays here, because a whole number of days is a presentation choice for this
+ * wire field and not a property of the contract.
+ */
 function daysToExpiry(tsMs: number, expiry: string): number {
-  const exp = Date.parse(`${expiry}T20:00:00Z`);
-  if (Number.isNaN(exp)) return 0;
-  return Math.max(0, Math.round((exp - tsMs) / 86_400_000));
+  const dte = engineDaysToExpiry(tsMs, expiry);
+  return Number.isNaN(dte) ? 0 : Math.round(dte);
 }
 
 /**

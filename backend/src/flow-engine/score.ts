@@ -6,6 +6,7 @@
  * explainable so the UI can show *why* a signal scored what it did.
  */
 import { ClassifiedSignal, ContractStats, OptionContract } from "./types";
+import { daysToExpiry } from "./expiry";
 
 export interface ScoreInput {
   kind: ClassifiedSignal["kind"];
@@ -99,7 +100,10 @@ export function scoreSignal(input: ScoreInput): {
 }
 
 function daysBetween(tsMs: number, isoDate: string): number {
-  const expiry = Date.parse(`${isoDate}T20:00:00Z`); // ~4pm ET close
-  if (Number.isNaN(expiry)) return 9999;
-  return Math.max(0, (expiry - tsMs) / 86_400_000);
+  // `expiry.ts` owns the instant. This used to parse `T20:00:00Z` under the
+  // comment "~4pm ET close", which is 15:00 ET under EST — an hour early for
+  // about five months a year. An unreadable date still scores as maximally
+  // far out rather than throwing, which is the behaviour this always had.
+  const dte = daysToExpiry(tsMs, isoDate);
+  return Number.isNaN(dte) ? 9999 : dte;
 }
