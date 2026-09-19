@@ -40,6 +40,7 @@ import gexRouter from './routes/gex';
 import chainRouter from './routes/chain';
 import healthRouter from './routes/health';
 import trackRecordRouter from './routes/trackRecord';
+import backtestRouter from './routes/backtest';
 import macroRouter from './routes/macro';
 import sentimentRouter from './routes/sentiment';
 import { rateLimiter } from './middleware/rateLimiter';
@@ -104,6 +105,10 @@ app.use('/api/sentiment', limitDemoTraffic, requireAuthOrDemo, sentimentRouter);
 // Costs nothing per call and returns only aggregates that are already
 // sample-gated, so it is safe on the demo tier.
 app.use('/api/track-record', limitDemoTraffic, requireAuthOrDemo, trackRecordRouter);
+// A backtest is the same sample-gated aggregate as the track record, narrowed
+// to a scanner filter — no per-call cost and no entitled vendor data — so it
+// sits on the same demo-capable tier.
+app.use('/api/backtest', limitDemoTraffic, requireAuthOrDemo, backtestRouter);
 
 // Never demo-accessible: paid chain data.
 app.use('/api/chain', requireAuth, chainRouter);

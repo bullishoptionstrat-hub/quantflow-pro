@@ -300,4 +300,14 @@ export interface SignalStore {
   listGaps(sinceMs: number): Promise<CollectionGap[]>;
 
   trackRecord(): Promise<TrackRecordReport>;
+
+  /**
+   * A track record restricted to the signals a scanner filter selects.
+   *
+   * Same population rules and same arithmetic as `trackRecord` — it reuses the
+   * shared tally rather than grading anything a second time — narrowed to the
+   * matched signals. The return type lives in `backtest.ts` beside the filter
+   * it answers.
+   */
+  backtest(filter: import('./backtest').ScannerFilter): Promise<import('./backtest').BacktestReport>;
 }

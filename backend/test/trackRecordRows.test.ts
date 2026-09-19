@@ -165,10 +165,18 @@ test('a store-specific note survives the shared note list', () => {
 test('the memory store still warns when it has evicted signals', () => {
   const src = readFileSync(
     join(__dirname, '..', 'src', 'persistence', 'memoryStore.ts'), 'utf8');
-  assert.match(src, /this\.evicted > 0/,
-    'the eviction warning was dropped by the refactor that shared these notes');
-  assert.match(src, /reportNotes\(rows, excluded, storeNotes\)/,
-    'and it must reach the reader through the store channel');
+  // The warning is gated on the eviction count and lives in one helper now,
+  // `evictionNotes()`, so both `trackRecord` and `backtest` surface it rather
+  // than only the track record — the earlier shape could have let a backtest
+  // over a retained window present a retained-window rate with no warning.
+  assert.match(src, /this\.evicted === 0/,
+    'the eviction warning must still key off the eviction count');
+  assert.match(src, /private evictionNotes\(\)/,
+    'and live in one shared helper so every rate over the retained window carries it');
+  assert.match(src, /reportNotes\(rows, excluded, this\.evictionNotes\(\)\)/,
+    'the track record must reach the reader through the store channel');
+  assert.match(src, /assembleBacktest\(filter, matched, this\.evictionNotes\(\)\)/,
+    'and so must the backtest');
 });
 
 test('neither store builds its own rows or its own prose', () => {
