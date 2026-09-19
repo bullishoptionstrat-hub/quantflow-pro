@@ -16,6 +16,7 @@ import {
   type BacktestReport, type MatchedSignal, type ScannerFilter,
 } from './backtest';
 import {
+  GRADED_HORIZONS,
   MIN_PUBLISHABLE_SAMPLE,
   type CollectionGap,
   type OutcomeRecord,
@@ -147,7 +148,12 @@ export class SupabaseSignalStore implements SignalStore {
     for (const o of outs ?? []) {
       counts.set(o.signal_key, (counts.get(o.signal_key) ?? 0) + 1);
     }
-    return rows.filter((r) => (counts.get(r.signalKey) ?? 0) < 4).slice(0, limit);
+    // `< GRADED_HORIZONS.length`, not `< 4`: `EXPIRY` is in the union and is
+    // never graded, so counting against the union's size meant this filter
+    // could never exclude anything.
+    return rows
+      .filter((r) => (counts.get(r.signalKey) ?? 0) < GRADED_HORIZONS.length)
+      .slice(0, limit);
   }
 
   async countSignals() {
