@@ -12,6 +12,7 @@ const NAV = [
   { href: '/power-alerts',  icon: '🔥', label: 'Power Alerts',   badge: null,   group: 'flow' },
   { href: '/heat-map',      icon: '🗺', label: 'Heat Map',       badge: null,   group: 'flow' },
   { href: '/gex',           icon: 'Γ',  label: 'GEX Levels',     badge: null,   group: 'analytics' },
+  { href: '/backtest',      icon: '⏮', label: 'Scanner Backtest', badge: 'NEW', group: 'analytics' },
   { href: '/macro',         icon: '📊', label: 'Macro',          badge: 'NEW',  group: 'analytics' },
   { href: '/news',          icon: '📰', label: 'News & Sentiment', badge: 'NEW', group: 'analytics' },
   { href: '/calculator',    icon: '🧮', label: 'P/L Calculator', badge: null,   group: 'tools' },
