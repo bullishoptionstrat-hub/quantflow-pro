@@ -379,9 +379,18 @@ export class SignalGrader {
       examined: 0, resumed: 0, alreadyComplete: 0, withEntryMark: 0, failed: 0,
     };
 
+    // The window: how far back a checkpoint can be and still be worth
+    // resuming. Derived, not picked — the longest horizon this grader
+    // schedules, plus the lateness it will still grade within. A signal older
+    // than that has no checkpoint left that could produce anything but
+    // UNGRADED, and scanning for it would make boot a function of how much
+    // history exists rather than of how much is pending.
+    const since = this.now()
+      - (HORIZON_OFFSETS_MS.D1 + this.cfg.maxLatenessMs);
+
     let open: SignalRecord[];
     try {
-      open = await this.store.listUngraded(limit);
+      open = await this.store.listUngraded(limit, since);
     } catch (err) {
       this.stats.lastError = err instanceof Error ? err.message : String(err);
       report.failed++;

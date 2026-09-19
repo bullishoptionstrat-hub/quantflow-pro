@@ -305,8 +305,21 @@ export interface SignalStore {
   /** Reconcile-then-write. Never overwrites differing content. */
   writeSignal(rec: SignalRecord): Promise<WriteResult>;
   getSignal(signalKey: string): Promise<SignalRecord | undefined>;
-  /** Real (non-synthetic) signals whose grading is not yet complete. */
-  listUngraded(limit: number): Promise<SignalRecord[]>;
+  /**
+   * Real (non-synthetic) signals whose grading is not yet complete.
+   *
+   * `sinceMs` bounds the search to signals decided at or after that instant.
+   * It is optional because the store should not invent a retention policy —
+   * the caller that has one is the grader, which knows its own horizons and
+   * its own lateness tolerance.
+   *
+   * It is not a nicety. Without it the Supabase scan reads the OLDEST rows and
+   * filters afterwards, so a fully-graded prefix — which is what a long
+   * history becomes, since graded signals never leave the table — pushes every
+   * pending signal past the window and this returns empty. Measured: 2,000
+   * graded signals ahead of 100 pending ones returned 0.
+   */
+  listUngraded(limit: number, sinceMs?: number): Promise<SignalRecord[]>;
   countSignals(): Promise<{ total: number; synthetic: number; real: number }>;
 
   writeOutcome(rec: OutcomeRecord): Promise<void>;

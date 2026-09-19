@@ -19,6 +19,7 @@ import { join } from 'node:path';
 import { InMemorySignalStore } from '../src/persistence/memoryStore';
 import { SignalGrader, recoverEntryMark, type Mark } from '../src/persistence/grader';
 import { GRADED_HORIZONS, type SignalRecord } from '../src/persistence/types';
+import { DEFAULT_GRADER_CONFIG, HORIZON_OFFSETS_MS } from '../src/persistence/grader';
 
 const T0 = Date.UTC(2026, 8, 18, 14, 30, 0);
 
@@ -273,4 +274,59 @@ test('startup actually calls recovery, and before the first tick is scheduled', 
   // every mark, which would silently make every resumed signal UNGRADED.
   assert.match(body.slice(recoverAt, recoverAt + 200), /markRightsClass/,
     'recovery is given a rights resolver for recovered marks');
+});
+
+test('recovery asks for a window, and the window is derived from the horizons', async () => {
+  // Without a window the Supabase scan reads the oldest rows and filters
+  // afterwards, so a fully-graded prefix hides every pending signal and
+  // recovery resumes nothing while reporting `examined: 0`. Measured against
+  // that store: 2,000 graded signals ahead of 100 pending ones returned 0.
+  //
+  // This asserts the grader actually asks for one, and that the bound is the
+  // longest horizon plus the lateness tolerance rather than a number somebody
+  // chose — a signal older than that has no checkpoint left that could produce
+  // anything but UNGRADED.
+  const store = new InMemorySignalStore();
+  let asked: number | undefined;
+  let sawLimit = 0;
+  const spy = {
+    ...store,
+    listUngraded: async (limit: number, sinceMs?: number) => {
+      sawLimit = limit;
+      asked = sinceMs;
+      return [];
+    },
+    listOutcomes: store.listOutcomes.bind(store),
+  } as unknown as InMemorySignalStore;
+
+  const clock = T0 + 10 * 24 * 60 * 60_000;
+  const grader = new SignalGrader(spy, markAt(() => clock), {}, () => clock);
+  await grader.recover(250, RIGHTS);
+
+  assert.equal(sawLimit, 250, 'the caller\'s limit is passed through');
+  assert.ok(asked !== undefined, 'recovery must bound its scan by a window');
+  assert.equal(
+    clock - asked,
+    HORIZON_OFFSETS_MS.D1 + DEFAULT_GRADER_CONFIG.maxLatenessMs,
+    'the window is the longest horizon plus the lateness tolerance',
+  );
+});
+
+test('the in-memory store honours the same window', async () => {
+  // The two stores must answer the same question, or the fixture against one
+  // proves nothing about the other — which is how `listUngraded` came to be
+  // covered by two tests and still shipped a scan that returned nothing.
+  const store = new InMemorySignalStore();
+  await store.writeSignal(signal({ signalKey: 'a'.repeat(64), decisionAt: T0 }));
+  await store.writeSignal(signal({
+    signalKey: 'b'.repeat(64),
+    decisionAt: T0 - 40 * 24 * 60 * 60_000,
+  }));
+
+  const all = await store.listUngraded(10);
+  assert.equal(all.length, 2, 'no window means everything');
+
+  const recent = await store.listUngraded(10, T0 - 24 * 60 * 60_000);
+  assert.deepEqual(recent.map((r) => r.signalKey), ['a'.repeat(64)],
+    'the signal decided forty days ago is outside the window');
 });

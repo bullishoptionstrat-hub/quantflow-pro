@@ -123,14 +123,27 @@ export class SupabaseSignalStore implements SignalStore {
     return data ? fromRow(data) : undefined;
   }
 
-  async listUngraded(limit: number): Promise<SignalRecord[]> {
+  async listUngraded(limit: number, sinceMs?: number): Promise<SignalRecord[]> {
     // Signals with fewer than the full set of live outcomes. Done as two reads
     // rather than a join because PostgREST cannot express the anti-join
     // cleanly and the working set here is small.
-    const { data, error } = await this.db
+    //
+    // `sinceMs` is what keeps "the working set here is small" true. The scan
+    // takes the oldest rows and filters afterwards, and a graded signal never
+    // leaves the table — so without a window the prefix becomes permanently
+    // fully-graded and every pending signal sits beyond `limit * 4`. That
+    // returns EMPTY on a healthy deployment with pending checkpoints, which is
+    // the silent loss recovery exists to end, one layer down.
+    //
+    // Ascending within the window on purpose: the signals nearest their
+    // lateness bound are the ones a restart can still grade, so they are the
+    // ones worth spending the limit on.
+    let q = this.db
       .from(T_SIGNALS)
       .select('*')
-      .eq('synthetic', false)
+      .eq('synthetic', false);
+    if (sinceMs !== undefined) q = q.gte('decision_at', iso(sinceMs));
+    const { data, error } = await q
       .order('decision_at', { ascending: true })
       .limit(limit * 4);
     if (error) throw new Error(`signal_history scan failed: ${error.message}`);

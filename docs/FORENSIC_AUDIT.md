@@ -173,6 +173,48 @@ this repository has now found several times.
 
 ---
 
+## F-12 — A long graded history hid every signal a restart had to resume ✅ FIXED
+
+**Severity:** critical, and self-inflicted. It is F-1's own failure mode
+reintroduced one layer down by F-1's fix.
+
+`SupabaseSignalStore.listUngraded` takes the **oldest** `limit * 4` real
+signals and filters by outcome count *afterwards*. A graded signal never
+leaves `signal_history`, so that prefix becomes permanently fully-graded — and
+once it exceeds the fetch window, every pending signal sits beyond it and the
+method returns **empty**.
+
+Before F-1 this was inert twice over: nothing called `listUngraded`, and its
+`< 4` count could never exclude anything so the filter was a no-op. F-1 made it
+load-bearing **and** made the filter real. Recovery would then resume nothing
+on a healthy deployment with pending checkpoints, and report `examined: 0` as
+though there were none.
+
+**Reproduced**, in the shapes PostgREST actually returns, with a stub that
+honours `order`/`limit`/`gte`:
+
+```
+2,000 graded signals + 100 pending  ->  listUngraded(500) returned 0
+                                        (expected 100)
+```
+
+**Fix:** `listUngraded(limit, sinceMs?)`. The grader passes a window derived
+from its own table — `HORIZON_OFFSETS_MS.D1 + maxLatenessMs` — because a signal
+older than that has no checkpoint left that could produce anything but
+UNGRADED, and scanning for it would make boot a function of how much history
+exists rather than how much is pending. Both stores honour it, because a
+fixture against one proves nothing about the other.
+
+**How it was found, which is the point.** The PR that introduced F-1's fix
+named this method as its weakest-evidence part — "covered against the
+in-memory store and by nothing that has touched a real database" — and shipped
+it. That is verbatim the lesson the CLAUDE.md ledger's last entry records about
+the previous review: *naming a risk is not covering it*. The fixture was
+written on the next pass instead of before the merge, and it found a real
+defect immediately.
+
+---
+
 ## F-5 — README advertises a deleted service and unqualified capabilities ❌ OPEN
 
 `README.md:139` lists **"ML unusual score (GradientBoosting) ✅"**. There is no
@@ -300,6 +342,7 @@ verify (§83).
 | F-2 | Aggregate record → fabricated executions | **FIXED**, 4 tests, 1 mutation |
 | F-3 | Wrong leg / directionless grading | **FIXED**, 6 tests, 3 mutations |
 | F-4 | `FlowEvent` uncovered by wire contract | **FIXED**, 2 tests |
+| F-12 | Graded history hid signals recovery must resume | **FIXED**, 7 tests, 4 mutations |
 | F-5 | README advertises deleted ML service | OPEN |
 | F-6 | Tier-4 controls absent from this tree | OPEN (documented) |
 | F-7 | No entitled options-event source | OPEN, **external blocker** |
