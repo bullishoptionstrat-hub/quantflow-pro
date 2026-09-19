@@ -142,6 +142,47 @@ export type MarkLookup = (underlying: string) => Mark | undefined;
 /** @deprecated The bare-number shape. Kept only as a name for older callers. */
 export type SpotLookup = MarkLookup;
 
+/**
+ * The leg carrying the most premium, which is the one the signal is about.
+ *
+ * Mirrors `dominantLegOf()` in the flow-engine module. Duplicated rather than
+ * imported because it operates on `StoredLeg` — the persisted shape — and the
+ * vendored engine must stay byte-identical to its module. Held to the module's
+ * answer by a test.
+ */
+export function dominantStoredLeg<T extends { totalPremium: number }>(
+  legs: readonly T[],
+): T | undefined {
+  let best = legs[0];
+  for (const leg of legs) {
+    if (best === undefined || leg.totalPremium > best.totalPremium) best = leg;
+  }
+  return best;
+}
+
+/**
+ * Structures that express no direction, and so cannot be graded as though
+ * they did.
+ *
+ * Read off the engine's own `spreadGuess` rather than re-derived here, so
+ * there is one classifier and not two. A straddle or strangle is long (or
+ * short) both wings — a position on movement. Its "direction" is not merely
+ * hard to read, it does not exist, and a directional hit rate computed over a
+ * population containing them is measuring something else.
+ *
+ * A risk reversal IS directional (long one wing, short the other) and is
+ * deliberately absent from this list. So is `UNKNOWN`: an unclassified
+ * structure is not established to be non-directional, and refusing everything
+ * the classifier could not name would silently empty the track record.
+ */
+const UNDIRECTED_STRUCTURES = new Set(['STRADDLE_STRANGLE']);
+
+export function undirectedStructure(
+  rec: { spreadGuess?: string },
+): boolean {
+  return rec.spreadGuess !== undefined && UNDIRECTED_STRUCTURES.has(rec.spreadGuess);
+}
+
 /** What a restart recovers about a signal whose grading was interrupted. */
 export interface ResumedState {
   /** Horizons with no live outcome row yet. */
@@ -197,6 +238,9 @@ interface Pending {
   underlying: string;
   decisionAt: number;
   direction: ImpliedDirection;
+  /** Why the direction is NONE, so the UNGRADED reason can say which. */
+  undirected: boolean;
+  spreadGuess?: string;
   entryMark?: Mark;
   /** Horizons still to grade. */
   remaining: Set<OutcomeHorizon>;
@@ -244,10 +288,35 @@ export class SignalGrader {
     if (rec.synthetic) return;
     if (this.pending.has(rec.signalKey)) return;
 
-    const dominant = rec.legs[0];
+    // The DOMINANT leg — highest premium — not `legs[0]`.
+    //
+    // The engine stores legs in the order their contract+side groups were
+    // first seen, so `legs[0]` is whichever leg printed first. On the fixture
+    // this repo already documents — a bought $102k SPY call alongside a bought
+    // $2.2k put, the small put printing five milliseconds earlier — the
+    // grader took its direction from the $2.2k put. Measured: a +2% move in
+    // the underlying, which is what the $102k call was positioned for, graded
+    // NEGATIVE.
+    //
+    // `dominantLegOf()` was written for exactly this and lives in the
+    // flow-engine module, which nothing in `src/` imports — so the fix landed
+    // in the deprecated standalone tracker and the production grader kept the
+    // defect. The rule is reimplemented here rather than imported because the
+    // record's `StoredLeg` is a different type from the engine's leg, and
+    // `vendorMirror.test.ts` holds the engine copy byte-identical to its
+    // module. `graderDirection.test.ts` holds the two to the same answer.
+    const dominant = dominantStoredLeg(rec.legs);
     if (!dominant) return;
 
-    const direction = impliedDirectionOf(
+    // A structure whose direction is undefined is not graded directionally.
+    //
+    // A long strangle is two long wings: a bet on movement, not on direction.
+    // Taking its "direction" from the larger leg produces a confident
+    // bullish/bearish label for a position that expresses neither, and pools
+    // it into a directional hit rate. The engine already classifies the
+    // structure; this reads that classification instead of overriding it.
+    const undirected = undirectedStructure(rec);
+    const direction = undirected ? 'NONE' : impliedDirectionOf(
       dominant.side as Parameters<typeof impliedDirectionOf>[0],
       dominant.right,
     );
@@ -262,6 +331,8 @@ export class SignalGrader {
       underlying: rec.underlying,
       decisionAt: rec.decisionAt,
       direction,
+      undirected,
+      spreadGuess: rec.spreadGuess,
       // Live path: the entry mark is taken now, at registration — at or just
       // after the decision instant. Taking it later would measure from a price
       // the signal itself may have moved.
@@ -408,9 +479,13 @@ export class SignalGrader {
     if (p.direction === 'NONE') {
       return {
         label: 'UNGRADED',
-        ungradedReason:
-          'Side is AMBIGUOUS, so the signal implies no direction. Grading it would ' +
-          'require assuming a side the engine explicitly declined to infer.',
+        ungradedReason: p.undirected
+          ? `Structure is ${p.spreadGuess}, which expresses no direction — it is a ` +
+            `position on movement, not on which way. Grading it bullish or bearish ` +
+            `from its larger leg would put a directionless position into a ` +
+            `directional hit rate.`
+          : 'Side is AMBIGUOUS, so the signal implies no direction. Grading it would ' +
+            'require assuming a side the engine explicitly declined to infer.',
       };
     }
 
