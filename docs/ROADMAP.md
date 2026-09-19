@@ -13,7 +13,7 @@ it says so — the same rule `CLAUDE.md` applies to the code applies to this fil
 | Check | Result |
 |---|---|
 | `backend` — `npm test` | **591 / 591 pass** (~105s) |
-| `frontend` — vitest | 127 tests (per ledger) |
+| `frontend` — vitest | 152 tests |
 | `quantflow-modules/flow-engine` | 24 tests (per ledger) |
 | Working tree | clean, on `main`, 54 merged PRs |
 
@@ -520,6 +520,22 @@ was collected, and it is worthless before Phase 0.
       structurally can't. The exclusion counts are scoped to the *matched*
       population, so a reader can see how much of each their filter selected for
       against `/api/track-record`'s global counts.
+- [x] **4.1-UI — The backtest surface.** *Done — the frontend for 4.1.* A
+      `/backtest` route (Next 14, `components/backtest/Backtest.tsx`) builds a
+      `ScannerFilter` — kind/side chips, ISO-only, comma-separated underlyings,
+      min premium/size/score — posts it, and renders the rows. The honesty is in
+      what it draws: a bucket below n=30 renders `SUPPRESSED (n<30)` and the
+      sample, **never a 0%** (binding `hitRate ?? 0` is refused); the measured
+      interval shows beside the horizon when they drift; and every backend
+      `note` and the `disclaimer` render **verbatim**, not summarised. Found and
+      fixed a latent bug on the way: the `/api/*` rewrite proxy in
+      `next.config.js` claimed to list every backend route and had silently
+      dropped `track-record` — so that page's calls would 404 at the Next server
+      rather than reach Render, and `backtest` was about to ship with the same
+      gap. Both added; `test/apiProxy.test.ts` now reads both sides and fails if
+      the proxy is not a superset of the backend's mounted routes. Same `real: 0`
+      caveat as 4.1: proven against the recorded `backtest.json` fixture and a
+      live demo-mode boot, never yet over a real graded signal.
 - [x] **4.4 — Multi-leg structure recognition.** *Done 2026-09-16, narrowly.*
       The classifier existed and had one real defect: every call-and-put pair at
       one expiry was `STRADDLE_STRANGLE`, ignoring `leg.side`. A long call
@@ -539,8 +555,18 @@ was collected, and it is worthless before Phase 0.
 
 Only after there is something to show. Ordered by "will you open it every day":
 
-- [ ] **5.1** Saved scanner presets — cheap, and it is how a terminal becomes
-      a habit.
+- [x] **5.1 — Saved scanner presets.** *Done — the habit-forming half of the
+      backtest surface.* A named `ScannerFilter` in localStorage
+      (`lib/presets.ts`), surfaced as a preset bar on `/backtest`: save the
+      current filter, click a name to load it back, delete with the ×.
+      Client-only on purpose — a preset carries no entitled data and there is no
+      per-user server table to sync to, so localStorage is the honest scope
+      (this browser, this origin, stated in the UI). Two defensive rules the
+      tests hold: it is SSR-safe (no `window` during Next's server render → the
+      list is `[]` and hydrates on the client, never throws), and a corrupt or
+      hand-edited store opens empty rather than white-screening — a malformed row
+      is dropped, not trusted. Same-name re-save replaces rather than
+      duplicating, so the habit does not become a pile of near-identical rows.
 - [ ] **5.2** A morning view: overnight flow, today's GEX profile, gamma flip,
       the track record to date. One screen, opened once a day.
 - [ ] **5.3** Alerting that names its own trigger. Ledger line 98 records the

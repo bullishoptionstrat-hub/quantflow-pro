@@ -405,3 +405,71 @@ export interface EarningsEvent {
   revenueEstimated: number | null
   source: 'fmp'
 }
+
+/**
+ * `POST /api/backtest` — how the signals a scanner filter selected actually
+ * performed, read back through the same sample-gated, honesty-flagged tally
+ * that answers `/api/track-record`. A backtest grades nothing: grading
+ * happened once, when the outcome was recorded. Backend: `persistence/backtest.ts`.
+ *
+ * These types mirror the wire exactly, including the optional fields that carry
+ * the honesty. `hitRate` is **absent, not zero**, when a bucket has fewer than
+ * `minSample` graded outcomes — a suppressed rate and a 0% rate are different
+ * facts, and binding `hitRate ?? 0` would erase the distinction the whole
+ * endpoint exists to preserve. Read `suppressionReason` before `hitRate`.
+ */
+export interface ScannerFilter {
+  kinds?: string[]
+  underlyings?: string[]
+  sides?: string[]
+  minPremium?: number
+  minSize?: number
+  minScore?: number
+  isoOnly?: boolean
+  /** Epoch ms, inclusive. */
+  from?: number
+  /** Epoch ms, inclusive. */
+  to?: number
+}
+
+/** The interval a bucket's outcomes were measured over, beside its horizon. */
+export interface MeasuredInterval {
+  n: number
+  nUndated: number
+  medianMs?: number
+  minMs?: number
+  maxMs?: number
+  /** The horizon's nominal length. Absent for EXPIRY, which has none. */
+  nominalMs?: number
+}
+
+export interface BacktestRow {
+  kind: string
+  horizon: 'M15' | 'H1' | 'D1' | 'EXPIRY'
+  nTotal: number
+  nGraded: number
+  nUngraded: number
+  /** Absent — never rendered as 0 — when the sample is below minSample. */
+  hitRate?: number
+  medianExcursion?: number
+  suppressionReason?: 'INSUFFICIENT_SAMPLE'
+  measuredInterval?: MeasuredInterval
+}
+
+export interface BacktestResponse {
+  generatedAt: string
+  /** The filter exactly as applied — never a silently dropped constraint. */
+  filter: ScannerFilter
+  /** Signals matching the filter before any exclusion. */
+  matched: number
+  rows: BacktestRow[]
+  excluded: {
+    synthetic: number
+    eventTimeOnlyBasis: number
+    rightsRefused: number
+  }
+  minSample: number
+  notes: string[]
+  storeKind: 'memory' | 'supabase'
+  disclaimer: string
+}

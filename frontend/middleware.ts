@@ -71,6 +71,7 @@ export async function middleware(req: NextRequest) {
 // the /api/* proxy must not be in here.
 export const config = {
   matcher: [
+    '/backtest/:path*',
     '/calculator/:path*',
     '/dark-pool/:path*',
     '/flow/:path*',
