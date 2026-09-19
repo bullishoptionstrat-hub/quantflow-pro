@@ -1,0 +1,82 @@
+{
+  "capturedAt": "2026-09-19T09:10:52.695Z",
+  "source": "http://localhost:3012",
+  "note": "Captured with X-QuantFlow-Demo: 1. Connector states reflect whatever credentials that backend had at capture time.",
+  "endpoints": {
+    "health": {
+      "path": "/api/health",
+      "status": 200,
+      "bytes": 9982
+    },
+    "flow": {
+      "path": "/api/flow",
+      "status": 200,
+      "bytes": 49059
+    },
+    "flowstats": {
+      "path": "/api/flow/stats",
+      "status": 200,
+      "bytes": 698
+    },
+    "unusual": {
+      "path": "/api/flow/unusual",
+      "status": 200,
+      "bytes": 145
+    },
+    "darkpool": {
+      "path": "/api/darkpool",
+      "status": 200,
+      "bytes": 1914
+    },
+    "gex": {
+      "path": "/api/gex?symbol=SPY",
+      "status": 200,
+      "bytes": 1863
+    },
+    "gexsym": {
+      "path": "/api/gex/symbols",
+      "status": 200,
+      "bytes": 14
+    },
+    "macro": {
+      "path": "/api/macro",
+      "status": 200,
+      "bytes": 509
+    },
+    "vix": {
+      "path": "/api/macro/vix",
+      "status": 200,
+      "bytes": 254
+    },
+    "crypto": {
+      "path": "/api/macro/crypto",
+      "status": 200,
+      "bytes": 27
+    },
+    "quotes": {
+      "path": "/api/macro/quotes",
+      "status": 200,
+      "bytes": 13
+    },
+    "track": {
+      "path": "/api/track-record",
+      "status": 200,
+      "bytes": 902
+    },
+    "sentiment": {
+      "path": "/api/sentiment",
+      "status": 200,
+      "bytes": 78
+    },
+    "news": {
+      "path": "/api/sentiment/news/headlines",
+      "status": 200,
+      "bytes": 26
+    },
+    "earnings": {
+      "path": "/api/sentiment/earnings/calendar",
+      "status": 200,
+      "bytes": 15
+    }
+  }
+}

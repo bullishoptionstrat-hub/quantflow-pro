@@ -1383,6 +1383,14 @@ function simulatePrints(symbol: string, spot: number, ts: number): RawPrint[] {
     : roll < 0.80 ? parseFloat((bid + spread * 0.75).toFixed(2))
     : parseFloat(((bid + ask) / 2).toFixed(2));
 
+  // A simulated sweep is simulated as what a sweep actually is: several
+  // executions, at several venues, close together in time. It used to be one
+  // record carrying a venue *list*, which the adapter then split into one
+  // fabricated print per venue — so the simulation was relying on the
+  // fabrication to look like a sweep, and it was the only producer of the
+  // multi-venue input that triggered it. Generating the prints here is honest
+  // (this code really is inventing N executions, and says so via `synthetic`)
+  // and it keeps the adapter free to treat a declared venue list as evidence.
   const venues = Math.random() < 0.35
     ? ['CBOE', 'PHLX', 'AMEX', 'ISE'].slice(0, 2 + Math.floor(Math.random() * 3))
     : ['CBOE'];
@@ -1397,7 +1405,7 @@ function simulatePrints(symbol: string, spot: number, ts: number): RawPrint[] {
     right,
     price: fill,
     size,
-    exchanges: venues,
+    exchange: venues[0],
     bid,
     ask,
     openInterest: oi,
@@ -1409,25 +1417,43 @@ function simulatePrints(symbol: string, spot: number, ts: number): RawPrint[] {
     synthetic: true,
   };
 
+  // One execution per venue, each with its own id, its own size and its own
+  // instant — a real multi-venue sweep is a burst of separate prints, and the
+  // engine clusters them because they are separate.
+  const legs: RawPrint[] = venues.map((venue, i) => {
+    const perVenue = Math.max(1, Math.floor(size / venues.length));
+    return {
+      ...base,
+      id: `${base.id}-v${i}`,
+      // Milliseconds apart, inside the engine's sweep window, which is what
+      // makes them one burst rather than unrelated trades.
+      ts: ts + i * 3,
+      size: i === venues.length - 1
+        ? size - perVenue * (venues.length - 1)
+        : perVenue,
+      exchange: venue,
+    };
+  });
+
   // 12% of orders are a two-leg vertical: same right and expiry, second strike,
   // both legs printing inside the engine's multi-leg window.
   if (Math.random() < 0.12) {
     const farStrike = strike + (right === 'C' ? 10 : -10);
     const farPrice = parseFloat(Math.max(0.05, fill * 0.45).toFixed(2));
-    return [base, {
+    return [...legs, {
       ...base,
       id: `${base.id}-leg2`,
-      ts: ts + 5,
+      ts: ts + venues.length * 3 + 5,
       strike: farStrike,
       price: farPrice,
       bid: parseFloat(Math.max(0.01, farPrice - 0.05).toFixed(2)),
       ask: parseFloat((farPrice + 0.05).toFixed(2)),
-      exchanges: ['CBOE'],
+      exchange: 'CBOE',
       iso: false,
     }];
   }
 
-  return [base];
+  return legs;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
