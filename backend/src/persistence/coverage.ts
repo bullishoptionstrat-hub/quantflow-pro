@@ -95,9 +95,31 @@ export function classifyWindow(
  *
  * The id encodes the kind and the instant the run started, so a process that
  * dies mid-gap leaves the last written extent behind rather than losing the
- * whole window. It will under-report the tail by at most one tick, which is the
- * honest failure: a gap slightly shorter than reality, never a window claimed
- * as observed that was not.
+ * whole window.
+ *
+ * **That used to claim the tail was under-reported "by at most one tick". It
+ * is not, and the live database says so.** That reasoning holds for a process
+ * that dies and is restarted promptly. The documented host sleeps after 15
+ * minutes of inactivity and stays asleep for hours, and across a sleep:
+ *
+ *   - the open gap freezes at its last written extent, and its `endedAt`
+ *     becomes a POSITIVE claim that collection resumed at that instant;
+ *   - on wake `lastTickAt` is null, so the first tick establishes a baseline
+ *     and writes nothing, and the next window starts at the WAKE instant.
+ *
+ * The sleep interval is therefore attributed to nobody. Measured on the live
+ * project on 2026-09-20, over a 4,160-minute span of recorded signals:
+ *
+ *   9 gap rows, 126 minutes total  = 3.03% of the span
+ *   every row the SAME duration (~14 min) — the signature of freeze-at-sleep,
+ *     not of outages having a natural length
+ *   longest silence in signal_history with NO gap row at all: 1,978 min (33 h)
+ *
+ * So the table built to stop a flattering hit rate under-reported non-
+ * collecting time by roughly 97%, reproducing precisely the bias its own
+ * docstring describes. `recoverMissedWindow()` is the missing half: a boot
+ * cannot know it is about to sleep, but the NEXT boot can see the hole and
+ * attribute it. Same shape as `SignalGrader.recover()`, for the same reason.
  */
 export class CoverageRecorder {
   private open: (CollectionGap & { kind: GapKind }) | null = null;
@@ -151,6 +173,54 @@ export class CoverageRecorder {
     };
     return { ...this.open };
   }
+}
+
+/**
+ * The window between the last thing this deployment recorded and now.
+ *
+ * Called once at startup, before the tick loop. A process that sleeps cannot
+ * write its own closing gap — it is gone — so the interval is claimed by the
+ * next process that boots, which is the only party in a position to see it.
+ *
+ * `lastKnownActivityMs` is the most recent instant this deployment can show
+ * evidence for: the newest recorded gap's end, or the newest signal's decision
+ * time, whichever is later. Anything after that and before `now` was not
+ * observed, whatever the reason — the process was down, asleep, or not
+ * deployed. **`NOT_OBSERVED` is correct for all three**, and deliberately does
+ * not try to distinguish them: the union's `MARKET_CLOSED` needs a holiday
+ * calendar this codebase does not have, and the failure direction is settled
+ * in the docstring above — overstating a gap costs a reader's time, while
+ * understating one flatters every rate computed over the window.
+ *
+ * Returns `null` when there is nothing to claim: no prior activity at all (a
+ * first-ever boot has no window behind it, and inventing one would date the
+ * gap to the epoch — the same rule `tick()`'s first call follows), or a hole
+ * shorter than `minGapMs`, which is an ordinary redeploy rather than an
+ * outage worth a row.
+ */
+export function recoverMissedWindow(
+  lastKnownActivityMs: number | null,
+  now: number,
+  idPrefix = 'gap',
+  minGapMs = 120_000,
+): CollectionGap | null {
+  if (lastKnownActivityMs === null) return null;
+  if (!Number.isFinite(lastKnownActivityMs) || lastKnownActivityMs <= 0) return null;
+  if (now - lastKnownActivityMs < minGapMs) return null;
+
+  return {
+    id: `${idPrefix}_NOT_OBSERVED_${lastKnownActivityMs}`,
+    kind: 'NOT_OBSERVED',
+    startedAt: lastKnownActivityMs,
+    endedAt: now,
+    reason:
+      `Nothing was recorded between ${new Date(lastKnownActivityMs).toISOString()} ` +
+      `and this process starting. The previous process stopped without closing its ` +
+      `window — on a host that sleeps when idle that is the ordinary case, and the ` +
+      `sleep itself can only be attributed by the next boot. Claimed as ` +
+      `NOT_OBSERVED rather than left unattributed, because an unclaimed interval ` +
+      `reads as observed to anything computing a rate over it.`,
+  };
 }
 
 /** Summarise gaps for a status line. Pure, so the projection stays testable. */

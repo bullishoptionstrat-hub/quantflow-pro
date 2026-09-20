@@ -215,6 +215,69 @@ defect immediately.
 
 ---
 
+## F-13 — The gap table under-reported non-collecting time by ~97% ✅ FIXED
+
+**Found by querying the live Supabase project**, which became reachable after
+the earlier findings were written. It is the defect the PR's own
+"weakest evidence" note predicted: *a fixture is not a database*.
+
+`CoverageRecorder` extends an open gap in place each 60-second tick. Its
+docstring claimed a process dying mid-gap "will under-report the tail by **at
+most one tick**". The live data refutes that, over a 4,160-minute span of
+recorded signals:
+
+```
+signal_history           3,244 rows (all synthetic, 0 real)
+collection_gaps              9 rows, 126 minutes total   = 3.03% of the span
+distinct gap durations       1   -- every row the SAME ~14 min
+longest silence in signal_history with NO gap row:  1,978 min (33 hours)
+```
+
+**Every gap being identical is the tell.** That is not outages having a
+natural length; it is the signature of freeze-at-sleep. The host sleeps after
+15 minutes idle, so:
+
+- the open gap freezes at its last written extent — and its `endedAt` becomes
+  a **positive claim** that collection resumed at that instant, which is false;
+- on wake `lastTickAt` is `null`, so the first tick establishes a baseline and
+  writes nothing, and the next window starts at the **wake** instant.
+
+The sleep interval is therefore attributed to nobody, and an unattributed
+interval reads as *observed* to anything computing a rate over it. So the one
+table built to stop a flattering hit rate — its own docstring says
+*"silently dropping them removes the hard cases and makes any hit rate
+computed over the window flattering"* — was reproducing exactly that bias, at
+about 97% of the non-collecting time.
+
+This is F-1's failure mode (process-memory state lost across a restart) in the
+coverage recorder, and it is **worse in one specific way**: F-1 lost outcomes,
+which shows up as absence. This writes a positive claim that is wrong.
+
+**Fix:** `recoverMissedWindow()`, called at startup before the tick loop — a
+process cannot know it is about to sleep, but the next one can see the hole and
+attribute it. Same shape as `SignalGrader.recover()`. A redeploy shorter than
+two minutes is not an outage; a first-ever boot invents nothing, by the same
+rule `tick()`'s first call already follows.
+
+**Two things caught in my own work while doing it**, both worth recording:
+
+- The test passed under `tsx` with a field name (`recordableConnected`) that
+  does not exist on `CoverageSample`. Only `tsc` caught it — `npm run verify`
+  typechecks the test tree for exactly this reason.
+- I wrote two bare `catch { /* comment */ }` blocks, and `deadSources.test.ts`
+  refused them. It was right: a store read failing at boot means coverage
+  recovery silently did not run, which is indistinguishable from having nothing
+  to claim. They report now.
+
+**Also corrected from this data:** CLAUDE.md records all four history tables at
+zero rows. They are not — the deployment has been persisting to Supabase since
+2026-09-16. `signal_outcomes` is genuinely empty, but that is **correct**, not
+F-1: all 3,244 signals are synthetic and `register()` refuses synthetic by
+design. Two sources appear, `simulation` (2,704) and `seed` (540); `seed` is a
+real current path at `index.ts:1800`, not a stale artifact.
+
+---
+
 ## F-5 — README advertises a deleted service and unqualified capabilities ❌ OPEN
 
 `README.md:139` lists **"ML unusual score (GradientBoosting) ✅"**. There is no
@@ -379,6 +442,7 @@ verify (§83).
 | F-3 | Wrong leg / directionless grading | **FIXED**, 6 tests, 3 mutations |
 | F-4 | `FlowEvent` uncovered by wire contract | **FIXED**, 2 tests |
 | F-12 | Graded history hid signals recovery must resume | **FIXED**, 7 tests, 4 mutations |
+| F-13 | Gap table under-reported non-collecting time ~97% | **FIXED**, 6 tests, 3 mutations — found in the live database |
 | F-5 | README advertises deleted ML service | OPEN |
 | F-6 | Tier-4 controls absent from this tree | OPEN (documented) |
 | F-7 | No entitled options-event source | OPEN, **external blocker** |

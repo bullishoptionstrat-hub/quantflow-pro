@@ -17,7 +17,9 @@ import { fetchOccVolume, getOccVolume } from './connectors/occ';
 import { describeHttpError } from './httpError';
 import { probeAll, type EntitlementResult } from './entitlement';
 import { resolveMark, markSourceStandings, markRightsClass } from './markSources';
-import { CoverageRecorder, type CoverageSample } from '../persistence/coverage';
+import {
+  CoverageRecorder, recoverMissedWindow, type CoverageSample,
+} from '../persistence/coverage';
 import type { CollectionGap } from '../persistence/types';
 import {
   ingestPrint, drainIdle, resetDaily, onSignal,
@@ -27,6 +29,7 @@ import {
   initPersistence, describePersistence, SignalGrader,
   type RecoveryReport,
   type SignalRecord,
+  type SignalStore,
 } from '../persistence';
 import {
   rightsSnapshot, mayOperateConnector, refusedConnectors,
@@ -1583,6 +1586,43 @@ function startSignalHistory(): void {
   // so the apparatus built to stop a window of missing data being read as a
   // quiet tape had never written a row. See persistence/coverage.ts.
   coverage = new CoverageRecorder(`run${Date.now()}`);
+
+  // Claim the window the PREVIOUS process could not.
+  //
+  // A process that sleeps cannot close its own gap — it is gone — so its open
+  // row freezes at the last extent and its `endedAt` becomes a positive claim
+  // that collection resumed then. It did not. Measured on the live project:
+  // 9 gap rows totalling 126 minutes across a 4,160-minute span, every row the
+  // same ~14-minute length, with a 33-hour silence in `signal_history` carrying
+  // no gap row at all. The apparatus built to stop a flattering hit rate was
+  // under-reporting non-collecting time by ~97%.
+  //
+  // Only the next boot can see that hole, so the next boot attributes it.
+  // Fire-and-forget, like every other write on this path: a coverage row must
+  // never be able to take down the process that is collecting.
+  void lastRecordedActivity(store)
+    .then((lastMs) => {
+      const missed = recoverMissedWindow(lastMs, Date.now(), `run${Date.now()}`);
+      if (!missed) return;
+      lastCoverageGap = missed;
+      console.warn(
+        `[coverage] claiming unobserved window ` +
+        `${new Date(missed.startedAt).toISOString()} -> ` +
+        `${new Date(missed.endedAt).toISOString()} ` +
+        `(${Math.round((missed.endedAt - missed.startedAt) / 60_000)} min) — the ` +
+        `previous process stopped without closing it`,
+      );
+      return store.recordGap(missed);
+    })
+    .catch((err) => {
+      // Never block collection on the coverage record — but never lose the
+      // failure either.
+      console.warn(
+        `[coverage] missed-window claim failed: ` +
+        `${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+
   setInterval(() => {
     void grader?.tick().catch(() => { /* counted in grader stats */ });
 
@@ -1598,6 +1638,56 @@ function startSignalHistory(): void {
   const p = describePersistence();
   console.log(`[history] store=${p.store} durable=${p.durable} mode=${p.businessMode}`);
   if (!p.durable) console.warn(`[history] ${p.reason}`);
+}
+
+/**
+ * The most recent instant this deployment has evidence for.
+ *
+ * The later of the newest recorded gap's end and the newest signal's decision
+ * time. Both are needed: a deployment that recorded gaps and no signals has
+ * only the former, one that recorded signals and never hit a gap has only the
+ * latter, and taking the later of the two is what stops a fresh gap from
+ * overlapping a window that was demonstrably productive.
+ *
+ * `null` when the deployment can show nothing at all — a first-ever boot has
+ * no window behind it.
+ */
+async function lastRecordedActivity(store: SignalStore): Promise<number | null> {
+  let newest: number | null = null;
+  const note = (ms: number | undefined) => {
+    if (ms !== undefined && Number.isFinite(ms) && ms > 0) {
+      newest = newest === null ? ms : Math.max(newest, ms);
+    }
+  };
+
+  // Neither read is allowed to swallow its failure. A store that cannot answer
+  // means coverage recovery does not run, and a boot that silently skipped it
+  // looks identical to a boot with nothing to claim — which is the class of
+  // defect this whole module exists to remove, so it is said out loud.
+  try {
+    // A wide window on purpose: the question is "when did this deployment last
+    // do anything", and a narrow one would answer "never" after a long sleep —
+    // which is the exact under-reporting being fixed.
+    const gaps = await store.listGaps(0);
+    for (const g of gaps) note(g.endedAt);
+  } catch (err) {
+    console.warn(
+      `[coverage] could not read prior gaps; the missed window may be ` +
+      `under-claimed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  try {
+    const recent = await store.listUngraded(1);
+    for (const r of recent) note(r.decisionAt);
+  } catch (err) {
+    console.warn(
+      `[coverage] could not read prior signals; the missed window may be ` +
+      `under-claimed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  return newest;
 }
 
 let coverage: CoverageRecorder | undefined;
