@@ -183,27 +183,80 @@ export const DATASETS: readonly DatasetRights[] = [
     label: 'Twelve Data spot quotes (REST + WebSocket)',
     host: 'api.twelvedata.com',
     display: { PRIVATE_RESEARCH: 'PERMITTED', PUBLIC_COMMERCIAL: 'UNVERIFIED' },
-    // UNVERIFIED, not PROHIBITED: retention is capped at what the subscription
-    // permits, and what this deployment's subscription permits is not
-    // established. We are recording that we do not know.
+    // UNVERIFIED, and re-read on 2026-09-21 rather than left as an unchecked
+    // box. The verdict did not move. The reason did, and the difference is
+    // worth the words:
+    //
+    //   before — "retention is capped at what the subscription permits, and
+    //             what this subscription permits is not established"
+    //             (i.e. we have not looked)
+    //   after  — we looked. The cap in 16.1 is "duration permitted by
+    //             subscription"; 2.3(g) bars storing "beyond permitted
+    //             timeframes specified in the Documentation"; and the
+    //             Documentation for this plan — twelvedata.com/pricing,
+    //             Basic — states no retention timeframe at all.
+    //
+    // So the clause that would bound retention points at a document that
+    // defines no bound. That is not a permission and it is not a prohibition;
+    // it is a term that resolves to nothing, which is precisely UNVERIFIED.
+    // Reading it again will not change this. Only the operator establishing
+    // their plan's permitted duration with the vendor will, and that is a
+    // determination no code here can infer.
+    //
+    // The grant is quoted alongside the restrictions on purpose. 2.2(a)
+    // affirmatively licenses storage for Internal Use, and an entry that
+    // listed only the prohibitions would read as more restrictive than the
+    // terms are — which is the same failure as reading more permissive.
     //
     // This is load-bearing and currently unenforced: `getSpotPrice` is the
     // grader's only mark source, so every persisted outcome is derived from
     // Twelve Data. `tools/collection/doctor.ts` reports it; nothing refuses
     // it, because the connector gate deliberately refuses PROHIBITED only.
+    //
+    // If a retention policy is ever needed, 2.2(c) is the clause that makes it
+    // tractable, and the shape is recorded here rather than built for zero
+    // rows: expire the raw `entry_mark` / `exit_mark` — which are the vendor's
+    // Data — and keep `label` and `excursion`, which are Derived Data. The
+    // "cannot be reverse-engineered to recreate the original Data" test in
+    // 2.2(c) is met only once the raw marks are gone: an excursion is a ratio
+    // and recovers no absolute price on its own, but an excursion beside a
+    // retained `entry_mark` recovers the exit exactly. Note also that this
+    // collides with `enforce_outcome_immutability`, which refuses every UPDATE
+    // and DELETE on `signal_outcomes` bar one — so a retention sweep cannot be
+    // added without deciding which guarantee yields. See
+    // docs/SYSTEM_INVARIANTS.md.
     persist: { PRIVATE_RESEARCH: 'UNVERIFIED', PUBLIC_COMMERCIAL: 'UNVERIFIED' },
     quotedRestriction:
-      'Customer may retain Data only: (a) For duration permitted by subscription ' +
-      '(b) As required for regulatory compliance',
+      '16.1 (Retention limits) — "Customer may retain Data only: (a) For duration ' +
+      'permitted by subscription (b) As required for regulatory compliance ' +
+      '(c) Subject to any Third-Party Provider restrictions" | ' +
+      '2.3 (Restrictions) — "Store or cache Data beyond permitted timeframes ' +
+      'specified in the Documentation" and "Use Free Tier data for commercial ' +
+      'purposes" | ' +
+      '16.2 (Data Deletion), upon termination or expiration — "All Data must be ' +
+      'deleted within 30 days" | ' +
+      '2.2 (Data license), the grant — "Access, receive, process, and store Data ' +
+      'solely for Internal Use (or as otherwise permitted by your Subscription Tier ' +
+      'or add-ons)" and "Create Derived Data that cannot be reverse-engineered to ' +
+      'recreate the original Data"',
     termsUrl: 'https://twelvedata.com/terms',
-    termsReadAt: '2026-09-03',
+    termsReadAt: '2026-09-21',
     basis:
-      'Section 16.1 (Retention Limits) caps retention at the subscription\'s ' +
-      'permitted duration, and Section 2.3 prohibits storing or caching data ' +
-      'beyond the timeframes in the documentation — neither of which is ' +
-      'established for this deployment, so PERSIST is UNVERIFIED rather than ' +
-      'asserted either way. Section 2.3 also prohibits commercial use of Free ' +
-      'Tier data, and the default configuration here is the free tier.',
+      'Read 2026-09-21; the verdict is unchanged and the reason is now measured ' +
+      'rather than assumed. 2.2(a) affirmatively licenses storing Data for ' +
+      'Internal Use, so storage is granted, not merely untested. What is not ' +
+      'established is its duration: 16.1 caps retention at the subscription\'s ' +
+      'permitted duration and 2.3 bars storing beyond the timeframes "specified ' +
+      'in the Documentation" — and the Documentation for the Basic plan ' +
+      '(twelvedata.com/pricing, read the same day) specifies no retention ' +
+      'timeframe at all. A cap that points at a silent document is neither a ' +
+      'permission nor a prohibition, so PERSIST stays UNVERIFIED; resolving it ' +
+      'to PERMITTED would be a legal determination the operator makes with the ' +
+      'vendor, not one this registry can infer. 16.2 is the one retention rule ' +
+      'here that is defined — all Data deleted within 30 days of termination — ' +
+      'and the code has no mechanism for it. 2.3 separately bars commercial use ' +
+      'of Free Tier data, and the default configuration here is the free tier, ' +
+      'which is why PUBLIC_COMMERCIAL is UNVERIFIED for display as well.',
   },
   {
     id: 'EVENT_REGISTRY_NEWS',

@@ -87,10 +87,12 @@ const MARK_SOURCE = 'twelvedata';
 /**
  * The rights question the doctor reports and does not enforce.
  *
- * `TWELVEDATA_QUOTES` is UNVERIFIED for PERSIST: its terms cap retention at
- * "duration permitted by subscription", and what this deployment's
- * subscription permits is not established. Every persisted outcome derives
- * from that source, so the whole track record rests on it.
+ * `TWELVEDATA_QUOTES` is UNVERIFIED for PERSIST. Re-read 2026-09-21: the cap
+ * in 16.1 is "duration permitted by subscription", 2.3 bars storing beyond the
+ * timeframes "specified in the Documentation", and the Basic plan's
+ * documentation names no timeframe — so the clause resolves to nothing and no
+ * further reading will move it. Every persisted outcome derives from that
+ * source, so the whole track record rests on it.
  *
  * It is reported rather than refused because the connector gate deliberately
  * refuses PROHIBITED only — widening it to UNVERIFIED would collapse DISPLAY
@@ -98,10 +100,14 @@ const MARK_SOURCE = 'twelvedata';
  * against. An operator can answer this; the code cannot.
  */
 const MARK_SOURCE_RIGHTS_NOTE =
-  'Twelve Data is UNVERIFIED for PERSIST: retention is capped at "duration ' +
-  'permitted by subscription" (terms read 2026-09-03), and this deployment\'s ' +
-  'subscription is not established here. Every graded outcome derives from it. ' +
-  'Establish what your plan permits before publishing a track record.';
+  'Twelve Data is UNVERIFIED for PERSIST, and as of the 2026-09-21 reading that ' +
+  'is a measured verdict rather than an unread one. Storing is granted — 2.2(a) ' +
+  'licenses storing Data for Internal Use. The duration is not: 16.1 caps ' +
+  'retention at the subscription\'s permitted duration and 2.3 bars storing ' +
+  'beyond the timeframes "specified in the Documentation", and the Basic plan\'s ' +
+  'documentation specifies no retention timeframe at all. A cap pointing at a ' +
+  'silent document is neither permission nor prohibition. Every graded outcome ' +
+  'derives from this source, so the whole track record rests on it.';
 
 /** Connector source strings that could ever be recorded, per the registry. */
 const RECORDABLE_SOURCES = [
@@ -287,9 +293,23 @@ export function runChecks(env: NodeJS.ProcessEnv = process.env): Check[] {
     name: 'Mark source retention rights',
     status: 'warn',
     detail: MARK_SOURCE_RIGHTS_NOTE,
-    fix: 'Check your Twelve Data plan against Section 16.1 (Retention Limits) at ' +
-         'https://twelvedata.com/terms. If it does not permit indefinite retention, ' +
-         'the outcomes table needs a retention policy — the code has none.',
+    // The previous fix text said "check Section 16.1". That has now been done,
+    // and the answer is that it cannot be checked from the published terms —
+    // so repeating the instruction would send an operator to read a page this
+    // repo has already established is silent on the point. What is actionable
+    // is narrower and is named here instead.
+    fix: 'Two things, and only the first is yours to do. (1) Ask Twelve Data, in ' +
+         'writing, what retention duration your plan permits — 16.1 defers to the ' +
+         'subscription and 2.3 defers to the Documentation, which states no ' +
+         'timeframe for Basic, so the vendor is the only source of this answer. ' +
+         'Their reply is what would move this entry to PERMITTED; nothing in the ' +
+         'published terms can. (2) If the answer is a finite window, or if you ' +
+         'ever terminate the subscription — 16.2 requires all Data deleted within ' +
+         '30 days — the outcomes table needs a retention policy and the code has ' +
+         'none. The shape is recorded in rights.ts: expire the raw entry/exit ' +
+         'marks, which are the vendor\'s Data, and keep label and excursion, which ' +
+         'are Derived Data under 2.2(c). Note it collides with the append-only ' +
+         'trigger on signal_outcomes — see docs/SYSTEM_INVARIANTS.md.',
   });
 
   // ── 5. Long enough to see the shortest horizon ────────────────────────────
