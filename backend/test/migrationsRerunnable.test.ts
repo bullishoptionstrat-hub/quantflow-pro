@@ -145,18 +145,45 @@ test('every constraint is added behind a pg_constraint existence check', () => {
   }
 });
 
-test('the nineteen policy names really are in both homes', () => {
-  // The premise of the defect, asserted so it cannot quietly stop being true:
-  // if the two files ever stop sharing policy names, the sequence stops
-  // colliding and the guards above are protecting nothing.
-  const names = (sql: string) =>
-    [...executable(sql).matchAll(/^create policy "([^"]+)"/gm)].map((m) => m[1]).sort();
+test('the nineteen policies agree in both homes, name and body', () => {
+  // Two claims, and the second one is what the fix above rests on.
+  //
+  // The names are the defect's premise: if the two files ever stop sharing
+  // them, the sequence stops colliding and every guard above is protecting
+  // nothing — silently.
+  //
+  // The bodies are what the fix made load-bearing. Before it, a body that had
+  // drifted was invisible, because the unguarded `create policy` aborted on
+  // the name before anyone could care what it said. After it, the migration
+  // *drops* `schema.sql`'s policy and recreates it — so a drifted body means
+  // the migration's definition quietly wins, and the deployed RLS on seven
+  // user-facing tables stops being what the file this repo calls the source of
+  // truth describes. That is a loud failure traded for a silent one, which is
+  // the trade this repo's ledger keeps finding. Measured identical on
+  // 2026-09-21; asserted here so it stays that way.
+  //
+  // `schemaSetup.test.ts` compares the two files' *table* sets and nothing
+  // else, so this is the only thing holding the policies together.
+  const policies = (sql: string) => {
+    const out = new Map<string, string>();
+    for (const m of executable(sql).matchAll(/create policy "([^"]+)"(.*?);/gs)) {
+      out.set(m[1]!, m[2]!.replace(/\s+/g, ' ').trim());
+    }
+    return out;
+  };
 
-  const schema = names(readFileSync(join(SUPABASE, 'schema.sql'), 'utf8'));
-  const initial = names(readFileSync(
+  const schema = policies(readFileSync(join(SUPABASE, 'schema.sql'), 'utf8'));
+  const initial = policies(readFileSync(
     join(SUPABASE, 'migrations', '20240707000000_initial_schema.sql'), 'utf8'));
 
-  assert.ok(schema.length > 0, 'premise: schema.sql defines policies');
-  assert.deepEqual(schema, initial,
+  assert.ok(schema.size > 0, 'premise: schema.sql defines policies');
+  assert.deepEqual([...schema.keys()].sort(), [...initial.keys()].sort(),
     'schema.sql and the initial migration disagree about which policies exist');
+
+  for (const [name, body] of schema) {
+    assert.equal(initial.get(name), body,
+      `policy "${name}" has drifted between schema.sql and the initial migration — `
+      + 'the migration drops and recreates it, so its definition is the one that '
+      + 'would be deployed, and nothing would report the difference');
+  }
 });

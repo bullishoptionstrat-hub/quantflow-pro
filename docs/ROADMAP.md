@@ -292,7 +292,8 @@ accumulating in wall-clock time while you build everything else.
       whole blocker. Measured against the live project 2026-09-21.**
       The project exists and is `ACTIVE_HEALTHY` (`vitnwysywkmpuaoluqom`,
       PostgreSQL 17.6, us-east-2). Every object `supabase/schema.sql` declares
-      is present — all seven application tables, both functions, both triggers.
+      is present, counted rather than sampled: seven application tables, eight
+      indexes, nineteen RLS policies, two functions, three triggers.
       All six migrations are applied, including
       `20260917200000_mark_as_of.sql`, so `signal_outcomes` carries
       `entry_mark_at` / `exit_mark_at` and the defect that would have failed
