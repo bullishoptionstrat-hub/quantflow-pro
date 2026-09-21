@@ -472,6 +472,21 @@ ungraded_nomarks=ACCEPTED;
 All four tables were left at their prior counts (`signal_outcomes` 0,
 `signal_history` 3,244, `signal_write_incidents` 0, `collection_gaps` 9).
 
+**Bounded afterwards, so F-14 is not read as the first of several.** Every
+column `supabaseStore.ts` names was extracted from source (object-literal keys,
+PostgREST filter/order/select arguments, and row-property reads, with comments
+stripped so prose cannot contribute identifiers) and checked in **both**
+directions on 2026-09-21: 46 column names, all present in the live database,
+and all created by some migration on disk. No snake_case identifier in the file
+fails to be a column. So the two `*_at` columns were the only drift, in either
+direction.
+
+One assumption in that pass was wrong and was caught by running it:
+`signal_history.iso` looked like a false positive from the `iso()` helper in the
+same file, and it is a real `boolean` column. Filtering it out by eye would have
+shrunk the audit by one column silently — the same shape as the `grep -v
+"Store.ts"` retraction below.
+
 **What this does not close.** Nothing in the repository can detect this class.
 The migration was present and correct on disk; the drift was between disk and
 deployment, and no test that reads source can see it. `schemaSetup.test.ts`
