@@ -12,15 +12,62 @@ it says so — the same rule `CLAUDE.md` applies to the code applies to this fil
 
 | Check | Result |
 |---|---|
-| `backend` — `npm test` | **591 / 591 pass** (~105s) |
-| `frontend` — vitest | 127 tests (per ledger) |
-| `quantflow-modules/flow-engine` | 24 tests (per ledger) |
-| Working tree | clean, on `main`, 54 merged PRs |
+| `backend` — `npm test` | **640 / 640 pass** (~129s) |
+| `frontend` — vitest | **132 / 132 pass** (13 files) |
+| `quantflow-modules/flow-engine` | **30 / 30 pass** |
+| `tsc --noEmit`, both packages | clean |
+| Working tree | clean, 62 merged PRs |
 
-The engineering is in good shape. Fifty-four pull requests have gone into one
+*Re-measured 2026-09-21 by running each suite, not read off the ledger.* The
+two "per ledger" rows above were stale in both directions: the module suite had
+never been run during the audit that cited it, and the frontend count predated
+two merged PRs. A number copied from a ledger is a claim, and this file's own
+rule is that a claim gets checked — so these were.
+
+The engineering is in good shape. Sixty-two pull requests have gone into one
 question — *is this number true?* — and the answer machinery is real:
 `decisionAt` discipline, `dominantLegOf()`, the n=30 publication floor, the
 rights registry, the zero-fill ledger, `committedSecrets.test.ts`.
+
+### What the forensic audit found (2026-09-19, PR #66)
+
+Phase 0 of the audit mandate reproduced **seven defects** in the research path.
+They belong on this page, not only in `docs/FORENSIC_AUDIT.md`, because of what
+they do to the plan: the sections below say the clock starts the moment the
+credentials land, and **three of these seven would have kept it at zero after
+that**. Every one was established by running code, in this tree or against the
+live Supabase project.
+
+| # | Defect | Why the plan cares |
+|---|---|---|
+| 1 | A restart lost every pending outcome — nothing repopulated the grader's in-memory set at startup | Render's free tier sleeps at 15 min and M15 is the shortest horizon, so this is close to *every* checkpoint ever scheduled. Item 0.5 was about the sleeping; this is the part where the waking loses the work |
+| 2 | One aggregate record became several "observed" executions | The split manufactured the exact multi-venue evidence the `SWEEP` label is built on. Inert only because no real source produced such a record — a live trap on the primary data path |
+| 3 | Multi-leg signals graded from the wrong leg | `register()` read `legs[0]`, whichever printed first. A strangle now grades UNGRADED: two long wings is a position on movement, not direction |
+| 4 | A long graded history hid every signal a restart had to resume | Defect 1's own failure mode, one layer down, introduced by defect 1's fix. Recovery would resume nothing on a *healthy* deployment and report `examined: 0` |
+| 5 | An expiry date resolved against a fixed UTC hour, not the market's clock | Immaterial and said to be: 33 of 20,572 sampled instants, ≤3 points of 100. Fixed because the comment claiming "~4pm ET" was false five months a year |
+| 6 | The live database was missing two columns every outcome write sends | `20260917200000_mark_as_of.sql` was on disk, correct, reviewed — and never applied. **Every** outcome write to that project would have failed with 42703 |
+| 7 | A failed outcome write discarded the checkpoint, silently | The `remaining.delete()` ran outside the try/catch. 6 and 7 compound: 6 makes every write fail, 7 makes that byte-for-byte identical to an idle grader |
+
+**1, 6 and 7 are the ones that decide Phase 2.** Before them, "wait, visibly,
+for n=30" was not a waiting problem — a deployment with perfect credentials
+would have collected nothing and reported the same zeros as one with none.
+
+**A claim on this page was wrong and is retracted here.** The paragraph above
+lists `dominantLegOf()` among the answer machinery that is "real". It is real,
+and it is in the flow-engine module that **nothing in `src/` imports** — the
+fix for defect 3 landed in the deprecated path while production kept the bug.
+CLAUDE.md recorded that defect as already fixed for the same reason. This is
+the repository's recurring failure shape, not a one-off: correct code that
+nothing calls reads exactly like a working guarantee.
+
+**What the audit did not close, stated plainly.** `supabaseStore`'s read paths
+(`listUngraded`, `trackRecord`, `listOutcomes`) are still covered by
+PostgREST-shaped fixtures rather than by a database — and defect 4 is the story
+of a fixture standing in for one. Closing it needs a `service_role` key, which
+is the same credential item 1.1c waits on; the anon key cannot substitute,
+because all four tables are `force row level security` with no policies and
+would return zero rows, making every assertion vacuously true. Tracked as
+**1.1d** below.
 
 ### What is red, and it is the only thing that matters
 
@@ -311,6 +358,26 @@ every day is sample.
       have `entitled` as the one branch never observed, which is the shape
       `entitlement.ts` refuses. The right-shape branch therefore stays a `warn`
       with the sentence it always had: shape is not validity.
+- [ ] **1.1d — Run the store's read paths against a real Postgres. Opened
+      2026-09-21 by PR #66, which named it as the thing to do before the next
+      merge and could not do it.** `listUngraded`, `trackRecord` and
+      `listOutcomes` are covered by fixtures shaped like PostgREST replies.
+      Defect 4 above is what that costs: a query-construction bug that every
+      fixture agreed with. Two facts bound the work, and both were measured
+      on 2026-09-21 rather than assumed:
+      **(a)** the Supabase management API issues only `anon` and publishable
+      keys, and all four tables are `alter table ... force row level security`
+      with no policies (`20260829120000_signal_history.sql:213-226`), so an
+      anon-key test reads zero rows and passes for the wrong reason — this is
+      the designed behaviour and must not be relaxed to make a test convenient;
+      **(b)** there is no container runtime here, so a local stack means
+      PostgreSQL 17 (installed) plus a PostgREST binary, an `auth` schema shim
+      for the `handle_new_user` trigger the migrations reference, the three
+      Supabase roles, and a `bypassrls` test connection — because `force` binds
+      the table owner too. That is the estimate; the download is not the work.
+      **Cheapest path is the credential**, which is 1.1c's blocker as well.
+      Until then the gap is stated, not papered over — which is why the item is
+      open rather than a caveat in a merged PR body.
 - [x] **1.1b — Probe at startup, not only from the tool.** *Done 2026-09-15.*
       `startEntitlementProbes()` sweeps at boot and hourly (`.unref()`ed);
       `/api/health` gains an `entitlement` block with a per-source verdict and
