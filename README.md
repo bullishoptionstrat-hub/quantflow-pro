@@ -84,6 +84,17 @@ where every signal write fails and `/api/track-record` stays empty forever,
 with nothing on screen saying why. `backend/test/schemaSetup.test.ts` holds
 this instruction to the tables the code actually addresses.
 
+Steps 3 and 4 are **re-runnable, together and in order**, which they were not
+until 2026-09-21: `schema.sql` and `20240707000000_initial_schema.sql` define
+the same nineteen RLS policies, PostgreSQL has no `create policy if not
+exists`, and the migration created them unguarded — so following steps 3 and 4
+as written aborted at the migration's first policy with `42710`, and the four
+tables in step 4's *second* migration were never reached. Reproduced on
+PostgreSQL 17 and fixed by dropping each policy name before creating it;
+`backend/test/migrationsRerunnable.test.ts` holds every object in both files to
+a shape that survives a second run, so an operator who retries after any error
+gets the same database rather than a worse one.
+
 `supabase/gate-proofs.sql` is optional and re-runnable: it proves the
 signal-history constraints refuse what they claim to. Every `ERROR:` in its
 output is a pass.
