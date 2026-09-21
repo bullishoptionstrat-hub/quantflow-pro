@@ -12,12 +12,12 @@ it says so — the same rule `CLAUDE.md` applies to the code applies to this fil
 
 | Check | Result |
 |---|---|
-| `backend` — `npm test` | **640 / 640 pass** (~129s) |
+| `backend` — `npm test` | **645 / 645 pass** (~115s) |
 | `frontend` — vitest | **152 / 152 pass** (16 files) |
 | `quantflow-modules/flow-engine` | **30 / 30 pass** |
 | `tsc --noEmit`, both packages | clean |
 | `frontend` — `npm run build` | clean, `/backtest` prerendered |
-| Working tree | clean, 63 merged PRs |
+| Working tree | clean |
 
 *Re-measured 2026-09-21 by running each suite, not read off the ledger.* The
 two "per ledger" rows above were stale in both directions: the module suite had
@@ -25,8 +25,9 @@ never been run during the audit that cited it, and the frontend count predated
 two merged PRs. A number copied from a ledger is a claim, and this file's own
 rule is that a claim gets checked — so these were.
 
-The engineering is in good shape. Sixty-two pull requests have gone into one
-question — *is this number true?* — and the answer machinery is real:
+The engineering is in good shape. Sixty-four merged pull requests, as of
+2026-09-21, have gone into one question — *is this number true?* — and the
+answer machinery is real:
 `decisionAt` discipline, `dominantLegOf()`, the n=30 publication floor, the
 rights registry, the zero-fill ledger, `committedSecrets.test.ts`.
 
@@ -80,7 +81,10 @@ That is not a display bug. It is the literal state of the system.
 collection**:
 
 - **BLOCKED — Durable storage.** `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` unset.
-  History is in memory and dies on restart.
+  History is in memory and dies on restart. *Still true on 2026-09-21, and the
+  reason has changed*: the database is now fully built and waiting on one
+  credential — see 0.2 — rather than a project whose tables live only in a
+  migration file. Same verdict, materially different distance from it.
 - **BLOCKED — Underlying marks for grading.** `TWELVE_DATA_API_KEY` unset, and
   `getSpotPrice` (`connectors/twelveData.ts:102`) reads *only* the Twelve Data
   cache. Every outcome returns `UNGRADED — no usable entry mark`.
@@ -284,11 +288,38 @@ accumulating in wall-clock time while you build everything else.
       repo. Eight archives, five commits, public remote, since 2026-06-12. One
       bills per call. Do this first because it is the only item with money on
       it and the only one no code can do for you.
-- [ ] **0.2 — Supabase.** Create the project, run `supabase/schema.sql`, then
-      **every file in `supabase/migrations/` in filename order** — the four
-      tables the grader writes (`signal_history`, `signal_outcomes`,
-      `signal_write_incidents`, `collection_gaps`) live only in the migration.
-      Set `SUPABASE_URL` / `SUPABASE_SERVICE_KEY`.
+- [ ] **0.2 — Supabase. Three of four parts are done; the last one is the
+      whole blocker. Measured against the live project 2026-09-21.**
+      The project exists and is `ACTIVE_HEALTHY` (`vitnwysywkmpuaoluqom`,
+      PostgreSQL 17.6, us-east-2). Every object `supabase/schema.sql` declares
+      is present, counted rather than sampled: seven application tables, eight
+      indexes, nineteen RLS policies, two functions, three triggers.
+      All six migrations are applied, including
+      `20260917200000_mark_as_of.sql`, so `signal_outcomes` carries
+      `entry_mark_at` / `exit_mark_at` and the defect that would have failed
+      **every** outcome write is closed. The four tables the grader writes all
+      exist and hold, **counted on 2026-09-21**: 0 outcomes, 3,709 signals of
+      which 3,709 are synthetic, 0 incidents, 12 gaps. PR #66 reported 3,244
+      and 9 for the last two; those were true when it measured and are not now,
+      which is the reason a count in a document carries its date.
+      **What is left is one credential**, and it is worth stating precisely
+      because it changes what "BLOCKED — Durable storage" below means: the
+      database is built and waiting, not missing. `SUPABASE_URL` and
+      `SUPABASE_SERVICE_KEY` are unset in `backend/.env`, the management API
+      issues only `anon` and publishable keys, and the service key is the one
+      thing no tool here can produce — it has to be copied from the dashboard
+      by hand and never pasted into a transcript. It also unblocks 1.1c and
+      1.1d, which is three items waiting on one paste.
+      **Two findings from measuring it, both fixed or recorded rather than
+      noted.** The sequence this item describes — `schema.sql`, then every
+      migration in filename order — **aborted**, because both files define the
+      same nineteen RLS policies and the migration created them unguarded;
+      reproduced on PostgreSQL 17 and fixed, see the CLAUDE.md ledger and
+      `backend/test/migrationsRerunnable.test.ts`. And the applied migrations'
+      recorded *versions* do not match these filenames — five of six differ,
+      because they were applied through an interface that stamps its own
+      timestamp — so match them by **name**, not version, and do not read a
+      version mismatch as an unapplied migration.
 - [x] **0.3 — `TWELVE_DATA_API_KEY`** *Done 2026-09-16.* Set, and probed rather
       than assumed: `entitled`, HTTP 200 from `api.twelvedata.com`. Verifying it
       end to end is what found the health-reporting gap and the credit
