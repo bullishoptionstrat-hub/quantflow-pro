@@ -10,7 +10,7 @@ const BACKEND_URL =
 
 // Every router mounted in backend/src/server.ts. Both the bare path and the
 // sub-path form are listed: pages call `/api/macro` as well as `/api/macro/vix`.
-const API_SEGMENTS = ['flow', 'darkpool', 'gex', 'chain', 'macro', 'sentiment', 'health']
+const API_SEGMENTS = ['flow', 'darkpool', 'gex', 'chain', 'macro', 'sentiment', 'track-record', 'backtest', 'health']
 
 const apiRewrites = API_SEGMENTS.flatMap((seg) => [
   { source: `/api/${seg}`, destination: `${BACKEND_URL}/api/${seg}` },
