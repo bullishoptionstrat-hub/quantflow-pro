@@ -263,3 +263,67 @@ test('the grader reads only a source it is allowed to read', () => {
   assert.match(spotPrice.slice(0, 200), /spotCache/, 'the mark comes from Twelve Data alone');
   assert.ok(!/finnhub|yahoo/i.test(spotPrice.slice(0, 200)));
 });
+
+/**
+ * A citation in `basis` must point at something `quotedRestriction` actually
+ * carries.
+ *
+ * The registry's whole value is that a classification can be checked against
+ * the publisher's own words. That breaks in a specific, quiet way: a `basis`
+ * grows a clause reference during an edit, the quote does not, and the entry
+ * now cites a section nobody in this repository has read. It reads exactly
+ * like a checked claim.
+ *
+ * This is the same shape as every other finding here — a rule in prose with
+ * nothing holding it — so it gets a test rather than a convention. Scoped to
+ * entries that quote at all: where `quotedRestriction` is absent the basis is
+ * an absence of terms, and there is nothing for a citation to point at.
+ */
+test('every clause a basis cites is present in the quote beside it', () => {
+  // `16.1`, `2.3`, `2.2(a)` — with or without a leading "Section".
+  const CITATION = /(?:Section\s+)?(\d{1,2}\.\d{1,2})(\([a-z]\))?/g;
+
+  for (const entry of listDatasets()) {
+    if (!entry.quotedRestriction) continue;
+    const cited = new Set<string>();
+    for (const m of entry.basis.matchAll(CITATION)) cited.add(m[1]!);
+    for (const section of cited) {
+      assert.ok(
+        entry.quotedRestriction.includes(section),
+        `${entry.id}: basis cites ${section}, but quotedRestriction never quotes it — `
+        + 'a citation to a clause this repo has not reproduced reads like a checked '
+        + 'claim and is not one',
+      );
+    }
+  }
+});
+
+/**
+ * The date on a reading is part of the claim.
+ *
+ * `termsReadAt`'s own docstring says "stale dates are a finding, not a
+ * detail". "Every dataset states a basis and a terms URL" above already holds
+ * the *shape* — `\d{4}-\d{2}-\d{2}` — and that is deliberately not repeated
+ * here. Two things it cannot catch pass it cleanly: `2026-13-45` matches the
+ * pattern and is not a date, and a future date matches it and describes a
+ * reading that has not happened. Both still render as provenance.
+ *
+ * The staleness threshold is deliberately *not* asserted: how old is too old
+ * depends on the vendor, and a number picked here would be invented — the same
+ * objection this repo raises to every named tolerance.
+ */
+test('every terms reading is a real date that has already happened', () => {
+  for (const entry of listDatasets()) {
+    const [y, m, d] = entry.termsReadAt.split('-').map(Number) as [number, number, number];
+    const read = new Date(Date.UTC(y, m - 1, d));
+    assert.equal(read.getUTCMonth(), m - 1,
+      `${entry.id}: termsReadAt ${entry.termsReadAt} is not a real date — it matches `
+      + 'the ISO pattern and rolled over when parsed');
+    assert.equal(read.getUTCDate(), d,
+      `${entry.id}: termsReadAt ${entry.termsReadAt} is not a real date — it matches `
+      + 'the ISO pattern and rolled over when parsed');
+    assert.ok(read.getTime() <= Date.now(),
+      `${entry.id}: termsReadAt is in the future — a reading that has not happened `
+      + 'yet is not provenance');
+  }
+});

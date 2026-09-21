@@ -12,7 +12,7 @@ it says so — the same rule `CLAUDE.md` applies to the code applies to this fil
 
 | Check | Result |
 |---|---|
-| `backend` — `npm test` | **645 / 645 pass** (~115s) |
+| `backend` — `npm test` | **647 / 647 pass** (~117s) |
 | `frontend` — vitest | **152 / 152 pass** (16 files) |
 | `quantflow-modules/flow-engine` | **30 / 30 pass** |
 | `tsc --noEmit`, both packages | clean |
@@ -347,14 +347,53 @@ accumulating in wall-clock time while you build everything else.
       ample for spot marks on a short watchlist. Unblocks the grader today.~~
       (The last sentence was wrong in a way worth keeping visible: 8 credits/min
       is ample for a *short* watchlist, and this one is ten symbols.)
-- [ ] **0.4 — Decide the retention question** and write the answer into
-      `rights.ts`. Twelve Data §16.1 caps retention at "duration permitted by
-      subscription" and §2.3 bars commercial use of free-tier data. In
-      `PRIVATE_RESEARCH` that is arguably fine — but the registry currently
-      records `UNVERIFIED`, which means *we have not read our own plan*. Either
-      resolve it to `PERMITTED` with the clause quoted, or add the retention
-      policy the doctor notes the code does not have. **Phase 1.3 may delete
-      this item entirely** — read it before buying anything.
+- [x] **0.4 — The retention question, read rather than decided.**
+      *Closed 2026-09-21 — and neither of the two branches below was taken,
+      which is the result rather than a dodge.* The item's real complaint was
+      `UNVERIFIED` "means *we have not read our own plan*". It has now been
+      read, and **the verdict is unchanged while the reason moved from assumed
+      to measured** — the distinction this whole repository runs on.
+      What the terms actually say, quoted into `rights.ts` with the reading
+      dated: **2.2(a) grants storage** — "Access, receive, process, and store
+      Data solely for Internal Use" — so persisting a mark is licensed, not
+      merely untested. What is unestablished is its *duration*: **16.1** caps
+      retention at "duration permitted by subscription" and **2.3** bars
+      storing beyond the timeframes "specified in the Documentation" — and the
+      Documentation is a **defined term**: Section 1 points it at
+      `twelvedata.com/docs`, and that guide **names no retention timeframe at
+      all** (zero occurrences of "retention" on the page as served; its one
+      piece of caching guidance *recommends* caching and attaches no duration).
+      The first pass of this reading cited the pricing page as "the
+      Documentation" and was wrong — recorded rather than quietly fixed,
+      because citing a document by description instead of by its definition is
+      the failure this registry exists to prevent.
+      So the clause that would bound retention points at a document that
+      defines no bound. That is neither a permission nor a prohibition, which
+      is exactly what `UNVERIFIED` is for, and **re-reading will not move it** —
+      only the operator asking the vendor what their plan permits will. That is
+      a legal determination, not something a registry can infer, so the first
+      branch ("resolve it to `PERMITTED`") was not available to take.
+      **The second branch was not taken either, deliberately.** Building the
+      retention policy today would mean inventing a window the terms do not
+      define, in order to expire rows from a table holding **zero** of them, by
+      adding an exception to `enforce_outcome_immutability` — a guarantee that
+      *is* enforced. Machinery for a hypothetical, bought by weakening a live
+      invariant. The design is recorded instead, in `rights.ts` and in
+      `docs/SYSTEM_INVARIANTS.md` under "invariants this system cannot yet
+      state": expire the raw `entry_mark` / `exit_mark` (the vendor's Data) and
+      keep `label` and `excursion` (Derived Data under **2.2(c)**), which is
+      sound only once the raw marks are gone — an excursion beside a retained
+      entry mark recovers the exit exactly.
+      Two things the entry was missing and now carries: **2.2**, whose absence
+      made the registry read more prohibitive than the terms are, and **16.2**,
+      the one retention rule here that *is* defined — all Data deleted within
+      30 days of termination — for which the code has no mechanism.
+      The doctor's fix text was rewritten from "check Section 16.1" (which now
+      sends an operator to a page already established as silent) to the two
+      things that are actionable. The check stays a `warn`: it is still the
+      operator's call. **Phase 1.3 may still delete this item's subject
+      entirely** — if Tradier serves the grader's marks, Twelve Data leaves the
+      persistence path and takes this question with it.
 - [ ] **0.5 — Keep the process awake.** The shortest horizon is M15 and
       Render's free tier sleeps at 15 minutes. Either a paid instance, an
       external ping, or accept that M15 stays `UNGRADED` — but choose, and
