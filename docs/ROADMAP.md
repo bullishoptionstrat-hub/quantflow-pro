@@ -13,10 +13,11 @@ it says so — the same rule `CLAUDE.md` applies to the code applies to this fil
 | Check | Result |
 |---|---|
 | `backend` — `npm test` | **640 / 640 pass** (~129s) |
-| `frontend` — vitest | **132 / 132 pass** (13 files) |
+| `frontend` — vitest | **152 / 152 pass** (16 files) |
 | `quantflow-modules/flow-engine` | **30 / 30 pass** |
 | `tsc --noEmit`, both packages | clean |
-| Working tree | clean, 62 merged PRs |
+| `frontend` — `npm run build` | clean, `/backtest` prerendered |
+| Working tree | clean, 63 merged PRs |
 
 *Re-measured 2026-09-21 by running each suite, not read off the ledger.* The
 two "per ledger" rows above were stale in both directions: the module suite had
