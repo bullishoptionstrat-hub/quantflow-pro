@@ -49,6 +49,20 @@ export interface FlowEvent {
    */
   is_unusual: boolean
   exchange_count: number
+  /**
+   * Every venue the contributing records named, and whether the size at each
+   * was separately observed.
+   *
+   * `exchange_count` counts venues on the engine's own trade events, which is
+   * one per upstream record. When a source declares several venues on ONE
+   * record it is saying the order touched them — not that it saw a fill at
+   * each — so the allocation is `UNKNOWN` and `venue_evidence` is longer than
+   * the observed count. The adapter used to resolve that by splitting the
+   * record into one fabricated execution per venue, which manufactured the
+   * exact venue diversity the SWEEP label is built on.
+   */
+  venue_evidence: string[]
+  venue_allocation: 'OBSERVED' | 'UNKNOWN'
   avg_price: number
   /**
    * Contract greeks and chain figures as the source reported them, or null.

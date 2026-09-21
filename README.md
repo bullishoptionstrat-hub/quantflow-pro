@@ -1,6 +1,15 @@
 # QuantFlow Pro
 
-**Institutional-grade options flow terminal** — replicating FlowAlgo + InsiderFinance + CheddarFlow + OptionStrat in a single self-hosted stack.
+**A self-hosted options-flow terminal and point-in-time research system.**
+
+What it is today, stated against evidence rather than ambition: the terminal,
+the classification engine, the rights registry and the durable signal history
+are real and tested. **No entitled real options-event source is configured on
+this deployment**, so the flow feed carries simulated prints — marked per row —
+and no real graded outcome exists yet. See
+[`docs/CLAIMS_LEDGER.md`](docs/CLAIMS_LEDGER.md) for every capability claim and
+its evidence, and [`docs/FORENSIC_AUDIT.md`](docs/FORENSIC_AUDIT.md) for what is
+known to be broken.
 
 Built by Quantum Edge Capital LLC.
 
@@ -104,7 +113,7 @@ Open http://localhost:3000
 5. Update `frontend/vercel.json` rewrites with your Render backend URL
 6. Deploy
 
-### Backend + ML → Render.com
+### Backend → Render.com
 
 1. Push to GitHub
 2. Create a **Blueprint** deployment from the repository root
@@ -120,13 +129,14 @@ Open http://localhost:3000
 
 | Feature | Status |
 |---------|--------|
-| Live options flow feed (Socket.IO) | ✅ |
+| Live flow feed (Socket.IO) | ⚠️ simulated prints unless an entitled options-event source is configured |
 | Virtual scroll (500 events, 50 DOM rows) | ✅ |
 | Heat score (InsiderFinance-style) | ✅ |
 | Sweep/Block/Split classifier | ✅ |
+| Heuristic heat score with per-component breakdown | ✅ |
 | Power Alerts (voice + push) | ✅ |
 | GEX chart (gamma exposure) | ✅ |
-| Dark pool prints (24hr delay) | ✅ |
+| Dark pool panel | ⚠️ renders the vendor's own delay notice; prints simulated absent a licensed feed |
 | Multi-leg BSM calculator | ✅ |
 | Strategy optimizer (6 strategies) | ✅ |
 | Heat map by symbol | ✅ |
@@ -136,8 +146,9 @@ Open http://localhost:3000
 | TradingView modal | ✅ |
 | Mobile nav (bottom tabs) | ✅ |
 | Supabase auth (login/register) | ✅ |
-| ML unusual score (GradientBoosting) | ✅ |
-| 5 data source connectors | ✅ |
+| Rights-gated ingestion (refuses prohibited sources) | ✅ |
+| Durable signal history + restart-safe grading | ✅ |
+| 17 data source connectors | ⚠️ 2 connected on a keyless boot |
 
 ---
 

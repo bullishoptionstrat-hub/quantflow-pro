@@ -19,6 +19,7 @@
  */
 import { FlowEngine } from '../flow-engine/engine';
 import { sideBucket } from '../flow-engine/nbbo';
+import { daysToExpiry as engineDaysToExpiry } from '../flow-engine/expiry';
 import type {
   ClassifiedSignal,
   ContractStats,
@@ -129,6 +130,20 @@ export interface WireFlowEvent {
   /** `heat_score >= UNUSUAL_SCORE`. The threshold lives here and nowhere else. */
   is_unusual: boolean;
   exchange_count: number;
+  /**
+   * Every venue the contributing records named, and whether the size at each
+   * was separately observed.
+   *
+   * `exchange_count` counts venues on the engine's own trade events, which is
+   * one per upstream record. When a source declares several venues on ONE
+   * record it is saying the order touched them — not that it saw a fill at
+   * each — so the allocation is `UNKNOWN` and `venue_evidence` is longer than
+   * the observed count. The adapter used to resolve that by splitting the
+   * record into one fabricated execution per venue, which manufactured the
+   * exact venue diversity the SWEEP label is built on.
+   */
+  venue_evidence: string[];
+  venue_allocation: VenueAllocation;
   avg_price: number;
   /**
    * Contract greeks and chain figures as the *source* reported them, or null.
@@ -228,7 +243,28 @@ function recordStats(symbol: string, print: RawPrint): void {
 const engine = new FlowEngine({}, (sym) => contractStats.get(sym));
 
 /** Source label per print id, so emitted signals keep their provenance. */
-const printSource = new Map<string, { source: string; synthetic: boolean; iv?: number; delta?: number }>();
+/**
+ * Whether the venues on a signal were each separately observed.
+ *
+ * `OBSERVED` — every venue came from its own upstream record, so the set is a
+ * count of executions. `UNKNOWN` — at least one record declared several venues
+ * at once, so the order touched them but how the size split across them was
+ * never reported. The two must not be read as the same evidence: the second is
+ * what a "sweep across 4 exchanges" claim is usually built from.
+ */
+export type VenueAllocation = 'OBSERVED' | 'UNKNOWN';
+
+interface PrintOrigin {
+  source: string;
+  synthetic: boolean;
+  iv?: number;
+  delta?: number;
+  /** Venues the source named on this one record. */
+  declaredVenues: string[];
+  venueAllocation: VenueAllocation;
+}
+
+const printSource = new Map<string, PrintOrigin>();
 const MAX_TRACKED_PRINTS = 20_000;
 
 let seq = 0;
@@ -372,17 +408,34 @@ export function ingestPrint(print: RawPrint): WireFlowEvent[] {
     engine.onQuote({ ts: print.quoteTs ?? ts, contractSymbol: symbol, bid, ask });
   }
 
-  const venues = print.exchanges?.length
+  // ONE upstream record is ONE observed execution.
+  //
+  // This used to split a record carrying `exchanges: [A, B, C]` and
+  // `size: 60` into three trade events of 20, one per venue, on the reasoning
+  // that "a multi-venue fill is several prints — that is what makes it a
+  // sweep". That reasoning is an assumption written as arithmetic, and it
+  // fabricated five things the source never said: the print count, the size at
+  // each venue, three event identities, their simultaneity, and — because the
+  // engine's sweep test is `new Set(trades.map(t => t.exchange)).size >= 2` —
+  // the venue diversity that produced the SWEEP label itself. Measured: one
+  // record in, `printIds: ["AGG1-0","AGG1-1","AGG1-2"]` out, classified SWEEP.
+  //
+  // A venue list on one record is evidence about *where* the order touched,
+  // not a record of separate fills. It is carried as evidence and the
+  // allocation across those venues is reported UNKNOWN, because it is. A
+  // source that genuinely observes individual executions sends them as
+  // individual prints, and each becomes its own event here — which is what
+  // makes multi-venue clustering meaningful when it does happen.
+  const declaredVenues = print.exchanges?.length
     ? print.exchanges
     : [print.exchange ?? 'UNKNOWN'];
+  const venueAllocation: VenueAllocation =
+    declaredVenues.length > 1 ? 'UNKNOWN' : 'OBSERVED';
 
-  // A multi-venue fill is several prints, one per venue — that is what makes
-  // it a sweep. Split the size across venues rather than double-counting it.
-  const perVenueSize = Math.max(1, Math.floor(print.size / venues.length));
   const out: ClassifiedSignal[] = [];
 
-  venues.forEach((venue, i) => {
-    const id = `${print.id ?? `p${++seq}`}${venues.length > 1 ? `-${i}` : ''}`;
+  {
+    const id = print.id ?? `p${++seq}`;
     // Evict the oldest entries rather than clearing: a wholesale clear would
     // drop the origins of prints in an unfinalized burst, and those origins
     // carry `synthetic` — the one flag that must always reach the UI.
@@ -398,6 +451,8 @@ export function ingestPrint(print: RawPrint): WireFlowEvent[] {
       synthetic: print.synthetic === true,
       iv: print.iv,
       delta: print.delta,
+      declaredVenues,
+      venueAllocation,
     });
 
     const trade: OptionTradeEvent = {
@@ -411,16 +466,18 @@ export function ingestPrint(print: RawPrint): WireFlowEvent[] {
         expiry: print.expiry,
       },
       price: print.price,
-      size: i === venues.length - 1
-        ? print.size - perVenueSize * (venues.length - 1) // remainder on the last
-        : perVenueSize,
-      exchange: venue,
+      size: print.size,
+      // The engine's event carries a single venue. When the source declared
+      // several for one record, the first stands as the event's venue and the
+      // full list travels as evidence — rather than inventing a separate
+      // execution per name so the set looks diverse.
+      exchange: declaredVenues[0] ?? 'UNKNOWN',
       conditions: print.conditions ?? [],
       iso: print.iso,
       receivedAt,
     };
     out.push(...engine.onTrade(trade));
-  });
+  }
 
   notify(out);
   return out.map(toWireEvent);
@@ -479,8 +536,21 @@ function toWireEvent(sig: ClassifiedSignal): WireFlowEvent {
   const iv = origins.find((o) => o?.iv !== undefined)?.iv ?? null;
   const delta = origins.find((o) => o?.delta !== undefined)?.delta ?? null;
 
+  // Venues actually carried by the engine's events — one per upstream record.
   const exchanges = new Set<string>();
   sig.legs.forEach((l) => l.exchanges.forEach((e) => exchanges.add(e)));
+
+  // Venues the sources *named*, which can exceed the above when a record
+  // declared several at once. `venue_allocation` says which of the two this
+  // signal's evidence is: UNKNOWN if any contributing record declared a list.
+  const declared = new Set<string>();
+  let venueAllocation: VenueAllocation = 'OBSERVED';
+  for (const o of origins) {
+    if (!o) continue;
+    o.declaredVenues?.forEach((v) => declared.add(v));
+    if (o.venueAllocation === 'UNKNOWN') venueAllocation = 'UNKNOWN';
+  }
+  exchanges.forEach((e) => declared.add(e));
 
   return {
     id: sig.id,
@@ -495,6 +565,15 @@ function toWireEvent(sig: ClassifiedSignal): WireFlowEvent {
     sentiment: sentimentOf(sig.side, leg.contract.right),
     is_unusual: sig.score >= UNUSUAL_SCORE,
     exchange_count: exchanges.size,
+    /**
+     * Every venue named by the contributing records, and whether the size at
+     * each was separately observed. `exchange_count` counts observed
+     * executions; these two say what is actually known about venue spread, so
+     * a reader can tell "four prints across four exchanges" from "one record
+     * that mentioned four".
+     */
+    venue_evidence: [...declared],
+    venue_allocation: venueAllocation,
     avg_price: parseFloat(leg.vwap.toFixed(4)),
     iv,
     delta,
@@ -539,10 +618,18 @@ export function sentimentOf(
   return bullish ? 'BULLISH' : 'BEARISH';
 }
 
+/**
+ * Whole days to expiry for the wire, from the engine's own instant.
+ *
+ * This had its own `T20:00:00Z` parse — the third copy of one rule, and the
+ * two that computed a number disagreed about rounding as well as being wrong
+ * in winter. The instant now comes from `flow-engine/expiry.ts`; the rounding
+ * stays here, because a whole number of days is a presentation choice for this
+ * wire field and not a property of the contract.
+ */
 function daysToExpiry(tsMs: number, expiry: string): number {
-  const exp = Date.parse(`${expiry}T20:00:00Z`);
-  if (Number.isNaN(exp)) return 0;
-  return Math.max(0, Math.round((exp - tsMs) / 86_400_000));
+  const dte = engineDaysToExpiry(tsMs, expiry);
+  return Number.isNaN(dte) ? 0 : Math.round(dte);
 }
 
 /**

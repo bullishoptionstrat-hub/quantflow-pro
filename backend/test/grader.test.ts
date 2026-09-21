@@ -407,10 +407,20 @@ test('an M15 row can span far longer than fifteen minutes, and the row shows it'
   assert.equal(measured, asOf - (T0 + 600));
 });
 
-test('two marks with the same stamp measure no interval', async () => {
+test('a frozen feed answering both lookups with one stamp is never graded', async () => {
   // `isForwardObservation` applied to the prices rather than to the process
   // clock. A frozen feed answering both lookups with one price would otherwise
   // report a FLAT — a real measurement of nothing — for every signal.
+  //
+  // This asserts the PROPERTY, not which refusal fires. The entry-mark
+  // lookahead guard now catches this fixture first: a feed frozen at
+  // `decisionAt + M15` hands back an entry mark stamped fifteen minutes after
+  // the decision, which is refused before the two stamps are ever compared.
+  // The `exit.asOf <= entry.asOf` check behind it is consequently unreachable
+  // through `grade()` — every way of reaching it requires an entry mark at or
+  // past `dueAt`, which the lookahead guard rejects. It is kept as the last
+  // line rather than deleted: it costs nothing and it is the check that would
+  // still hold if the guards above it were ever reordered.
   const store = new InMemorySignalStore();
   let now = T0 + 600;
   const frozen = T0 + 530 + M15;
@@ -426,5 +436,6 @@ test('two marks with the same stamp measure no interval', async () => {
 
   const [o] = await store.listOutcomes('k1');
   assert.equal(o!.label, 'UNGRADED', 'a FLAT here would be a measurement of nothing');
-  assert.match(o!.ungradedReason!, /no forward interval/);
+  assert.equal(o!.excursion, undefined, 'and no excursion was computed from it');
+  assert.ok(o!.ungradedReason, 'with a stated reason');
 });

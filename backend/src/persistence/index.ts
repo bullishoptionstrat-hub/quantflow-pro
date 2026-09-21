@@ -19,7 +19,8 @@ export * from './identity';
 export { InMemorySignalStore } from './memoryStore';
 export { SupabaseSignalStore } from './supabaseStore';
 export { SignalRecorder, type RecorderStats } from './recorder';
-export { SignalGrader, type GraderStats, type SpotLookup } from './grader';
+export { SignalGrader, recoverEntryMark, type GraderStats, type SpotLookup,
+  type Mark, type MarkLookup, type RecoveryReport, type ResumedState } from './grader';
 export { classifyServiceKey, projectRefFromUrl,
   type ServiceKeyShape, type ServiceKeyVerdict } from './serviceKey';
 

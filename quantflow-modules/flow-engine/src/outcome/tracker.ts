@@ -15,6 +15,7 @@
  *   - Labels measure what happened; they recommend nothing.
  */
 import { ClassifiedSignal } from "../types.js";
+import { expiryInstantMs } from "../expiry.js";
 import {
   CHECKPOINT_OFFSETS_MS,
   CheckpointResult,
@@ -61,7 +62,8 @@ export class OutcomeTracker {
       >
     ).map(([key, off]) => ({ key, dueTs: decision.at + off }));
 
-    const expiryTs = Date.parse(`${dominant.contract.expiry}T20:00:00Z`);
+    // Same instant rule as the score, from the one module that owns it.
+    const expiryTs = expiryInstantMs(dominant.contract.expiry);
     if (
       !Number.isNaN(expiryTs) &&
       expiryTs > decision.at &&

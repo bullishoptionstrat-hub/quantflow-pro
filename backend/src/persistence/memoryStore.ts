@@ -28,6 +28,7 @@ import {
   type BacktestReport, type MatchedSignal, type ScannerFilter,
 } from './backtest';
 import {
+  GRADED_HORIZONS,
   MIN_PUBLISHABLE_SAMPLE,
   type CollectionGap,
   type OutcomeRecord,
@@ -87,13 +88,20 @@ export class InMemorySignalStore implements SignalStore {
     return this.signals.get(signalKey);
   }
 
-  async listUngraded(limit: number): Promise<SignalRecord[]> {
+  async listUngraded(limit: number, sinceMs?: number): Promise<SignalRecord[]> {
     const out: SignalRecord[] = [];
     for (const s of this.signals.values()) {
       if (s.synthetic) continue;
+      // Same window as the Supabase store, for the same reason: the two must
+      // answer the same question or a test against this one proves nothing
+      // about the store that actually holds the history.
+      if (sinceMs !== undefined && s.decisionAt < sinceMs) continue;
       const graded = this.outcomes.get(s.signalKey);
-      // "Ungraded" means no LIVE outcome exists for at least one horizon.
-      if (!graded || graded.size < 4) out.push(s);
+      // "Ungraded" means no LIVE outcome exists for at least one horizon the
+      // grader will actually write. This counted against 4 — the size of the
+      // `OutcomeHorizon` union, which includes the never-graded `EXPIRY` — so
+      // the set never drained and a fully-graded signal stayed "open" forever.
+      if (!graded || graded.size < GRADED_HORIZONS.length) out.push(s);
       if (out.length >= limit) break;
     }
     return out;

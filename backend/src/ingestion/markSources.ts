@@ -215,6 +215,42 @@ export function resolveMark(underlying: string, mode?: BusinessMode): Mark | und
   return undefined;
 }
 
+/**
+ * The PERSIST rights class in force for a registered mark source, or
+ * `undefined` when this registry does not know that source.
+ *
+ * Exists for restart recovery, which rebuilds an entry `Mark` from an outcome
+ * row. The row persists the mark's price, source and stamp but not its rights
+ * class, so the class has to be resolved here — and `undefined` for an
+ * unregistered source is the load-bearing half: the recovery path refuses such
+ * a mark rather than labelling it with a placeholder.
+ *
+ * It is the class in force **now**, not necessarily the one in force when the
+ * mark was taken. A vendor's standing can change between a checkpoint and a
+ * restart; that is why it is resolved rather than assumed, and why the row
+ * records the source in the first place.
+ */
+export function markRightsClass(
+  markSource: string,
+  mode?: BusinessMode,
+): string | undefined {
+  let m: BusinessMode;
+  try {
+    m = mode ?? resolveBusinessMode();
+  } catch {
+    return undefined;
+  }
+  const standing = markSourceStandings(process.env, m)
+    .find((x) => x.source === markSource);
+  if (!standing) return undefined;
+  // An unregistered dataset has no established standing to report, and a mark
+  // priced by a source refused for PERSIST must not be resumed as though it
+  // were permitted.
+  if (standing.rightsClass === 'UNKNOWN_DATASET') return undefined;
+  if (!standing.rightsOk) return undefined;
+  return standing.rightsClass;
+}
+
 /** Source ids in the registry, regardless of standing. For guards. */
 export function registeredMarkSources(): string[] {
   return SOURCES.map((s) => s.source);

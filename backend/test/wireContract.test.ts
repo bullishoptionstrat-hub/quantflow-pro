@@ -142,6 +142,38 @@ test('the dark pool page renders the backend\'s own notice, not an invented badg
 
 // ─── Flow ───────────────────────────────────────────────────────────────────
 
+test('FlowEvent matches what /api/flow returns', () => {
+  // This assertion did not exist. `assertDeclaredFieldsExist` guarded
+  // `GEXLevel`, `GEXResponse` and `DarkPoolPrint` — and not `FlowEvent`, which
+  // CLAUDE.md names as *the* flow wire shape and which the whole suite exists
+  // to protect. The one interface most likely to drift was the one not
+  // checked against a recorded payload, which is the same shape as a guard
+  // scoped to a directory the offender was not in.
+  const row = (load('flow').data as Array<Record<string, unknown>>)[0]!;
+  assertDeclaredFieldsExist('FlowEvent', row);
+});
+
+test('venue evidence is distinguishable from observed executions', () => {
+  // One upstream record declaring several venues must not appear as several
+  // fills. `exchange_count` counts venues on the engine's own events;
+  // `venue_evidence` is what the sources named; `venue_allocation` says which
+  // of the two the reader is looking at.
+  const rows = load('flow').data as Array<Record<string, unknown>>;
+  for (const r of rows) {
+    assert.ok(Array.isArray(r.venue_evidence), 'every row carries venue evidence');
+    assert.ok(['OBSERVED', 'UNKNOWN'].includes(r.venue_allocation as string),
+      'and states whether the split across those venues was observed');
+    assert.ok(
+      (r.venue_evidence as string[]).length >= (r.exchange_count as number),
+      'evidence can exceed observed venues, never the other way round',
+    );
+    if (r.venue_allocation === 'OBSERVED') {
+      assert.equal((r.venue_evidence as string[]).length, r.exchange_count,
+        'OBSERVED means every named venue came from its own execution');
+    }
+  }
+});
+
 test('the synthetic flag the backend sets is surfaced per row', () => {
   const rows = load('flow').data as Array<Record<string, unknown>>;
   // In a keyless run every signal is synthetic; in a credentialed one only the
