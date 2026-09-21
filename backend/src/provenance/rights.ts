@@ -101,7 +101,21 @@ export interface DatasetRights {
   quotedRestriction?: string;
   /** Where the quote or the permission was read from. */
   termsUrl: string;
-  /** When a human last read that page. Stale dates are a finding, not a detail. */
+  /**
+   * When that page was last read. Stale dates are a finding, not a detail.
+   *
+   * This said "when a **human** last read that page" until 2026-09-21, when
+   * the Twelve Data entry was advanced by an agent rather than a person. The
+   * docstring is corrected rather than the date quietly moved, because a field
+   * whose contract says "human" and whose value came from somewhere else is a
+   * false provenance claim in the file whose entire job is provenance.
+   *
+   * What the date now asserts is narrower and checkable: the page at
+   * `termsUrl` was fetched and read on this date, and every fragment in
+   * `quotedRestriction` was confirmed present in it by literal string match —
+   * not summarised, because a summariser's paraphrase in a field documented as
+   * verbatim is a fabricated quote.
+   */
   termsReadAt: string;
   /** Why this classification, in one sentence. Always present. */
   basis: string;
@@ -193,8 +207,22 @@ export const DATASETS: readonly DatasetRights[] = [
     //   after  — we looked. The cap in 16.1 is "duration permitted by
     //             subscription"; 2.3(g) bars storing "beyond permitted
     //             timeframes specified in the Documentation"; and the
-    //             Documentation for this plan — twelvedata.com/pricing,
-    //             Basic — states no retention timeframe at all.
+    //             Documentation — a *defined term*, "the online user guide
+    //             and technical documentation available at
+    //             https://twelvedata.com/docs" — states no retention
+    //             timeframe at all. Measured on the served page: zero
+    //             occurrences of "retention", and the single piece of
+    //             caching guidance is a performance recommendation with no
+    //             duration attached — "Cache responses for frequently
+    //             accessed data to reduce API calls and improve
+    //             performance". The document 2.3(g) defers to for a bound
+    //             recommends the activity and bounds nothing.
+    //
+    // The first version of this entry cited twelvedata.com/pricing as "the
+    // Documentation". That was wrong — Documentation is defined in Section 1
+    // and points at /docs — and it is recorded rather than silently corrected
+    // because the mistake is the one this registry exists to prevent: citing
+    // a document by description instead of by its definition.
     //
     // So the clause that would bound retention points at a document that
     // defines no bound. That is not a permission and it is not a prohibition;
@@ -216,9 +244,14 @@ export const DATASETS: readonly DatasetRights[] = [
     // If a retention policy is ever needed, 2.2(c) is the clause that makes it
     // tractable, and the shape is recorded here rather than built for zero
     // rows: expire the raw `entry_mark` / `exit_mark` — which are the vendor's
-    // Data — and keep `label` and `excursion`, which are Derived Data. The
-    // "cannot be reverse-engineered to recreate the original Data" test in
-    // 2.2(c) is met only once the raw marks are gone: an excursion is a ratio
+    // Data — and keep `label` and `excursion`, which are Derived Data. Note
+    // the two definitions differ in wording and the Section 1 one is the
+    // operative definition: 2.2(c) licenses creating Derived Data "that cannot
+    // be reverse-engineered to recreate the original Data", while Section 1
+    // defines Derived Data as created from the Data "provided such data cannot
+    // be reverse-engineered to arrive at the underlying Data". Both point the
+    // same way here. The test is met only once the raw marks are gone: an
+    // excursion is a ratio
     // and recovers no absolute price on its own, but an excursion beside a
     // retained `entry_mark` recovers the exit exactly. Note also that this
     // collides with `enforce_outcome_immutability`, which refuses every UPDATE
@@ -242,14 +275,18 @@ export const DATASETS: readonly DatasetRights[] = [
     termsUrl: 'https://twelvedata.com/terms',
     termsReadAt: '2026-09-21',
     basis:
-      'Read 2026-09-21; the verdict is unchanged and the reason is now measured ' +
-      'rather than assumed. 2.2(a) affirmatively licenses storing Data for ' +
+      'Read 2026-09-21 — the terms and the Documentation fetched directly and ' +
+      'matched as literal strings, not summarised, so every fragment in ' +
+      'quotedRestriction is the page\'s own bytes; the verdict is unchanged and ' +
+      'the reason is now measured rather than assumed. 2.2(a) affirmatively licenses storing Data for ' +
       'Internal Use, so storage is granted, not merely untested. What is not ' +
       'established is its duration: 16.1 caps retention at the subscription\'s ' +
       'permitted duration and 2.3 bars storing beyond the timeframes "specified ' +
-      'in the Documentation" — and the Documentation for the Basic plan ' +
-      '(twelvedata.com/pricing, read the same day) specifies no retention ' +
-      'timeframe at all. A cap that points at a silent document is neither a ' +
+      'in the Documentation" — and the Documentation, which Section 1 defines as ' +
+      'the guide at https://twelvedata.com/docs, specifies no retention ' +
+      'timeframe at all: zero occurrences of "retention" on the served page, and ' +
+      'its only caching guidance recommends caching without naming a duration. ' +
+      'A cap that points at a silent document is neither a ' +
       'permission nor a prohibition, so PERSIST stays UNVERIFIED; resolving it ' +
       'to PERMITTED would be a legal determination the operator makes with the ' +
       'vendor, not one this registry can infer. 16.2 is the one retention rule ' +

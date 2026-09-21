@@ -359,8 +359,14 @@ accumulating in wall-clock time while you build everything else.
       merely untested. What is unestablished is its *duration*: **16.1** caps
       retention at "duration permitted by subscription" and **2.3** bars
       storing beyond the timeframes "specified in the Documentation" — and the
-      Documentation for this plan (`twelvedata.com/pricing`, Basic, read the
-      same day) **specifies no retention timeframe at all**.
+      Documentation is a **defined term**: Section 1 points it at
+      `twelvedata.com/docs`, and that guide **names no retention timeframe at
+      all** (zero occurrences of "retention" on the page as served; its one
+      piece of caching guidance *recommends* caching and attaches no duration).
+      The first pass of this reading cited the pricing page as "the
+      Documentation" and was wrong — recorded rather than quietly fixed,
+      because citing a document by description instead of by its definition is
+      the failure this registry exists to prevent.
       So the clause that would bound retention points at a document that
       defines no bound. That is neither a permission nor a prohibition, which
       is exactly what `UNVERIFIED` is for, and **re-reading will not move it** —

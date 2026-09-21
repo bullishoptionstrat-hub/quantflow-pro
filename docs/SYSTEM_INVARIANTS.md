@@ -45,7 +45,8 @@ Recorded so they are not mistaken for satisfied:
 - **Vendor-data retention.** "No vendor Data is retained beyond the duration
   its licence permits" is not expressible, and the reason is not neglect.
   Twelve Data's 16.1 defers the duration to the subscription and 2.3 defers it
-  to the Documentation, which states no timeframe for the Basic plan — so the
+  to the Documentation — defined in Section 1 as the guide at
+  `twelvedata.com/docs` — which names no retention timeframe at all, so the
   permitted duration has no value to enforce (read 2026-09-21; see
   `rights.ts`). **And it is in direct tension with an invariant that is
   enforced**: `enforce_outcome_immutability` refuses every `UPDATE` and

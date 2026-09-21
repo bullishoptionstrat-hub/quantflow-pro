@@ -89,9 +89,10 @@ const MARK_SOURCE = 'twelvedata';
  *
  * `TWELVEDATA_QUOTES` is UNVERIFIED for PERSIST. Re-read 2026-09-21: the cap
  * in 16.1 is "duration permitted by subscription", 2.3 bars storing beyond the
- * timeframes "specified in the Documentation", and the Basic plan's
- * documentation names no timeframe — so the clause resolves to nothing and no
- * further reading will move it. Every persisted outcome derives from that
+ * timeframes "specified in the Documentation" — defined in Section 1 as the
+ * guide at twelvedata.com/docs — and that guide names no retention timeframe
+ * at all. So the clause resolves to nothing and no further reading will move
+ * it. Every persisted outcome derives from that
  * source, so the whole track record rests on it.
  *
  * It is reported rather than refused because the connector gate deliberately
@@ -104,8 +105,9 @@ const MARK_SOURCE_RIGHTS_NOTE =
   'is a measured verdict rather than an unread one. Storing is granted — 2.2(a) ' +
   'licenses storing Data for Internal Use. The duration is not: 16.1 caps ' +
   'retention at the subscription\'s permitted duration and 2.3 bars storing ' +
-  'beyond the timeframes "specified in the Documentation", and the Basic plan\'s ' +
-  'documentation specifies no retention timeframe at all. A cap pointing at a ' +
+  'beyond the timeframes "specified in the Documentation" — a term Section 1 ' +
+  'defines as the guide at twelvedata.com/docs, which names no retention ' +
+  'timeframe at all. A cap pointing at a ' +
   'silent document is neither permission nor prohibition. Every graded outcome ' +
   'derives from this source, so the whole track record rests on it.';
 
@@ -300,8 +302,8 @@ export function runChecks(env: NodeJS.ProcessEnv = process.env): Check[] {
     // is narrower and is named here instead.
     fix: 'Two things, and only the first is yours to do. (1) Ask Twelve Data, in ' +
          'writing, what retention duration your plan permits — 16.1 defers to the ' +
-         'subscription and 2.3 defers to the Documentation, which states no ' +
-         'timeframe for Basic, so the vendor is the only source of this answer. ' +
+         'subscription and 2.3 defers to the Documentation at ' +
+         'twelvedata.com/docs, which states no retention timeframe, so the vendor is the only source of this answer. ' +
          'Their reply is what would move this entry to PERMITTED; nothing in the ' +
          'published terms can. (2) If the answer is a finite window, or if you ' +
          'ever terminate the subscription — 16.2 requires all Data deleted within ' +

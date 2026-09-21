@@ -74,7 +74,8 @@ const SOURCES: readonly MarkSource[] = [
       'REST alone, on a rotation the free tier\'s 800 credits/day paces at ' +
       'roughly 19 minutes. That is longer than the M15 horizon. UNVERIFIED ' +
       'for PERSIST — storing is granted by 2.2(a), but its duration defers to ' +
-      'a Documentation that states none for this plan (read 2026-09-21) — so ' +
+      'the Documentation at twelvedata.com/docs, which states none (read ' +
+      '2026-09-21) — so ' +
       'it is used, ranked last, and recorded as UNVERIFIED on every outcome ' +
       'it prices.',
   },
