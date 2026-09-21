@@ -253,6 +253,24 @@ export interface GraderStats {
   positive: number;
   negative: number;
   flat: number;
+  /**
+   * Checkpoints whose write threw, summed over the life of the process.
+   *
+   * Counted because every other number here moves only on a *successful*
+   * write, so a deployment where the store refuses everything reads exactly
+   * like one with nothing to grade: all zeros. That is not hypothetical — the
+   * live database was missing `entry_mark_at`/`exit_mark_at` until
+   * 2026-09-21, so every outcome insert would have failed `42703` and the
+   * health payload would have said the same thing it says on a quiet tape.
+   *
+   * `lastError` carries the message but is scrubbed from the unauthenticated
+   * `/api/health`, and is only ever the *most recent* one; this is the counter
+   * that survives the scrub and distinguishes "nothing came due" from
+   * "nothing could be written".
+   */
+  writeFailures: number;
+  /** Checkpoints currently awaiting a retry after a failed write. */
+  writeRetrying: number;
   lastTickAt?: number;
   lastError?: string;
 }
@@ -262,6 +280,7 @@ export class SignalGrader {
   private readonly cfg: GraderConfig;
   private stats: GraderStats = {
     tracked: 0, graded: 0, ungraded: 0, positive: 0, negative: 0, flat: 0,
+    writeFailures: 0, writeRetrying: 0,
   };
 
   constructor(
@@ -274,7 +293,51 @@ export class SignalGrader {
   }
 
   getStats(): GraderStats {
-    return { ...this.stats, tracked: this.pending.size };
+    return {
+      ...this.stats,
+      tracked: this.pending.size,
+      writeRetrying: this.countRetrying(),
+    };
+  }
+
+  /**
+   * Checkpoints that have fallen due and still have no row.
+   *
+   * Derived rather than tracked as a counter, so it cannot drift from the map
+   * it describes: a horizon leaves this number by being written, which is the
+   * only way it leaves `remaining`. Measured against the last tick's clock
+   * rather than `Date.now()`, because a checkpoint is not overdue until a tick
+   * has actually looked at it.
+   */
+  private countRetrying(): number {
+    const at = this.stats.lastTickAt;
+    if (at === undefined) return 0;
+    let n = 0;
+    for (const p of this.pending.values()) {
+      for (const h of p.remaining) {
+        const off = HORIZON_OFFSETS_MS[h as 'M15' | 'H1' | 'D1'];
+        if (off !== undefined && at >= p.decisionAt + off) n++;
+      }
+    }
+    return n;
+  }
+
+  /**
+   * One line on the first failure, then every hundredth.
+   *
+   * A store that is refusing everything fails once per checkpoint per tick, so
+   * a line each is its own outage — the same reasoning as `noteUnparsedFrame`,
+   * which logs the first and then every five hundredth. The counter on
+   * `/api/health` is the channel meant to be read; this is for the process log.
+   */
+  private logWriteFailure(signalKey: string, horizon: OutcomeHorizon): void {
+    const n = this.stats.writeFailures;
+    if (n === 1 || n % 100 === 0) {
+      console.error(
+        `[grader] outcome write failed (${n} so far) for ${signalKey.slice(0, 12)}…/${horizon}; ` +
+          `the checkpoint stays pending and will be retried: ${this.stats.lastError}`,
+      );
+    }
   }
 
   /**
@@ -459,6 +522,24 @@ export class SignalGrader {
           }
         } catch (err) {
           this.stats.lastError = err instanceof Error ? err.message : String(err);
+          this.stats.writeFailures++;
+          // Keep the horizon pending. It used to be deleted here — the
+          // `delete` sat *outside* this try — so a checkpoint whose write
+          // threw was discarded in the same breath as one that succeeded: no
+          // row, no retry, no incident, and not one counter moved. The
+          // failures this actually catches are transient (a network blip, a
+          // rate limit, a store briefly refusing) or operator-fixable (a
+          // missing column, a revoked key), and both are recoverable on a
+          // later tick. Dropping the checkpoint makes them permanent for the
+          // life of the process, and grading is exactly the thing that cannot
+          // be redone later from a price that has moved on.
+          //
+          // Retrying forever is deliberate over a retry cap: a cap is a second
+          // way to lose a checkpoint silently, and `recover()` already bounds
+          // the set to what the *store* still reports ungraded, so a restart
+          // re-derives this from durable state rather than from this map.
+          this.logWriteFailure(p.signalKey, horizon);
+          continue;
         }
         p.remaining.delete(horizon);
       }

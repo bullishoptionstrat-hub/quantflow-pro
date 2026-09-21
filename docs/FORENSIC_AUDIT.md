@@ -433,6 +433,106 @@ verify (§83).
 
 ---
 
+## F-14 — The live database was missing two columns every outcome write sends ✅ FIXED
+
+**Found in the live Supabase project, not by reading source.** `information_schema`
+reported `public.signal_outcomes` carrying `entry_mark_source` and
+`exit_mark_source` but **no `entry_mark_at` and no `exit_mark_at`**. The
+migration that adds them — `supabase/migrations/20260917200000_mark_as_of.sql`
+— is on disk and was never applied: `supabase_migrations.schema_migrations`
+recorded `20240707000000, 20260916050842, 20260916050854, 20260916052123,
+20260916080607` and nothing for it.
+
+`supabaseStore.writeOutcome` inserts both columns unconditionally, so **every**
+outcome write to the live database would have failed. Reproduced against the
+real project, inside a block that raises at the end so it rolled back:
+
+```
+PROBE_RESULT: column "entry_mark_at" of relation "signal_outcomes"
+              does not exist (SQLSTATE 42703)
+```
+
+It was invisible because nothing has ever been graded there: all 3,244 rows in
+`signal_history` are synthetic and `register()` refuses synthetic signals, so
+`signal_outcomes` sits at 0 rows. It would have become **total** the moment
+F-1's recovery fix made grading actually happen — the first real graded
+deployment would have written nothing, forever.
+
+**Fixed** by applying the migration (additive: two nullable `timestamptz`
+columns and a `not valid` CHECK — §112 data-preserving). Verified afterwards
+against the live project, again inside a rolled-back block, with a real parent
+`signal_key` so the foreign key was not a confound:
+
+```
+write_shape=ACCEPTED; mark_without_stamp=REFUSED(23514);
+reversed_pair=REFUSED(23514); equal_stamps=REFUSED(23514);
+ungraded_nomarks=ACCEPTED;
+```
+
+All four tables were left at their prior counts (`signal_outcomes` 0,
+`signal_history` 3,244, `signal_write_incidents` 0, `collection_gaps` 9).
+
+**What this does not close.** Nothing in the repository can detect this class.
+The migration was present and correct on disk; the drift was between disk and
+deployment, and no test that reads source can see it. `schemaSetup.test.ts`
+holds the code to the *files*, which is a different claim.
+
+---
+
+## F-15 — A failed outcome write discarded the checkpoint, silently ✅ FIXED
+
+`grader.tick()` wrapped `writeOutcome` in a try/catch that set `lastError` —
+and then ran `p.remaining.delete(horizon)` **outside** it. So a checkpoint
+whose write threw was retired in the same breath as one that succeeded: no
+row, no retry, no incident, and not one counter moved.
+
+Reproduced with a store that refuses the first write with F-14's real message:
+
+```
+attempt 1  horizon M15  label FLAT
+tick1 written : 0      tick2 written (retry?) : 0
+M15 rows      : 0      incidents              : 0
+stats         : graded 0, ungraded 0, flat 0, tracked 0
+```
+
+The checkpoint graded **FLAT** — a real, gradable outcome — and was thrown
+away. Every counter reads zero, which is exactly what a deployment with
+nothing to grade reports. `lastError` is the only trace, it holds the most
+recent message only, and `getSignalHistoryStatus()` scrubs it from the
+unauthenticated `/api/health`.
+
+The two findings compound: F-14 makes every write fail, F-15 makes that
+indistinguishable from an idle grader.
+
+**Fixed.** The failure path now `continue`s before the delete, so the horizon
+stays pending and the next tick retries it; `writeFailures` counts refused
+attempts and `writeRetrying` derives how many due checkpoints are still owed a
+row — both survive the health scrub. Retrying is unbounded by choice: a retry
+cap is a second way to lose a checkpoint silently, and `recover()` already
+re-derives the set from durable state after a restart. Logging follows
+`noteUnparsedFrame` — the first failure, then every hundredth.
+
+After the fix, the same reproduction: `tick2 written: 1`, one M15 row, label
+`FLAT`, `writeFailures: 1`.
+
+6 tests, 3 mutations (restoring the delete → 3 fail; dropping the counter → 2;
+neutering `countRetrying` → 1).
+
+---
+
+## Retracted — `signal_write_incidents` has no writer
+
+Recorded mid-pass and **withdrawn before it reached the report.** A grep for
+`recordIncident` callers excluded `*Store.ts`, which is precisely where both
+callers live: `memoryStore.ts:64` and `supabaseStore.ts:77` (plus a second
+site at `:103` for the concurrent-insert race) record a `HISTORY_COLLISION`
+from inside `writeSignal`. CLAUDE.md's claim that a collision "is recorded as
+an incident" is accurate. The filter that was meant to remove noise removed
+the evidence — the same shape as every guard-scope finding in this file, in a
+one-off command rather than in a committed test.
+
+---
+
 ## Status summary
 
 | ID | Finding | Status |
@@ -443,6 +543,8 @@ verify (§83).
 | F-4 | `FlowEvent` uncovered by wire contract | **FIXED**, 2 tests |
 | F-12 | Graded history hid signals recovery must resume | **FIXED**, 7 tests, 4 mutations |
 | F-13 | Gap table under-reported non-collecting time ~97% | **FIXED**, 6 tests, 3 mutations — found in the live database |
+| F-14 | Live DB missing both mark-as-of columns; every outcome write would fail | **FIXED** in the live database — migration applied, verified by rolled-back probe |
+| F-15 | Failed outcome write discarded the checkpoint silently | **FIXED**, 6 tests, 3 mutations |
 | F-5 | README advertises deleted ML service | OPEN |
 | F-6 | Tier-4 controls absent from this tree | OPEN (documented) |
 | F-7 | No entitled options-event source | OPEN, **external blocker** |
