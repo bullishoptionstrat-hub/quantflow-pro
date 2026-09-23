@@ -26,7 +26,7 @@
         "maxMs": 1920000
       },
       "hitRate": 0.7,
-      "medianExcursion": 0.006
+      "medianDirectionalReturn": 0.006
     }
   ],
   "excluded": {

@@ -442,6 +442,20 @@ F correction row: ACCEPTED
 G search_path pinned: true
 ```
 
+### The rename broke a rendered number, and the audit is what found it
+
+The frontend still declared `medianExcursion` and `Backtest.tsx` bound it to a
+table column, so that column would have rendered **`—` forever** — silently, on
+a page merged one PR earlier. Every suite stayed green because
+`backend/test/fixtures/backtest.json` is a payload *captured before the
+rename*: the fixture and the frontend interface drifted from the backend
+together, and a test of one against the other cannot see that.
+
+`backend/test/trackRecordWire.test.ts` closes it by holding three things to the
+publisher rather than to each other — the frontend's declared fields, the
+recorded fixture's keys, and the fields the table actually renders. Three
+mutations bite.
+
 ### The guard
 
 `backend/test/outcomeTriggerColumns.test.ts` parses every `create table`,

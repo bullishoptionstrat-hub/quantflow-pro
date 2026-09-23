@@ -317,8 +317,8 @@ function Results({ result }: { result: BacktestResponse }) {
                     <td style={{ fontFamily: "'JetBrains Mono', monospace", color: r.nUngraded > 0 ? '#fde68a' : 'var(--text-muted)' }}>
                       {r.nUngraded}
                     </td>
-                    <td style={{ color: r.medianExcursion != null ? (r.medianExcursion >= 0 ? '#22c55e' : '#ef4444') : 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
-                      {r.medianExcursion != null ? `${(r.medianExcursion * 100).toFixed(2)}%` : '—'}
+                    <td style={{ color: r.medianDirectionalReturn != null ? (r.medianDirectionalReturn >= 0 ? '#22c55e' : '#ef4444') : 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
+                      {r.medianDirectionalReturn != null ? `${(r.medianDirectionalReturn * 100).toFixed(2)}%` : '—'}
                     </td>
                     <td style={{ fontSize: 11, fontFamily: "'JetBrains Mono', monospace", color: drift ? '#fde68a' : 'var(--text-muted)' }}>
                       {mi?.medianMs != null
