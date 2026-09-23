@@ -79,9 +79,13 @@ export function FlowFeed() {
       `# quantflow flow export — ${sorted.length} of ${flowEvents.length} signals held this session`,
       `# filters: ticker=${filters.ticker || 'any'} premium>=${filters.minPremium} type=${filters.optionType} order=${filters.orderType} sentiment=${filters.sentiment} heat>=${filters.minHeat}${filters.unusualOnly ? ' unusualOnly' : ''}`,
     ].join('\n') + '\n'
-    const header = 'Time,Ticker,Expiry,Strike,Type,Order,Size,Premium,Heat,Sentiment,Synthetic\n'
+    // Provenance travels with the file (F-16). The store has always known each
+    // row's dataset and rights class; the wire did not, so a spreadsheet left
+    // the building knowing less about itself than the row nobody exports.
+    // `datasets` is semicolon-joined because commas are the delimiter.
+    const header = 'Time,Ticker,Expiry,Strike,Type,Order,Size,Premium,Heat,Sentiment,Synthetic,Datasets,RightsDisplay\n'
     const rows = sorted.map(e =>
-      [formatTime(e.created_at),e.underlying,e.expiry,e.strike,e.option_type,e.order_type,e.total_size,e.total_premium,e.heat_score,e.sentiment,e.synthetic ? 'yes' : 'no'].join(',')
+      [formatTime(e.created_at),e.underlying,e.expiry,e.strike,e.option_type,e.order_type,e.total_size,e.total_premium,e.heat_score,e.sentiment,e.synthetic ? 'yes' : 'no',(e.datasets ?? []).join(';') || 'UNKNOWN',e.rights_display ?? 'UNKNOWN_DATASET'].join(',')
     ).join('\n')
     const blob = new Blob([meta + header + rows], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)

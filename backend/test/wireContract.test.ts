@@ -65,9 +65,30 @@ function fieldsOf(iface: string): Set<string> {
 }
 
 /** Every field the page could read must exist on the recorded response. */
-function assertDeclaredFieldsExist(iface: string, sample: Record<string, unknown>) {
+/**
+ * Every field the interface declares must appear on at least one recorded row.
+ *
+ * **Rows, plural, and that is the fix rather than a convenience.** This took a
+ * single `sample` and every caller passed `data[0]`, so for an interface with
+ * *optional* fields the verdict depended on which row the backend happened to
+ * emit first. `FlowEvent.legs` and `spread_guess` are present only on
+ * MULTI_LEG signals, so the guard was passing on the luck of the simulation's
+ * ordering: re-recording the fixture from a boot whose first signal was
+ * single-leg turned it red, with nothing about the wire having changed.
+ *
+ * A guard that answers differently depending on row order is not checking the
+ * contract, it is sampling it — which is the scope defect this repo keeps
+ * finding, arriving as an index instead of as a directory.
+ */
+function assertDeclaredFieldsExist(
+  iface: string,
+  samples: Record<string, unknown> | Array<Record<string, unknown>>,
+) {
+  const rows = Array.isArray(samples) ? samples : [samples];
+  assert.ok(rows.length > 0, `${iface}: no recorded rows to check against`);
   const declared = fieldsOf(iface);
-  const actual = new Set(Object.keys(sample));
+  const actual = new Set<string>();
+  for (const r of rows) for (const k of Object.keys(r)) actual.add(k);
   const phantom = [...declared].filter((f) => !actual.has(f)).sort();
   assert.deepEqual(
     phantom, [],
@@ -149,8 +170,10 @@ test('FlowEvent matches what /api/flow returns', () => {
   // to protect. The one interface most likely to drift was the one not
   // checked against a recorded payload, which is the same shape as a guard
   // scoped to a directory the offender was not in.
-  const row = (load('flow').data as Array<Record<string, unknown>>)[0]!;
-  assertDeclaredFieldsExist('FlowEvent', row);
+  // Every row, not `data[0]`: `legs` and `spread_guess` ride only on
+  // MULTI_LEG signals, so one row cannot witness the whole contract.
+  const rows = load('flow').data as Array<Record<string, unknown>>;
+  assertDeclaredFieldsExist('FlowEvent', rows);
 });
 
 test('venue evidence is distinguishable from observed executions', () => {

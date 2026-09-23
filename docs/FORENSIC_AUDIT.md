@@ -517,7 +517,7 @@ remaining guard does the work.
 
 ---
 
-## F-16 — Rights lineage stops at the API boundary ❌ OPEN
+## F-16 — Rights lineage stopped at the API boundary ✅ FIXED
 
 **Measured 2026-09-23.** `SignalRecord` carries `source`, `datasetId` and
 `rightsClass` on every persisted row. `FlowEvent` — the wire shape behind
@@ -552,11 +552,53 @@ user is not automatically permitted to export licensed raw market data."* That
 is the same shape as F-2: correct-looking code with a live trap waiting for the
 first real OPRA feed.
 
-**Not fixed in this pass, deliberately.** The fix is a wire-shape change on both
-sides of a process boundary plus an export gate, and this repository has just
-finished proving (F-9's audit) that a wire change with no cross-boundary guard
-silently empties what it touches. It is recorded with its measurement so the
-next change to `FlowEvent` carries it rather than a later one rediscovering it.
+### Fixed
+
+`FlowEvent` carries `datasets: string[]` and `rights_display`, populated by
+`displayRightsOf()` from **every** contributing source — plural, because a
+cluster spans sources and the recorder already refuses to ignore that. The CSV
+export gains both columns. Verified on a live boot, not only in tests:
+`datasets: ["SIMULATION"], rights_display: "PERMITTED"`.
+
+**`rights_display`, not `rights_class`.** It is the DISPLAY axis and
+deliberately not the recorder's PERSIST decision, which differs for the same
+dataset — Finnhub is PERMITTED to display and PROHIBITED to persist. One field
+answering two questions is the defect this repo hit with `synthetic`, with
+`connected` and with `excursion`.
+
+The class published is the **weakest** across contributing datasets, the same
+fail-closed rule the recorder applies when it refuses on any refused source: a
+cluster mixing a PERMITTED print with an UNVERIFIED one is not permitted, and
+publishing the strongest class would let one clean print launder the rest.
+
+### Four things the mutation pass found that the fixture could not
+
+1. **`DISPLAY_RANK` as `Record<string, number>` needed a `?? 0`,** which
+   `defaultedReadings.test.ts` refused by name. Keyed by the union instead, the
+   lookup is total and no default is needed — `nominalHorizonMs`'s lesson.
+2. **Weakest-vs-strongest and empty-cluster-defaults-to-PERMITTED both passed
+   every fixture-driven test**, because every row in `flow.json` came from
+   `simulation` alone and no recorded signal mixes datasets or lacks one. The
+   recovery-mutation lesson again: an assertion about a sample that never
+   reaches the branch passes vacuously. `displayRightsOf` is exported and
+   driven directly.
+3. **An unregistered source published `datasets: ["source:unknown"]`** — a
+   placeholder `classifySource` mints, sitting in the CSV's Datasets column
+   beside real registry ids where a reader sorting the column could not tell
+   them apart. Only registered datasets are named now; the class already says
+   the row could not be attributed. **This was in the first draft of the fix**
+   and was exposed by a mutation that turned out to be *equivalent*, which is
+   how the dead branch hiding it came to light.
+4. **The adapter emitting `datasets: []` passed all 75 tests**, because the
+   fixture holds what a past boot produced and cannot witness the adapter
+   ceasing to populate it. Guarded positionally, like the grader's `continue`.
+
+### What this does not close
+
+`/api/flow` and the socket now *carry* the lineage; nothing yet *gates* on it.
+§23's FETCH / PERSIST / API-SERVE / WEBSOCKET / EXPORT / MODEL-TRAINING gates
+are still two of six. Carrying provenance is the precondition for gating on it,
+not the gate.
 
 ---
 
@@ -710,4 +752,4 @@ one-off command rather than in a committed test.
 | F-9 | `excursion` misnamed | **FIXED**, 3 tests, 3 mutations — renamed in TS and SQL, migration applied to the live database |
 | F-10 | Universal 20:00Z expiry | **PARTLY FIXED**, 6 tests, 3 mutations; AM-settlement and holidays open |
 | F-11 | Plaintext `api_keys.key_value`; disclosed credentials | OPEN, **external** |
-| F-16 | Rights lineage stops at the API boundary — wire carries no `dataset_id`/`rights_class` | OPEN, measured 2026-09-23 |
+| F-16 | Rights lineage stopped at the API boundary | **FIXED**, 10 tests, 6 mutations — wire and CSV carry `datasets` + `rights_display` |
