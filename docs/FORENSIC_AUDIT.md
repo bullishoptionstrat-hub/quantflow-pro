@@ -504,9 +504,18 @@ rather than encoding this year's DST rule as arithmetic.
   about a day earlier than this returns. SPXW weeklys are PM-settled and are
   correct. Separating them needs per-product settlement data this tree does
   not carry.
-- **Half-days and holidays.** An early close is 13:00 ET. A holiday calendar
-  is a thing to maintain, and CLAUDE.md records what happened the last time one
-  was assumed instead: a `MARKET OPEN` indicator green on Thanksgiving.
+- **Half-days and holidays.** ~~A holiday calendar is a thing to maintain.~~
+  **Partly closed 2026-09-23:** `backend/src/market/calendar.ts` is an
+  effective-dated table with a hard `COVERAGE` bound — a date outside it
+  returns `UNKNOWN`, never an extrapolated verdict. The objection recorded here
+  was never to a calendar but to an *assumed* one that keeps answering
+  confidently after its year has passed; a bound that expires loudly does not
+  have that failure mode, and §15/§73 require exactly this. 8 tests, 5
+  mutations, and the load-bearing assertion is `2027-11-25 → UNKNOWN` rather
+  than `Thanksgiving → HOLIDAY`. **Not yet wired into `expiryInstant`**, which
+  still returns 16:00 ET on a 13:00 half-day, nor into `coverage.ts`, which
+  still declines to emit `MARKET_CLOSED` — both are behaviour changes and get
+  their own reviewed step.
 
 **A note on the guard, since it is the interesting part.** The first version
 carried a date-shape regex in front of the lookup. The mutation that deleted it
