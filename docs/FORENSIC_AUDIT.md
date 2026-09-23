@@ -517,6 +517,49 @@ remaining guard does the work.
 
 ---
 
+## F-16 — Rights lineage stops at the API boundary ❌ OPEN
+
+**Measured 2026-09-23.** `SignalRecord` carries `source`, `datasetId` and
+`rightsClass` on every persisted row. `FlowEvent` — the wire shape behind
+`/api/flow`, the `flow_batch` socket event, and the CSV export in
+`FlowFeed.tsx` — carries **none of the three**. `grep -c` for
+`rights_class|dataset_id|datasetId` returns **0** in both `frontend/lib/types.ts`
+and `flowEngineAdapter.ts`.
+
+So §22's taint propagation holds inside the database and stops at the door.
+The store, which nothing exports from, knows each row's provenance; the CSV a
+reader actually downloads does not.
+
+**Why the gate that exists does not cover this.** Rights are enforced at
+exactly two points: `mayOperateConnector` before a connector starts (DISPLAY)
+and `classifySource(…, 'PERSIST')` in the recorder and the mark registry. §23
+names that pattern specifically — *"Do not place one rights check only at
+connector startup and assume the problem is solved"* — and lists API SERVE,
+WEBSOCKET and CSV EXPORT as separate gates. None exists.
+
+**Scope, stated precisely, because overclaiming here would be the same defect.**
+This is **not** currently leaking prohibited data. The connector gate refuses
+`PROHIBITED` for DISPLAY *before* `start()`, so a prohibited dataset never
+produces a print at all — Yahoo is refused and emits nothing. And today every
+row on the wire is simulation or chain-derived, both of which the wire *does*
+mark, via `synthetic`.
+
+**It is a trap on the path the operator is being asked to fund.** The moment a
+licensed feed is connected — which is exactly what `PROVIDER_DECISION_RECORD.md`
+asks for — a CSV of real vendor prints leaves the building with no dataset
+attribution and no rights class, and §152 is explicit that *"an authenticated
+user is not automatically permitted to export licensed raw market data."* That
+is the same shape as F-2: correct-looking code with a live trap waiting for the
+first real OPRA feed.
+
+**Not fixed in this pass, deliberately.** The fix is a wire-shape change on both
+sides of a process boundary plus an export gate, and this repository has just
+finished proving (F-9's audit) that a wire change with no cross-boundary guard
+silently empties what it touches. It is recorded with its measurement so the
+next change to `FlowEvent` carries it rather than a later one rediscovering it.
+
+---
+
 ## F-11 — `api_keys.key_value` is plaintext, and the table is unused ❌ OPEN
 
 `supabase/schema.sql:44` and `schema.sql:26` both declare `key_value text not
@@ -667,3 +710,4 @@ one-off command rather than in a committed test.
 | F-9 | `excursion` misnamed | **FIXED**, 3 tests, 3 mutations — renamed in TS and SQL, migration applied to the live database |
 | F-10 | Universal 20:00Z expiry | **PARTLY FIXED**, 6 tests, 3 mutations; AM-settlement and holidays open |
 | F-11 | Plaintext `api_keys.key_value`; disclosed credentials | OPEN, **external** |
+| F-16 | Rights lineage stops at the API boundary — wire carries no `dataset_id`/`rights_class` | OPEN, measured 2026-09-23 |
