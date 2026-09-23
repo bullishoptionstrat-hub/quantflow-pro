@@ -59,7 +59,7 @@ export interface DecisionTime {
  * — the first print's timestamp — is wrong for a specific and expensive
  * reason: a signal assembled from a 500 ms burst of prints did not exist at
  * that burst's first tick. Measuring an outcome from there hands the backtest
- * 500 ms of information it did not have, and every excursion comes out
+ * 500 ms of information it did not have, and every return comes out
  * flattering.
  *
  * Invariant: decisionAt >= lastEventAt >= firstEventAt. An inverted timeline

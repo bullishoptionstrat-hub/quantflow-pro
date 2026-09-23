@@ -51,7 +51,7 @@ function stubDb(rows: { signals: unknown[]; outcomes: unknown[] }): SupabaseClie
 }
 
 /** A publishable, permitted, observed sample in the shapes PostgREST returns. */
-function wireRows(n: number, kind: string, excursion: string) {
+function wireRows(n: number, kind: string, directionalReturn: string) {
   const signals = [];
   const outcomes = [];
   for (let i = 0; i < n; i++) {
@@ -74,7 +74,7 @@ function wireRows(n: number, kind: string, excursion: string) {
       signal_key: key,
       horizon: 'M15',
       label: 'POSITIVE',
-      excursion,                 // numeric → string
+      directional_return_at_horizon: directionalReturn,  // numeric → string
       entry_mark_at: ENTRY,
       exit_mark_at: EXIT,
     });
@@ -82,13 +82,13 @@ function wireRows(n: number, kind: string, excursion: string) {
   return { signals, outcomes };
 }
 
-test('a numeric excursion arriving as a string still reaches the published median', async () => {
+test('a numeric return arriving as a string still reaches the published median', async () => {
   const store = new SupabaseSignalStore(stubDb(wireRows(MIN_PUBLISHABLE_SAMPLE, 'SWEEP', '0.023')));
   const r = await store.backtest({});
   assert.equal(r.rows.length, 1);
   assert.equal(r.rows[0]!.hitRate, 1);
-  assert.equal(r.rows[0]!.medianExcursion, 0.023,
-    'PostgREST sends numeric as a string; without coercion the excursion vanishes');
+  assert.equal(r.rows[0]!.medianDirectionalReturn, 0.023,
+    'PostgREST sends numeric as a string; without coercion the return vanishes');
 });
 
 test('timestamptz stamps arriving as strings still produce a measured interval', async () => {

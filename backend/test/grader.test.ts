@@ -80,13 +80,13 @@ test('a move in the implied direction beyond the dead band is POSITIVE', async (
   assert.equal(await h.grader.tick(), 1);
   const [o] = await h.store.listOutcomes('k1');
   assert.equal(o!.label, 'POSITIVE');
-  assert.ok(Math.abs(o!.excursion! - 0.01) < 1e-9);
+  assert.ok(Math.abs(o!.directionalReturnAtHorizon! - 0.01) < 1e-9);
   assert.equal(o!.entryMark, 500);
   assert.equal(o!.exitMark, 505);
 });
 
 test('direction is applied with the right sign: a bearish signal scores on a fall', async () => {
-  // Buying puts is bearish, so a falling underlying is a positive excursion.
+  // Buying puts is bearish, so a falling underlying is a positive return.
   const h = harness([500, 495]);
   h.grader.register(rec({
     legs: [{ ...rec().legs[0]!, right: 'P', side: 'BUY' }],
@@ -97,7 +97,7 @@ test('direction is applied with the right sign: a bearish signal scores on a fal
   await h.grader.tick();
   const [o] = await h.store.listOutcomes('k1');
   assert.equal(o!.label, 'POSITIVE');
-  assert.ok(o!.excursion! > 0, 'a fall is a win for a bearish signal');
+  assert.ok(o!.directionalReturnAtHorizon! > 0, 'a fall is a win for a bearish signal');
 });
 
 test('a move against the signal is NEGATIVE', async () => {
@@ -132,7 +132,7 @@ test('an AMBIGUOUS side is UNGRADED with a reason, never assigned a direction', 
   const [o] = await h.store.listOutcomes('k1');
   assert.equal(o!.label, 'UNGRADED');
   assert.match(o!.ungradedReason!, /implies no direction/);
-  assert.equal(o!.excursion, undefined);
+  assert.equal(o!.directionalReturnAtHorizon, undefined);
 });
 
 test('a missing entry mark is UNGRADED rather than interpolated', async () => {
@@ -253,7 +253,7 @@ test('an outcome with no mark carries no source either', async () => {
 
 test('entry and exit marks are attributed independently', async () => {
   // They can differ: a vendor can drop out between registration and a
-  // checkpoint, and an excursion measured across two price sources is worth
+  // checkpoint, and a return measured across two price sources is worth
   // being able to spot after the fact rather than never.
   const store = new InMemorySignalStore();
   let now = T0 + 600;
@@ -310,7 +310,7 @@ test('an exit mark stamped before the checkpoint never observed it', async () =>
 
 test('an entry mark older than the shortest horizon grades nothing', async () => {
   // An entry mark may precede the decision — it is the last price before that
-  // instant — but past the shortest horizon the excursion's denominator is a
+  // instant — but past the shortest horizon the return's denominator is a
   // price from before the signal existed, which is wrong rather than imprecise.
   // The bound is HORIZON_OFFSETS_MS.M15 rather than a constant picked here.
   const store = new InMemorySignalStore();
@@ -436,6 +436,6 @@ test('a frozen feed answering both lookups with one stamp is never graded', asyn
 
   const [o] = await store.listOutcomes('k1');
   assert.equal(o!.label, 'UNGRADED', 'a FLAT here would be a measurement of nothing');
-  assert.equal(o!.excursion, undefined, 'and no excursion was computed from it');
+  assert.equal(o!.directionalReturnAtHorizon, undefined, 'and no return was computed from it');
   assert.ok(o!.ungradedReason, 'with a stated reason');
 });

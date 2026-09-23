@@ -465,7 +465,10 @@ export interface BacktestRow {
   nUngraded: number
   /** Absent — never rendered as 0 — when the sample is below minSample. */
   hitRate?: number
-  medianExcursion?: number
+  /** Median of the bucket's directional return AT THE HORIZON ENDPOINT.
+   * Renamed from `medianExcursion` on 2026-09-23: nothing here observes a
+   * path, so no field may be called an excursion. See F-9. */
+  medianDirectionalReturn?: number
   suppressionReason?: 'INSUFFICIENT_SAMPLE'
   measuredInterval?: MeasuredInterval
 }

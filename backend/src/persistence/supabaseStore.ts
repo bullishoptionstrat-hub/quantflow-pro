@@ -43,13 +43,14 @@ const ms = (s: string) => Date.parse(s);
  * PostgREST sends `"0.023"` rather than `0.023` to avoid deciding for you what
  * to round. `toRecord` has always known this — `Number(d.total_premium)`,
  * `Number(d.total_size)`, `Number(d.score)` — and the outcome read path did
- * not: `excursion`, `entry_mark` and `exit_mark` came back as strings through
+ * not: `directional_return_at_horizon` (then `excursion`), `entry_mark` and
+ * `exit_mark` came back as strings through
  * a type declaring `number`.
  *
- * It surfaced when `trackRecord`'s excursion handling moved into the shared
+ * It surfaced when `trackRecord`'s return handling moved into the shared
  * tally, which gates on `typeof === 'number'`. The old inline copy coerced with
  * `Number(o.excursion)`; the refactor dropped the coercion, so every
- * Supabase-backed row would have published a `hitRate` with `medianExcursion`
+ * Supabase-backed row would have published a `hitRate` with its median return
  * silently missing. The gate did not create the defect, it *revealed* it —
  * three sibling fields had been strings-as-numbers all along, and nothing had
  * ever compared one against a number.
@@ -185,7 +186,7 @@ export class SupabaseSignalStore implements SignalStore {
       signal_key: rec.signalKey,
       horizon: rec.horizon,
       label: rec.label,
-      excursion: rec.excursion ?? null,
+      directional_return_at_horizon: rec.directionalReturnAtHorizon ?? null,
       entry_mark: rec.entryMark ?? null,
       exit_mark: rec.exitMark ?? null,
       // Null, not a sentinel string, when the mark is absent. The table's
@@ -216,7 +217,7 @@ export class SupabaseSignalStore implements SignalStore {
       signalKey: r.signal_key,
       horizon: r.horizon,
       label: r.label,
-      excursion: num(r.excursion),
+      directionalReturnAtHorizon: num(r.directional_return_at_horizon),
       entryMark: num(r.entry_mark),
       exitMark: num(r.exit_mark),
       entryMarkSource: r.entry_mark_source ?? undefined,
@@ -316,7 +317,7 @@ export class SupabaseSignalStore implements SignalStore {
         const chunk = keys.slice(i, i + 500);
         const { data: outs, error: oErr } = await this.db
           .from(T_OUTCOMES)
-          .select('signal_key, horizon, label, excursion, entry_mark_at, exit_mark_at')
+          .select('signal_key, horizon, label, directional_return_at_horizon, entry_mark_at, exit_mark_at')
           .is('superseded_at', null).in('signal_key', chunk);
         if (oErr) throw new Error(`track record outcomes failed: ${oErr.message}`);
         for (const o of outs ?? []) {
@@ -329,7 +330,7 @@ export class SupabaseSignalStore implements SignalStore {
           // undefined rather than becoming a zero the tally would believe.
           tallyOutcome(t, {
             label: o.label,
-            excursion: num(o.excursion),
+            directionalReturnAtHorizon: num(o.directional_return_at_horizon),
             entryMarkAt: o.entry_mark_at ? ms(o.entry_mark_at) : undefined,
             exitMarkAt: o.exit_mark_at ? ms(o.exit_mark_at) : undefined,
           });
@@ -422,7 +423,7 @@ export class SupabaseSignalStore implements SignalStore {
         const chunk = keys.slice(i, i + 500);
         const { data: outs, error: oErr } = await this.db
           .from(T_OUTCOMES)
-          .select('signal_key, horizon, label, excursion, entry_mark_at, exit_mark_at')
+          .select('signal_key, horizon, label, directional_return_at_horizon, entry_mark_at, exit_mark_at')
           .is('superseded_at', null).in('signal_key', chunk);
         if (oErr) throw new Error(`backtest outcomes failed: ${oErr.message}`);
         for (const o of outs ?? []) {
@@ -431,7 +432,7 @@ export class SupabaseSignalStore implements SignalStore {
           m.outcomes.push({
             horizon: o.horizon,
             label: o.label,
-            excursion: num(o.excursion),
+            directionalReturnAtHorizon: num(o.directional_return_at_horizon),
             entryMarkAt: o.entry_mark_at ? ms(o.entry_mark_at) : undefined,
             exitMarkAt: o.exit_mark_at ? ms(o.exit_mark_at) : undefined,
           });

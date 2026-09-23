@@ -278,17 +278,27 @@ real current path at `index.ts:1800`, not a stale artifact.
 
 ---
 
-## F-5 — README advertises a deleted service and unqualified capabilities ❌ OPEN
+## F-5 — README advertised a deleted service and unqualified capabilities ✅ FIXED
 
-`README.md:139` lists **"ML unusual score (GradientBoosting) ✅"**. There is no
-ML service in this tree; `ml-service/` was deleted, and CLAUDE.md documents why
-at length — it trained on `np.random` with the label drawn before the features.
-`README.md:107` still heads a deployment section **"Backend + ML → Render.com"**.
+`README.md` listed **"ML unusual score (GradientBoosting) ✅"** and headed a
+deployment section **"Backend + ML → Render.com"**. There is no ML service in
+this tree; `ml-service/` was deleted three audits earlier, and CLAUDE.md
+records why at length — it trained on `np.random` with the label drawn before
+the features. Other ✅ rows outran their evidence in the same way: "Live
+options flow feed", "Dark pool prints (24hr delay)", "Sweep/Block/Split
+classifier".
 
-Other ✅ rows that outrun the evidence: "Live options flow feed", "Dark pool
-prints (24hr delay)", "Sweep/Block/Split classifier". See
-[CLAIMS_LEDGER.md](./CLAIMS_LEDGER.md) for each claim with its evidence and the
-wording the code can support.
+Closed by `backend/test/readmeClaims.test.ts`, which fails when documentation
+claims code that is not on disk, requires the flow-feed row to say it carries
+simulated prints rather than showing a bare tick, and is exercised against the
+exact row that shipped — a detector with nothing left to catch stops working
+quietly. [CLAIMS_LEDGER.md](./CLAIMS_LEDGER.md) carries each claim with its
+evidence and the wording the code can support.
+
+**The status table above said OPEN until 2026-09-23**, after the fix had
+landed. A stale row in a status table is the same defect this document is
+about, one level up: it is a claim about the code that the code no longer
+supports, and nothing was checking it.
 
 ---
 
@@ -355,20 +365,110 @@ enforcing.
 
 ---
 
-## F-9 — `excursion` is an endpoint return, not a path excursion ❌ OPEN
+## F-9 — `excursion` was an endpoint return, not a path excursion ✅ FIXED
 
 `grader.grade()` computes `(exitMark - entryMark) / entryMark` — the return at
-the horizon endpoint. No path, no high/low, is observed. §41 is explicit that
-this must not be called excursion; `directionalReturnAtHorizon` is the accurate
-name.
+the horizon **endpoint**. No path, no high, no low is observed: two marks are
+taken, one at each end, and everything between them is unseen. §41 is explicit
+that this must not be called an excursion.
 
-**One over-claim corrected during this audit.** I initially recorded that the
-payload carries `labelRule: 'MAX_EXCURSION'` while computing an endpoint
-return. It does not: `labelRule` is set only in
-`flow-engine/outcome/tracker.ts`, the deprecated standalone tracker. What is
-true is narrower — two production comments (`persistence/types.ts:116`,
-`persistence/backtest.ts:25`) refer to `MAX_EXCURSION` as though it travels on
-the row, and it does not. A naming and comment defect, not a live mislabel.
+The two quantities coincide only when the move is monotone, and where they
+differ the difference is always in the flattering direction — a maximum
+favourable excursion is by construction at least as large as the endpoint
+return. Quoting a best-moment measure as though a position had been held is
+the category's characteristic lie, so the old name asserted about this
+arithmetic precisely the thing the arithmetic does not do.
+
+**Renamed end to end**, TypeScript and SQL, on 2026-09-23:
+
+| | was | is |
+|---|---|---|
+| `OutcomeRecord` | `excursion` | `directionalReturnAtHorizon` |
+| `TrackRecordRow` | `medianExcursion` | `medianDirectionalReturn` |
+| `signal_outcomes` | `excursion numeric` | `directional_return_at_horizon numeric` |
+
+`supabase/migrations/20260923040000_directional_return_at_horizon.sql` applies
+the column rename and is **applied to the live database** — F-14's lesson is
+that a migration correct on disk and never applied makes every write fail, so
+disk and deployment were closed together rather than one and then the other.
+`signal_outcomes` was at 0 rows, so no data moved; `signal_history` 4,559,
+`collection_gaps` 16 and `signal_write_incidents` 0 are unchanged.
+
+**One over-claim corrected during this audit, and kept here.** It was initially
+recorded that the payload carries `labelRule: 'MAX_EXCURSION'` while computing
+an endpoint return. It does not: `labelRule` is set only in
+`flow-engine/outcome/tracker.ts`, the deprecated standalone tracker that
+nothing in `src/` imports — and *that* tracker really does implement a
+max-excursion rule, which is why the vendored comments naming it are left
+alone. What was true is narrower: two production comments referred to
+`MAX_EXCURSION` as though it travelled on the row. Both are corrected.
+
+### The part that was not a rename
+
+The append-only trigger `enforce_outcome_immutability` compares
+`old.excursion` against `new.excursion` to decide whether an update is the one
+permitted kind — retiring a row so a correction can supersede it. **plpgsql
+resolves `old.x` at fire time, not at definition time**, so renaming the column
+alone fails nothing at migration time and nothing on the next insert. It fails
+on the first *correction*.
+
+Demonstrated rather than reasoned about, by restoring the pre-rename function
+body inside a transaction that rolls back:
+
+```
+insert with renamed column, OLD function: ACCEPTED
+retire with OLD function: 42703 -> record "old" has no field "excursion"
+```
+
+The function is redefined in the same migration. `set search_path = ''` is
+restated on that definition rather than left to
+`20260916060000_function_search_path.sql`: `create or replace function`
+replaces a function's *configuration* along with its body, so omitting it
+would have silently unpinned what that migration pinned. Verified on the live
+project — `proconfig` is still `{"search_path=\"\""}`.
+
+### Verified against the live database, rolled back
+
+Every probe ran inside a block that raises at the end, so all seven inserts
+reverted and the four tables are at their prior counts.
+
+```
+A insert with new column name: ACCEPTED
+B old column "excursion": GONE (42703)
+C edit in place: REFUSED
+D delete: REFUSED
+E supersession (retire): ACCEPTED      <- the path that would have broken
+F correction row: ACCEPTED
+G search_path pinned: true
+```
+
+### The rename broke a rendered number, and the audit is what found it
+
+The frontend still declared `medianExcursion` and `Backtest.tsx` bound it to a
+table column, so that column would have rendered **`—` forever** — silently, on
+a page merged one PR earlier. Every suite stayed green because
+`backend/test/fixtures/backtest.json` is a payload *captured before the
+rename*: the fixture and the frontend interface drifted from the backend
+together, and a test of one against the other cannot see that.
+
+`backend/test/trackRecordWire.test.ts` closes it by holding three things to the
+publisher rather than to each other — the frontend's declared fields, the
+recorded fixture's keys, and the fields the table actually renders. Three
+mutations bite.
+
+### The guard
+
+`backend/test/outcomeTriggerColumns.test.ts` parses every `create table`,
+`add column` and `rename column` across `supabase/` in the order a setup run
+applies them, then requires every `old.x` / `new.x` the **last** definition of
+the trigger names to be a column that still exists. Three mutations bite: the
+trigger left naming `old.excursion`, the rename statement removed, and the
+`search_path` pin dropped from the new definition.
+
+It is deliberately a column-level check on *one function*, not a general
+schema-versus-code column guard. The F-14 class — a migration correct on disk
+and never applied — is not reachable from a test that reads source, and a guard
+shaped to look like it closed that class would be worse than none.
 
 ---
 
@@ -472,6 +572,21 @@ ungraded_nomarks=ACCEPTED;
 All four tables were left at their prior counts (`signal_outcomes` 0,
 `signal_history` 3,244, `signal_write_incidents` 0, `collection_gaps` 9).
 
+**Bounded afterwards, so F-14 is not read as the first of several.** Every
+column `supabaseStore.ts` names was extracted from source (object-literal keys,
+PostgREST filter/order/select arguments, and row-property reads, with comments
+stripped so prose cannot contribute identifiers) and checked in **both**
+directions on 2026-09-21: 46 column names, all present in the live database,
+and all created by some migration on disk. No snake_case identifier in the file
+fails to be a column. So the two `*_at` columns were the only drift, in either
+direction.
+
+One assumption in that pass was wrong and was caught by running it:
+`signal_history.iso` looked like a false positive from the `iso()` helper in the
+same file, and it is a real `boolean` column. Filtering it out by eye would have
+shrunk the audit by one column silently — the same shape as the `grep -v
+"Store.ts"` retraction below.
+
 **What this does not close.** Nothing in the repository can detect this class.
 The migration was present and correct on disk; the drift was between disk and
 deployment, and no test that reads source can see it. `schemaSetup.test.ts`
@@ -545,10 +660,10 @@ one-off command rather than in a committed test.
 | F-13 | Gap table under-reported non-collecting time ~97% | **FIXED**, 6 tests, 3 mutations — found in the live database |
 | F-14 | Live DB missing both mark-as-of columns; every outcome write would fail | **FIXED** in the live database — migration applied, verified by rolled-back probe |
 | F-15 | Failed outcome write discarded the checkpoint silently | **FIXED**, 6 tests, 3 mutations |
-| F-5 | README advertises deleted ML service | OPEN |
+| F-5 | README advertises deleted ML service | **FIXED** — `readmeClaims.test.ts`, 3 tests (status row was stale) |
 | F-6 | Tier-4 controls absent from this tree | OPEN (documented) |
 | F-7 | No entitled options-event source | OPEN, **external blocker** |
 | F-8 | No corrections / cancels / ordering | OPEN |
-| F-9 | `excursion` misnamed | OPEN |
+| F-9 | `excursion` misnamed | **FIXED**, 3 tests, 3 mutations — renamed in TS and SQL, migration applied to the live database |
 | F-10 | Universal 20:00Z expiry | **PARTLY FIXED**, 6 tests, 3 mutations; AM-settlement and holidays open |
 | F-11 | Plaintext `api_keys.key_value`; disclosed credentials | OPEN, **external** |

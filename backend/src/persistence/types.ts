@@ -91,8 +91,25 @@ export interface OutcomeRecord {
   signalKey: string;
   horizon: OutcomeHorizon;
   label: OutcomeLabelValue;
-  /** Return of the underlying in the signal's implied direction, or undefined. */
-  excursion?: number;
+  /**
+   * Return of the underlying in the signal's implied direction, at the
+   * horizon's endpoint, or undefined.
+   *
+   * Named for what `grade()` computes: `(exitMark - entryMark) / entryMark`,
+   * signed by direction. It was called `excursion` until 2026-09-23, and an
+   * excursion is a property of the *path* — the furthest the underlying
+   * travelled between the two marks. Nothing here observes a path: two marks
+   * are taken, one at each end, and everything between them is unseen. The two
+   * quantities coincide only when the move is monotone, and the difference is
+   * always in the flattering direction, because a maximum favourable excursion
+   * is by construction at least as large as the endpoint return.
+   *
+   * So the name mattered more than a name usually does: the category's
+   * characteristic lie is quoting a best-moment measure as though a position
+   * had been held, and this field's old name asserted exactly that about
+   * arithmetic that never did it.
+   */
+  directionalReturnAtHorizon?: number;
   /** Mark used at entry, and at the checkpoint. Absent when not observable. */
   entryMark?: number;
   exitMark?: number;
@@ -113,9 +130,15 @@ export interface OutcomeRecord {
    * The horizon on this row is a *scheduling* label — when the checkpoint fell
    * due — and these two are what was actually measured between. They are
    * persisted rather than collapsed into a duration for the same reason
-   * `MAX_EXCURSION` is named on the payload instead of being presented as a
-   * held return: a reader months later should be able to see that an `M15` row
+   * `directionalReturnAtHorizon` is named for its endpoint rather than left as
+   * `excursion`: a reader months later should be able to see that an `M15` row
    * spanned nineteen minutes, not take the label's word for it.
+   *
+   * (This comment named `MAX_EXCURSION` as though that rule travelled on the
+   * row. It does not, and never did — `labelRule: 'MAX_EXCURSION'` is set only
+   * in `flow-engine/outcome/tracker.ts`, the deprecated standalone tracker that
+   * nothing in `src/` imports. The production grader has no max-excursion rule
+   * to name.)
    */
   entryMarkAt?: number;
   exitMarkAt?: number;
@@ -233,7 +256,8 @@ export interface TrackRecordRow {
   nUngraded: number;
   /** Omitted entirely when the sample is too small — never rendered as 0. */
   hitRate?: number;
-  medianExcursion?: number;
+  /** Median of the bucket's `directionalReturnAtHorizon` values. */
+  medianDirectionalReturn?: number;
   suppressionReason?: 'INSUFFICIENT_SAMPLE';
   /**
    * What this bucket's graded rows were actually measured over.

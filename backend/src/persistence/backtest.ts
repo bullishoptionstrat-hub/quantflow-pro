@@ -22,7 +22,7 @@
  *     rate, `EVENT_TIME_ONLY` and rights-refused signals are excluded and
  *     counted, `UNGRADED` outcomes stay in the denominator's `nUngraded` and
  *     are never dropped, `INSUFFICIENT_SAMPLE` suppresses a rate below n=30, and
- *     `MAX_EXCURSION` / measured-interval disclosure travels on every row. A
+ *     the measured-interval disclosure travels on every row. A
  *     backtester that dropped these is the entire failure mode of the category;
  *     this one *cannot* drop them without editing the shared module and failing
  *     its tests.
@@ -145,7 +145,10 @@ export function matchesScanner(sig: SignalRecord, f: ScannerFilter): boolean {
  */
 export interface MatchedSignal {
   signal: Pick<SignalRecord, 'kind' | 'synthetic' | 'decisionBasis' | 'rightsClass'>;
-  outcomes: Pick<OutcomeRecord, 'horizon' | 'label' | 'excursion' | 'entryMarkAt' | 'exitMarkAt'>[];
+  outcomes: Pick<
+    OutcomeRecord,
+    'horizon' | 'label' | 'directionalReturnAtHorizon' | 'entryMarkAt' | 'exitMarkAt'
+  >[];
 }
 
 /**

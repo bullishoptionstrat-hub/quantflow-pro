@@ -55,9 +55,10 @@ Recorded so they are not mistaken for satisfied:
   yields. Recorded together because discovering that tension *while* writing
   the sweep is how one of them gets quietly weakened. The shape that resolves
   it, if a duration is ever established: expire the raw `entry_mark` /
-  `exit_mark`, which are the vendor's Data, and keep `label` and `excursion`,
-  which are Derived Data under 2.2(c) — a ratio recovers no absolute price,
-  though an excursion beside a *retained* entry mark recovers the exit exactly,
+  `exit_mark`, which are the vendor's Data, and keep `label` and
+  `directional_return_at_horizon`, which are Derived Data under 2.2(c) — a
+  ratio recovers no absolute price, though that ratio beside a *retained*
+  entry mark recovers the exit exactly,
   so the marks have to go for the derivation to qualify. Not built: 16.2's
   30-day deletion obligation binds only on termination, `signal_outcomes` holds
   zero rows, and any window chosen today would be invented rather than derived.

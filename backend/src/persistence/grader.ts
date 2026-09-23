@@ -500,7 +500,7 @@ export class SignalGrader {
             signalKey: p.signalKey,
             horizon,
             label: outcome.label,
-            excursion: outcome.excursion,
+            directionalReturnAtHorizon: outcome.directionalReturnAtHorizon,
             entryMark: p.entryMark?.price,
             entryMarkSource: p.entryMark?.source,
             entryMarkAt: p.entryMark?.asOf,
@@ -555,7 +555,7 @@ export class SignalGrader {
     now: number,
   ): {
     label: OutcomeLabelValue;
-    excursion?: number;
+    directionalReturnAtHorizon?: number;
     exitMark?: number;
     exitMarkSource?: string;
     exitMarkAt?: number;
@@ -590,12 +590,12 @@ export class SignalGrader {
 
     // An entry mark may legitimately predate the decision — it is the last
     // price before that instant — but not by more than the shortest horizon
-    // this grader measures. Past that the denominator of every excursion is a
+    // this grader measures. Past that the denominator of every return is a
     // price from before the signal existed, which is wrong rather than
     // imprecise. The bound is `HORIZON_OFFSETS_MS.M15` rather than a constant
     // chosen here: a mark that cannot support the shortest checkpoint cannot
     // support any of them.
-    // An entry mark stamped AFTER the decision is lookahead: the excursion's
+    // An entry mark stamped AFTER the decision is lookahead: the return's
     // denominator would be a price the signal itself may already have moved.
     // Only the too-early direction was guarded, because `entryAge` is a
     // subtraction and a mark from the future makes it negative — the same
@@ -692,19 +692,30 @@ export class SignalGrader {
 
     // Both marks are recorded with their source and their stamp. All four can
     // differ — a vendor can fall out between registration and a checkpoint —
-    // and an excursion measured across two sources, or across an interval that
+    // and a return measured across two sources, or across an interval that
     // is not the horizon it is filed under, is worth being able to spot later.
     const exitMark = exit.price;
     const rawMove = (exitMark - p.entryMark.price) / p.entryMark.price;
     // Signed in the direction the signal implied: a bearish signal followed by
-    // a fall is a positive excursion.
-    const excursion = p.direction === 'BULLISH' ? rawMove : -rawMove;
+    // a fall is a positive return.
+    //
+    // This is the ENDPOINT return, not an excursion. Only two prices are ever
+    // observed — one at each mark — so the path between them is unseen, and the
+    // furthest favourable point on that path is not available to this grader at
+    // any price. See `OutcomeRecord.directionalReturnAtHorizon`.
+    const directionalReturnAtHorizon = p.direction === 'BULLISH' ? rawMove : -rawMove;
 
     let label: OutcomeLabelValue;
-    if (excursion > this.cfg.flatBandPct) label = 'POSITIVE';
-    else if (excursion < -this.cfg.flatBandPct) label = 'NEGATIVE';
+    if (directionalReturnAtHorizon > this.cfg.flatBandPct) label = 'POSITIVE';
+    else if (directionalReturnAtHorizon < -this.cfg.flatBandPct) label = 'NEGATIVE';
     else label = 'FLAT';
 
-    return { label, excursion, exitMark, exitMarkSource: exit.source, exitMarkAt: exit.asOf };
+    return {
+      label,
+      directionalReturnAtHorizon,
+      exitMark,
+      exitMarkSource: exit.source,
+      exitMarkAt: exit.asOf,
+    };
   }
 }

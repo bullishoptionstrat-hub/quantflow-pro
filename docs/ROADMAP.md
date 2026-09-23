@@ -381,9 +381,9 @@ accumulating in wall-clock time while you build everything else.
       invariant. The design is recorded instead, in `rights.ts` and in
       `docs/SYSTEM_INVARIANTS.md` under "invariants this system cannot yet
       state": expire the raw `entry_mark` / `exit_mark` (the vendor's Data) and
-      keep `label` and `excursion` (Derived Data under **2.2(c)**), which is
-      sound only once the raw marks are gone — an excursion beside a retained
-      entry mark recovers the exit exactly.
+      keep `label` and `directional_return_at_horizon` (Derived Data under
+      **2.2(c)**), which is sound only once the raw marks are gone — that ratio
+      beside a retained entry mark recovers the exit exactly.
       Two things the entry was missing and now carries: **2.2**, whose absence
       made the registry read more prohibitive than the terms are, and **16.2**,
       the one retention rule here that *is* defined — all Data deleted within

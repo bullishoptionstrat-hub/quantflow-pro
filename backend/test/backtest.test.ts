@@ -62,7 +62,7 @@ function outcome(over: Partial<OutcomeRecord> = {}): OutcomeRecord {
     signalKey: 'key-1',
     horizon: 'M15',
     label: 'POSITIVE',
-    excursion: 0.004,
+    directionalReturnAtHorizon: 0.004,
     dueAt: T0 + 900_000,
     evaluatedAt: T0 + 900_100,
     revision: 1,
@@ -249,14 +249,14 @@ test('the measured-interval disclosure carries into a backtest', async () => {
 test('assembleBacktest computes no label of its own', () => {
   // The guard against a second grader: the backtest module must reach its
   // POSITIVE/NEGATIVE/FLAT counts through the shared tally, never by inspecting
-  // an excursion or a mark itself. If it grew its own labelling, this source
+  // a return or a mark itself. If it grew its own labelling, this source
   // check catches it before the arithmetic ever diverges.
   const src = readFileSync(
     join(__dirname, '..', 'src', 'persistence', 'backtest.ts'), 'utf8');
   assert.match(src, /tallyOutcome\(/, 'it must count outcomes through the shared tally');
   assert.match(src, /tallyToRows\(/, 'and build rows through the shared module');
   assert.match(src, /reportNotes\(/, 'and take its notes from the shared module');
-  assert.ok(!/flatBandPct|POSITIVE'|excursion >|excursion </.test(src),
+  assert.ok(!/flatBandPct|POSITIVE'|directionalReturnAtHorizon >|directionalReturnAtHorizon </.test(src),
     'a backtest must not re-derive a label — grading happened once, at write time');
   assert.ok(!/function median\(/.test(src), 'it must not keep its own median');
 });
@@ -280,7 +280,7 @@ test('a backtest and an unfiltered track record agree on the same population', a
 test('assembleBacktest surfaces a store-specific note', () => {
   const matched: MatchedSignal[] = [{
     signal: { kind: 'SWEEP', synthetic: false, decisionBasis: 'OBSERVED', rightsClass: 'PERMITTED' },
-    outcomes: [{ horizon: 'M15', label: 'POSITIVE', excursion: 0.01 }],
+    outcomes: [{ horizon: 'M15', label: 'POSITIVE', directionalReturnAtHorizon: 0.01 }],
   }];
   const note = 'a store-specific eviction warning';
   const r = assembleBacktest({}, matched, [note]);

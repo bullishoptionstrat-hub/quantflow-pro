@@ -189,7 +189,7 @@ function orderedUsable(mode: BusinessMode): Array<MarkSource & { rightsClass: st
  * A source with no price for a symbol is skipped rather than failing the
  * lookup — that is the point of a list. A price of zero or less is not a
  * price: `missingIsNotZero` is a rule this file inherits rather than restates,
- * and a mark of `0` would produce an excursion of -100% against a live entry.
+ * and a mark of `0` would produce a return of -100% against a live entry.
  */
 export function resolveMark(underlying: string, mode?: BusinessMode): Mark | undefined {
   let m: BusinessMode;

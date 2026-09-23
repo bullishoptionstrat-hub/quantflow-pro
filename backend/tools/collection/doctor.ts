@@ -309,7 +309,8 @@ export function runChecks(env: NodeJS.ProcessEnv = process.env): Check[] {
          'ever terminate the subscription — 16.2 requires all Data deleted within ' +
          '30 days — the outcomes table needs a retention policy and the code has ' +
          'none. The shape is recorded in rights.ts: expire the raw entry/exit ' +
-         'marks, which are the vendor\'s Data, and keep label and excursion, which ' +
+         'marks, which are the vendor\'s Data, and keep label and the directional ' +
+         'return, which ' +
          'are Derived Data under 2.2(c). Note it collides with the append-only ' +
          'trigger on signal_outcomes — see docs/SYSTEM_INVARIANTS.md.',
   });

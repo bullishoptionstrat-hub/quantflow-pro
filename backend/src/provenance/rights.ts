@@ -244,16 +244,16 @@ export const DATASETS: readonly DatasetRights[] = [
     // If a retention policy is ever needed, 2.2(c) is the clause that makes it
     // tractable, and the shape is recorded here rather than built for zero
     // rows: expire the raw `entry_mark` / `exit_mark` — which are the vendor's
-    // Data — and keep `label` and `excursion`, which are Derived Data. Note
+    // Data — and keep `label` and `directional_return_at_horizon`, which are
+    // Derived Data. Note
     // the two definitions differ in wording and the Section 1 one is the
     // operative definition: 2.2(c) licenses creating Derived Data "that cannot
     // be reverse-engineered to recreate the original Data", while Section 1
     // defines Derived Data as created from the Data "provided such data cannot
     // be reverse-engineered to arrive at the underlying Data". Both point the
-    // same way here. The test is met only once the raw marks are gone: an
-    // excursion is a ratio
-    // and recovers no absolute price on its own, but an excursion beside a
-    // retained `entry_mark` recovers the exit exactly. Note also that this
+    // same way here. The test is met only once the raw marks are gone: the
+    // directional return is a ratio and recovers no absolute price on its own,
+    // but that ratio beside a retained `entry_mark` recovers the exit exactly. Note also that this
     // collides with `enforce_outcome_immutability`, which refuses every UPDATE
     // and DELETE on `signal_outcomes` bar one — so a retention sweep cannot be
     // added without deciding which guarantee yields. See

@@ -37,7 +37,7 @@ function bucket(horizon: string, n: number, intervalMs: number, opts: {
     const span = intervalMs + (opts.spread ? (i % 2 === 0 ? -opts.spread : opts.spread) : 0);
     tallyOutcome(t, {
       label: i < hits ? 'POSITIVE' : 'NEGATIVE',
-      excursion: i < hits ? 0.01 : -0.01,
+      directionalReturnAtHorizon: i < hits ? 0.01 : -0.01,
       entryMarkAt: dated ? 1_000_000 : undefined,
       exitMarkAt: dated ? 1_000_000 + span : undefined,
     });
@@ -109,7 +109,7 @@ test('a suppressed rate still says what its sample measured', () => {
 
 test('an interval with nothing in it is absent, not zero', () => {
   const t = emptyTally('SWEEP', 'M15');
-  tallyOutcome(t, { label: 'POSITIVE', excursion: 0.01 }); // graded, no stamps
+  tallyOutcome(t, { label: 'POSITIVE', directionalReturnAtHorizon: 0.01 }); // graded, no stamps
   const [row] = tallyToRows([t]);
   const mi = row!.measuredInterval!;
   assert.equal(mi.n, 0);
@@ -237,7 +237,7 @@ test('a bucket larger than the argument limit still reports min and max', () => 
   const n = 200_000;
   for (let i = 0; i < n; i++) {
     tallyOutcome(t, {
-      label: 'POSITIVE', excursion: 0.01,
+      label: 'POSITIVE', directionalReturnAtHorizon: 0.01,
       entryMarkAt: 0, exitMarkAt: 1_000 + (i % 7),
     });
   }

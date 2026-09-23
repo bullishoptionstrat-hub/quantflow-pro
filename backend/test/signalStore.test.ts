@@ -45,7 +45,7 @@ function outcome(over: Partial<OutcomeRecord> = {}): OutcomeRecord {
     signalKey: 'key-1',
     horizon: 'M15',
     label: 'POSITIVE',
-    excursion: 0.004,
+    directionalReturnAtHorizon: 0.004,
     dueAt: T0 + 900_000,
     evaluatedAt: T0 + 900_100,
     revision: 1,
@@ -111,9 +111,9 @@ test('a graded outcome cannot be silently overwritten', async () => {
 test('supersession preserves both revisions', async () => {
   const s = new InMemorySignalStore();
   await s.writeSignal(rec());
-  await s.writeOutcome(outcome({ label: 'POSITIVE', excursion: 0.004, revision: 1 }));
+  await s.writeOutcome(outcome({ label: 'POSITIVE', directionalReturnAtHorizon: 0.004, revision: 1 }));
   await s.writeOutcome(outcome({
-    label: 'NEGATIVE', excursion: -0.002, revision: 2,
+    label: 'NEGATIVE', directionalReturnAtHorizon: -0.002, revision: 2,
     supersedes: 'key-1:1',
   }));
 
@@ -179,7 +179,7 @@ test('at the threshold the rate is published', async () => {
   const row = (await s.trackRecord()).rows[0]!;
   assert.equal(row.suppressionReason, undefined);
   assert.equal(row.hitRate, 1);
-  assert.equal(row.medianExcursion, 0.004);
+  assert.equal(row.medianDirectionalReturn, 0.004);
 });
 
 test('synthetic signals never enter a rate, and are counted where a reader can see them', async () => {
