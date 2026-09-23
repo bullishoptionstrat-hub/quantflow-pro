@@ -82,13 +82,13 @@ function wireRows(n: number, kind: string, directionalReturn: string) {
   return { signals, outcomes };
 }
 
-test('a numeric excursion arriving as a string still reaches the published median', async () => {
+test('a numeric return arriving as a string still reaches the published median', async () => {
   const store = new SupabaseSignalStore(stubDb(wireRows(MIN_PUBLISHABLE_SAMPLE, 'SWEEP', '0.023')));
   const r = await store.backtest({});
   assert.equal(r.rows.length, 1);
   assert.equal(r.rows[0]!.hitRate, 1);
   assert.equal(r.rows[0]!.medianDirectionalReturn, 0.023,
-    'PostgREST sends numeric as a string; without coercion the excursion vanishes');
+    'PostgREST sends numeric as a string; without coercion the return vanishes');
 });
 
 test('timestamptz stamps arriving as strings still produce a measured interval', async () => {

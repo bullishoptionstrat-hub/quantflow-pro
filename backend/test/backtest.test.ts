@@ -249,7 +249,7 @@ test('the measured-interval disclosure carries into a backtest', async () => {
 test('assembleBacktest computes no label of its own', () => {
   // The guard against a second grader: the backtest module must reach its
   // POSITIVE/NEGATIVE/FLAT counts through the shared tally, never by inspecting
-  // an excursion or a mark itself. If it grew its own labelling, this source
+  // a return or a mark itself. If it grew its own labelling, this source
   // check catches it before the arithmetic ever diverges.
   const src = readFileSync(
     join(__dirname, '..', 'src', 'persistence', 'backtest.ts'), 'utf8');

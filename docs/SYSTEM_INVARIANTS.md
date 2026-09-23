@@ -42,6 +42,26 @@ Recorded so they are not mistaken for satisfied:
   based on complete observation — cannot be mechanically enforced.
 - **Research/production feature skew.** There is no offline feature pipeline to
   compare against (§66), because there is no model.
+- **Vendor-data retention.** "No vendor Data is retained beyond the duration
+  its licence permits" is not expressible, and the reason is not neglect.
+  Twelve Data's 16.1 defers the duration to the subscription and 2.3 defers it
+  to the Documentation — defined in Section 1 as the guide at
+  `twelvedata.com/docs` — which names no retention timeframe at all, so the
+  permitted duration has no value to enforce (read 2026-09-21; see
+  `rights.ts`). **And it is in direct tension with an invariant that is
+  enforced**: `enforce_outcome_immutability` refuses every `UPDATE` and
+  `DELETE` on `signal_outcomes` except the single retirement path, so a
+  retention sweep cannot be added without deciding which of the two guarantees
+  yields. Recorded together because discovering that tension *while* writing
+  the sweep is how one of them gets quietly weakened. The shape that resolves
+  it, if a duration is ever established: expire the raw `entry_mark` /
+  `exit_mark`, which are the vendor's Data, and keep `label` and
+  `directional_return_at_horizon`, which are Derived Data under 2.2(c) — a
+  ratio recovers no absolute price, though that ratio beside a *retained*
+  entry mark recovers the exit exactly,
+  so the marks have to go for the derivation to qualify. Not built: 16.2's
+  30-day deletion obligation binds only on termination, `signal_outcomes` holds
+  zero rows, and any window chosen today would be invented rather than derived.
 
 ---
 

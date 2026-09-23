@@ -150,7 +150,7 @@ test('a resumed signal with no observed entry mark grades UNGRADED, not from a f
   const outs = await store.listOutcomes(rec.signalKey);
   const m15 = outs.find((o) => o.horizon === 'M15')!;
   assert.equal(m15.label, 'UNGRADED');
-  assert.equal(m15.directionalReturnAtHorizon, undefined, 'no excursion was invented');
+  assert.equal(m15.directionalReturnAtHorizon, undefined, 'no return was invented');
   assert.match(m15.ungradedReason!, /entry mark/i);
   // The row must carry NO entry mark at all. Asserting only the UNGRADED label
   // is too weak: a recovery that wrongly took a fresh price would still be

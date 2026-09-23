@@ -125,66 +125,85 @@ alter table public.price_history enable row level security;
 alter table public.flow_archive enable row level security;
 
 -- user_profiles: users see/edit only their own
+drop policy if exists "user_profiles_select_own" on public.user_profiles;
 create policy "user_profiles_select_own" on public.user_profiles
   for select using (auth.uid() = id);
 
+drop policy if exists "user_profiles_insert_own" on public.user_profiles;
 create policy "user_profiles_insert_own" on public.user_profiles
   for insert with check (auth.uid() = id);
 
+drop policy if exists "user_profiles_update_own" on public.user_profiles;
 create policy "user_profiles_update_own" on public.user_profiles
   for update using (auth.uid() = id);
 
 -- api_keys: users manage only their own keys
+drop policy if exists "api_keys_select_own" on public.api_keys;
 create policy "api_keys_select_own" on public.api_keys
   for select using (auth.uid() = user_id);
 
+drop policy if exists "api_keys_insert_own" on public.api_keys;
 create policy "api_keys_insert_own" on public.api_keys
   for insert with check (auth.uid() = user_id);
 
+drop policy if exists "api_keys_update_own" on public.api_keys;
 create policy "api_keys_update_own" on public.api_keys
   for update using (auth.uid() = user_id);
 
+drop policy if exists "api_keys_delete_own" on public.api_keys;
 create policy "api_keys_delete_own" on public.api_keys
   for delete using (auth.uid() = user_id);
 
 -- watchlist: users manage only their own
+drop policy if exists "watchlist_select_own" on public.watchlist;
 create policy "watchlist_select_own" on public.watchlist
   for select using (auth.uid() = user_id);
 
+drop policy if exists "watchlist_insert_own" on public.watchlist;
 create policy "watchlist_insert_own" on public.watchlist
   for insert with check (auth.uid() = user_id);
 
+drop policy if exists "watchlist_update_own" on public.watchlist;
 create policy "watchlist_update_own" on public.watchlist
   for update using (auth.uid() = user_id);
 
+drop policy if exists "watchlist_delete_own" on public.watchlist;
 create policy "watchlist_delete_own" on public.watchlist
   for delete using (auth.uid() = user_id);
 
 -- saved_filters: users manage only their own
+drop policy if exists "saved_filters_select_own" on public.saved_filters;
 create policy "saved_filters_select_own" on public.saved_filters
   for select using (auth.uid() = user_id);
 
+drop policy if exists "saved_filters_insert_own" on public.saved_filters;
 create policy "saved_filters_insert_own" on public.saved_filters
   for insert with check (auth.uid() = user_id);
 
+drop policy if exists "saved_filters_update_own" on public.saved_filters;
 create policy "saved_filters_update_own" on public.saved_filters
   for update using (auth.uid() = user_id);
 
+drop policy if exists "saved_filters_delete_own" on public.saved_filters;
 create policy "saved_filters_delete_own" on public.saved_filters
   for delete using (auth.uid() = user_id);
 
 -- power_alerts: users see their own OR global (user_id is null)
+drop policy if exists "power_alerts_select" on public.power_alerts;
 create policy "power_alerts_select" on public.power_alerts
   for select using (auth.uid() = user_id or user_id is null);
 
+drop policy if exists "power_alerts_update_own" on public.power_alerts;
 create policy "power_alerts_update_own" on public.power_alerts
   for update using (auth.uid() = user_id);
 
 -- price_history: public read, service role writes
+drop policy if exists "price_history_public_read" on public.price_history;
 create policy "price_history_public_read" on public.price_history
   for select using (true);
 
 -- flow_archive: public read, service role writes
+drop policy if exists "flow_archive_public_read" on public.flow_archive;
 create policy "flow_archive_public_read" on public.flow_archive
   for select using (true);
 
@@ -199,11 +218,11 @@ begin
 end;
 $$;
 
-create trigger set_user_profiles_updated_at
+create or replace trigger set_user_profiles_updated_at
   before update on public.user_profiles
   for each row execute function public.handle_updated_at();
 
-create trigger set_api_keys_updated_at
+create or replace trigger set_api_keys_updated_at
   before update on public.api_keys
   for each row execute function public.handle_updated_at();
 

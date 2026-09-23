@@ -12,11 +12,12 @@ it says so — the same rule `CLAUDE.md` applies to the code applies to this fil
 
 | Check | Result |
 |---|---|
-| `backend` — `npm test` | **640 / 640 pass** (~129s) |
-| `frontend` — vitest | **132 / 132 pass** (13 files) |
+| `backend` — `npm test` | **647 / 647 pass** (~117s) |
+| `frontend` — vitest | **152 / 152 pass** (16 files) |
 | `quantflow-modules/flow-engine` | **30 / 30 pass** |
 | `tsc --noEmit`, both packages | clean |
-| Working tree | clean, 62 merged PRs |
+| `frontend` — `npm run build` | clean, `/backtest` prerendered |
+| Working tree | clean |
 
 *Re-measured 2026-09-21 by running each suite, not read off the ledger.* The
 two "per ledger" rows above were stale in both directions: the module suite had
@@ -24,8 +25,9 @@ never been run during the audit that cited it, and the frontend count predated
 two merged PRs. A number copied from a ledger is a claim, and this file's own
 rule is that a claim gets checked — so these were.
 
-The engineering is in good shape. Sixty-two pull requests have gone into one
-question — *is this number true?* — and the answer machinery is real:
+The engineering is in good shape. Sixty-four merged pull requests, as of
+2026-09-21, have gone into one question — *is this number true?* — and the
+answer machinery is real:
 `decisionAt` discipline, `dominantLegOf()`, the n=30 publication floor, the
 rights registry, the zero-fill ledger, `committedSecrets.test.ts`.
 
@@ -79,7 +81,10 @@ That is not a display bug. It is the literal state of the system.
 collection**:
 
 - **BLOCKED — Durable storage.** `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` unset.
-  History is in memory and dies on restart.
+  History is in memory and dies on restart. *Still true on 2026-09-21, and the
+  reason has changed*: the database is now fully built and waiting on one
+  credential — see 0.2 — rather than a project whose tables live only in a
+  migration file. Same verdict, materially different distance from it.
 - **BLOCKED — Underlying marks for grading.** `TWELVE_DATA_API_KEY` unset, and
   `getSpotPrice` (`connectors/twelveData.ts:102`) reads *only* the Twelve Data
   cache. Every outcome returns `UNGRADED — no usable entry mark`.
@@ -283,11 +288,38 @@ accumulating in wall-clock time while you build everything else.
       repo. Eight archives, five commits, public remote, since 2026-06-12. One
       bills per call. Do this first because it is the only item with money on
       it and the only one no code can do for you.
-- [ ] **0.2 — Supabase.** Create the project, run `supabase/schema.sql`, then
-      **every file in `supabase/migrations/` in filename order** — the four
-      tables the grader writes (`signal_history`, `signal_outcomes`,
-      `signal_write_incidents`, `collection_gaps`) live only in the migration.
-      Set `SUPABASE_URL` / `SUPABASE_SERVICE_KEY`.
+- [ ] **0.2 — Supabase. Three of four parts are done; the last one is the
+      whole blocker. Measured against the live project 2026-09-21.**
+      The project exists and is `ACTIVE_HEALTHY` (`vitnwysywkmpuaoluqom`,
+      PostgreSQL 17.6, us-east-2). Every object `supabase/schema.sql` declares
+      is present, counted rather than sampled: seven application tables, eight
+      indexes, nineteen RLS policies, two functions, three triggers.
+      All six migrations are applied, including
+      `20260917200000_mark_as_of.sql`, so `signal_outcomes` carries
+      `entry_mark_at` / `exit_mark_at` and the defect that would have failed
+      **every** outcome write is closed. The four tables the grader writes all
+      exist and hold, **counted on 2026-09-21**: 0 outcomes, 3,709 signals of
+      which 3,709 are synthetic, 0 incidents, 12 gaps. PR #66 reported 3,244
+      and 9 for the last two; those were true when it measured and are not now,
+      which is the reason a count in a document carries its date.
+      **What is left is one credential**, and it is worth stating precisely
+      because it changes what "BLOCKED — Durable storage" below means: the
+      database is built and waiting, not missing. `SUPABASE_URL` and
+      `SUPABASE_SERVICE_KEY` are unset in `backend/.env`, the management API
+      issues only `anon` and publishable keys, and the service key is the one
+      thing no tool here can produce — it has to be copied from the dashboard
+      by hand and never pasted into a transcript. It also unblocks 1.1c and
+      1.1d, which is three items waiting on one paste.
+      **Two findings from measuring it, both fixed or recorded rather than
+      noted.** The sequence this item describes — `schema.sql`, then every
+      migration in filename order — **aborted**, because both files define the
+      same nineteen RLS policies and the migration created them unguarded;
+      reproduced on PostgreSQL 17 and fixed, see the CLAUDE.md ledger and
+      `backend/test/migrationsRerunnable.test.ts`. And the applied migrations'
+      recorded *versions* do not match these filenames — five of six differ,
+      because they were applied through an interface that stamps its own
+      timestamp — so match them by **name**, not version, and do not read a
+      version mismatch as an unapplied migration.
 - [x] **0.3 — `TWELVE_DATA_API_KEY`** *Done 2026-09-16.* Set, and probed rather
       than assumed: `entitled`, HTTP 200 from `api.twelvedata.com`. Verifying it
       end to end is what found the health-reporting gap and the credit
@@ -315,14 +347,53 @@ accumulating in wall-clock time while you build everything else.
       ample for spot marks on a short watchlist. Unblocks the grader today.~~
       (The last sentence was wrong in a way worth keeping visible: 8 credits/min
       is ample for a *short* watchlist, and this one is ten symbols.)
-- [ ] **0.4 — Decide the retention question** and write the answer into
-      `rights.ts`. Twelve Data §16.1 caps retention at "duration permitted by
-      subscription" and §2.3 bars commercial use of free-tier data. In
-      `PRIVATE_RESEARCH` that is arguably fine — but the registry currently
-      records `UNVERIFIED`, which means *we have not read our own plan*. Either
-      resolve it to `PERMITTED` with the clause quoted, or add the retention
-      policy the doctor notes the code does not have. **Phase 1.3 may delete
-      this item entirely** — read it before buying anything.
+- [x] **0.4 — The retention question, read rather than decided.**
+      *Closed 2026-09-21 — and neither of the two branches below was taken,
+      which is the result rather than a dodge.* The item's real complaint was
+      `UNVERIFIED` "means *we have not read our own plan*". It has now been
+      read, and **the verdict is unchanged while the reason moved from assumed
+      to measured** — the distinction this whole repository runs on.
+      What the terms actually say, quoted into `rights.ts` with the reading
+      dated: **2.2(a) grants storage** — "Access, receive, process, and store
+      Data solely for Internal Use" — so persisting a mark is licensed, not
+      merely untested. What is unestablished is its *duration*: **16.1** caps
+      retention at "duration permitted by subscription" and **2.3** bars
+      storing beyond the timeframes "specified in the Documentation" — and the
+      Documentation is a **defined term**: Section 1 points it at
+      `twelvedata.com/docs`, and that guide **names no retention timeframe at
+      all** (zero occurrences of "retention" on the page as served; its one
+      piece of caching guidance *recommends* caching and attaches no duration).
+      The first pass of this reading cited the pricing page as "the
+      Documentation" and was wrong — recorded rather than quietly fixed,
+      because citing a document by description instead of by its definition is
+      the failure this registry exists to prevent.
+      So the clause that would bound retention points at a document that
+      defines no bound. That is neither a permission nor a prohibition, which
+      is exactly what `UNVERIFIED` is for, and **re-reading will not move it** —
+      only the operator asking the vendor what their plan permits will. That is
+      a legal determination, not something a registry can infer, so the first
+      branch ("resolve it to `PERMITTED`") was not available to take.
+      **The second branch was not taken either, deliberately.** Building the
+      retention policy today would mean inventing a window the terms do not
+      define, in order to expire rows from a table holding **zero** of them, by
+      adding an exception to `enforce_outcome_immutability` — a guarantee that
+      *is* enforced. Machinery for a hypothetical, bought by weakening a live
+      invariant. The design is recorded instead, in `rights.ts` and in
+      `docs/SYSTEM_INVARIANTS.md` under "invariants this system cannot yet
+      state": expire the raw `entry_mark` / `exit_mark` (the vendor's Data) and
+      keep `label` and `directional_return_at_horizon` (Derived Data under
+      **2.2(c)**), which is sound only once the raw marks are gone — that ratio
+      beside a retained entry mark recovers the exit exactly.
+      Two things the entry was missing and now carries: **2.2**, whose absence
+      made the registry read more prohibitive than the terms are, and **16.2**,
+      the one retention rule here that *is* defined — all Data deleted within
+      30 days of termination — for which the code has no mechanism.
+      The doctor's fix text was rewritten from "check Section 16.1" (which now
+      sends an operator to a page already established as silent) to the two
+      things that are actionable. The check stays a `warn`: it is still the
+      operator's call. **Phase 1.3 may still delete this item's subject
+      entirely** — if Tradier serves the grader's marks, Twelve Data leaves the
+      persistence path and takes this question with it.
 - [ ] **0.5 — Keep the process awake.** The shortest horizon is M15 and
       Render's free tier sleeps at 15 minutes. Either a paid instance, an
       external ping, or accept that M15 stays `UNGRADED` — but choose, and
@@ -587,6 +658,22 @@ was collected, and it is worthless before Phase 0.
       structurally can't. The exclusion counts are scoped to the *matched*
       population, so a reader can see how much of each their filter selected for
       against `/api/track-record`'s global counts.
+- [x] **4.1-UI — The backtest surface.** *Done — the frontend for 4.1.* A
+      `/backtest` route (Next 14, `components/backtest/Backtest.tsx`) builds a
+      `ScannerFilter` — kind/side chips, ISO-only, comma-separated underlyings,
+      min premium/size/score — posts it, and renders the rows. The honesty is in
+      what it draws: a bucket below n=30 renders `SUPPRESSED (n<30)` and the
+      sample, **never a 0%** (binding `hitRate ?? 0` is refused); the measured
+      interval shows beside the horizon when they drift; and every backend
+      `note` and the `disclaimer` render **verbatim**, not summarised. Found and
+      fixed a latent bug on the way: the `/api/*` rewrite proxy in
+      `next.config.js` claimed to list every backend route and had silently
+      dropped `track-record` — so that page's calls would 404 at the Next server
+      rather than reach Render, and `backtest` was about to ship with the same
+      gap. Both added; `test/apiProxy.test.ts` now reads both sides and fails if
+      the proxy is not a superset of the backend's mounted routes. Same `real: 0`
+      caveat as 4.1: proven against the recorded `backtest.json` fixture and a
+      live demo-mode boot, never yet over a real graded signal.
 - [x] **4.4 — Multi-leg structure recognition.** *Done 2026-09-16, narrowly.*
       The classifier existed and had one real defect: every call-and-put pair at
       one expiry was `STRADDLE_STRANGLE`, ignoring `leg.side`. A long call
@@ -606,8 +693,18 @@ was collected, and it is worthless before Phase 0.
 
 Only after there is something to show. Ordered by "will you open it every day":
 
-- [ ] **5.1** Saved scanner presets — cheap, and it is how a terminal becomes
-      a habit.
+- [x] **5.1 — Saved scanner presets.** *Done — the habit-forming half of the
+      backtest surface.* A named `ScannerFilter` in localStorage
+      (`lib/presets.ts`), surfaced as a preset bar on `/backtest`: save the
+      current filter, click a name to load it back, delete with the ×.
+      Client-only on purpose — a preset carries no entitled data and there is no
+      per-user server table to sync to, so localStorage is the honest scope
+      (this browser, this origin, stated in the UI). Two defensive rules the
+      tests hold: it is SSR-safe (no `window` during Next's server render → the
+      list is `[]` and hydrates on the client, never throws), and a corrupt or
+      hand-edited store opens empty rather than white-screening — a malformed row
+      is dropped, not trusted. Same-name re-save replaces rather than
+      duplicating, so the habit does not become a pile of near-identical rows.
 - [ ] **5.2** A morning view: overnight flow, today's GEX profile, gamma flip,
       the track record to date. One screen, opened once a day.
 - [ ] **5.3** Alerting that names its own trigger. Ledger line 98 records the

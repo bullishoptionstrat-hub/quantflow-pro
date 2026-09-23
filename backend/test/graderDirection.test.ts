@@ -95,7 +95,7 @@ test('a straddle or strangle is not graded directionally at all', async () => {
   const [o] = await store.listOutcomes(rec.signalKey);
   assert.equal(o!.label, 'UNGRADED',
     'two long wings is a position on movement, not on direction');
-  assert.equal(o!.directionalReturnAtHorizon, undefined, 'and no directional excursion is computed');
+  assert.equal(o!.directionalReturnAtHorizon, undefined, 'and no directional return is computed');
   assert.match(o!.ungradedReason!, /no direction/i);
   assert.match(o!.ungradedReason!, /STRADDLE_STRANGLE/);
 });

@@ -52,7 +52,7 @@ test('a mark carries its source and its rights standing', () => {
   }
   // Undefined is the normal answer with no connector running, and it is the
   // honest one: no source had a price, so there is no mark and no source to
-  // attribute. A zero here would be a -100% excursion against a live entry.
+  // attribute. A zero here would be a -100% return against a live entry.
 });
 
 test('a mark carries its stamp, and one that cannot be dated is refused', () => {

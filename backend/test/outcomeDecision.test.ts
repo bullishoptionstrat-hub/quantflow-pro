@@ -15,7 +15,7 @@
  * cluster — which `CLAUDE.md` deprecates for any measurement: a signal
  * assembled from a 500ms burst was not actionable at that burst's first tick,
  * so the horizon is handed the burst duration plus the feed latency for free
- * and every excursion comes out flattering.
+ * and every return comes out flattering.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
