@@ -150,7 +150,7 @@ test('a resumed signal with no observed entry mark grades UNGRADED, not from a f
   const outs = await store.listOutcomes(rec.signalKey);
   const m15 = outs.find((o) => o.horizon === 'M15')!;
   assert.equal(m15.label, 'UNGRADED');
-  assert.equal(m15.excursion, undefined, 'no excursion was invented');
+  assert.equal(m15.directionalReturnAtHorizon, undefined, 'no excursion was invented');
   assert.match(m15.ungradedReason!, /entry mark/i);
   // The row must carry NO entry mark at all. Asserting only the UNGRADED label
   // is too weak: a recovery that wrongly took a fresh price would still be
@@ -233,7 +233,7 @@ test('listUngraded drains once every graded horizon is written', async () => {
 
   for (const horizon of GRADED_HORIZONS) {
     await store.writeOutcome({
-      signalKey: rec.signalKey, horizon, label: 'FLAT', excursion: 0,
+      signalKey: rec.signalKey, horizon, label: 'FLAT', directionalReturnAtHorizon: 0,
       dueAt: T0, evaluatedAt: T0, revision: 1,
     });
   }

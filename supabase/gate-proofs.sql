@@ -121,7 +121,7 @@ values ('g1-ok', 'PROBABLY_FINE', 'a', 'b', 'test');
 
 \echo '--- G3a  a graded outcome  (must be ACCEPTED)'
 insert into public.signal_outcomes
-  (signal_key, horizon, label, excursion, due_at, evaluated_at, revision)
+  (signal_key, horizon, label, directional_return_at_horizon, due_at, evaluated_at, revision)
 values ('g1-ok', 'M15', 'POSITIVE', 0.0042,
         '2026-08-29 14:45:00+00', '2026-08-29 14:45:01+00', 1);
 
@@ -134,7 +134,7 @@ delete from public.signal_outcomes where signal_key = 'g1-ok' and horizon = 'M15
 
 \echo '--- G3d  a SECOND live row for the same (signal, horizon)  (must be refused)'
 insert into public.signal_outcomes
-  (signal_key, horizon, label, excursion, due_at, evaluated_at, revision)
+  (signal_key, horizon, label, directional_return_at_horizon, due_at, evaluated_at, revision)
 values ('g1-ok', 'M15', 'NEGATIVE', -0.001,
         '2026-08-29 14:45:00+00', '2026-08-29 14:45:02+00', 2);
 
@@ -142,14 +142,14 @@ values ('g1-ok', 'M15', 'NEGATIVE', -0.001,
 update public.signal_outcomes set superseded_at = now()
   where signal_key = 'g1-ok' and horizon = 'M15' and superseded_at is null;
 insert into public.signal_outcomes
-  (signal_key, horizon, label, excursion, due_at, evaluated_at, revision, supersedes)
+  (signal_key, horizon, label, directional_return_at_horizon, due_at, evaluated_at, revision, supersedes)
 select 'g1-ok', 'M15', 'NEGATIVE', -0.0010,
        '2026-08-29 14:45:00+00', '2026-08-29 14:45:02+00', 2, id
   from public.signal_outcomes
  where signal_key = 'g1-ok' and horizon = 'M15' and revision = 1;
 
 \echo '--- G3f  BOTH revisions survive; exactly one is live'
-select revision, label, excursion,
+select revision, label, directional_return_at_horizon,
        case when superseded_at is null then 'LIVE' else 'SUPERSEDED' end as state
   from public.signal_outcomes where signal_key = 'g1-ok' order by revision;
 

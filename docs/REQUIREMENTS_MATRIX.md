@@ -83,7 +83,7 @@ Last verified: **2026-09-19**, against `claude/quantflow-pro-forensic-audit-cnms
 | OUTCOME-003 | Each mark records source, rights class and as-of | `Mark` | `markSources.test.ts`, `grader.test.ts` | VERIFIED |
 | OUTCOME-004 | Nominal horizon and actual measured interval are both stored | `entry_mark_at` / `exit_mark_at` + `MeasuredInterval` | `trackRecordRows.test.ts` | VERIFIED |
 | OUTCOME-005 | Non-directional structures excluded from directional metrics | `undirectedStructure()` | `graderDirection.test.ts` | VERIFIED *(this session)* |
-| OUTCOME-006 | Endpoint return is not called an excursion | field named `excursion` | — | **DEFECT** (F-9, §41) |
+| OUTCOME-006 | Endpoint return is not called an excursion | `OutcomeRecord.directionalReturnAtHorizon`, column `directional_return_at_horizon` | `outcomeTriggerColumns.test.ts` | **MET** (F-9 closed 2026-09-23) |
 | OUTCOME-007 | An UNGRADED outcome always states a reason | store CHECK + throw | `signalStore.test.ts` | VERIFIED |
 
 ## RESEARCH

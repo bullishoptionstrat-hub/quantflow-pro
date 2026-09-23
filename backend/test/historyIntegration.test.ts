@@ -170,7 +170,7 @@ test('the grader picks up a recorded real signal and grades it at M15', async (t
   // The side is inferred from the NBBO the print carried: a fill at the ask is
   // a BUY, and a call buy is bullish, so a rise is POSITIVE.
   assert.equal(m15!.label, 'POSITIVE');
-  assert.ok(m15!.excursion! > 0);
+  assert.ok(m15!.directionalReturnAtHorizon! > 0);
 });
 
 test('a replayed print yields EVENT_TIME_ONLY and is kept out of published rates', async (t) => {

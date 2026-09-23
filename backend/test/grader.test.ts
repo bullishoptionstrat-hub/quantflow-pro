@@ -80,7 +80,7 @@ test('a move in the implied direction beyond the dead band is POSITIVE', async (
   assert.equal(await h.grader.tick(), 1);
   const [o] = await h.store.listOutcomes('k1');
   assert.equal(o!.label, 'POSITIVE');
-  assert.ok(Math.abs(o!.excursion! - 0.01) < 1e-9);
+  assert.ok(Math.abs(o!.directionalReturnAtHorizon! - 0.01) < 1e-9);
   assert.equal(o!.entryMark, 500);
   assert.equal(o!.exitMark, 505);
 });
@@ -97,7 +97,7 @@ test('direction is applied with the right sign: a bearish signal scores on a fal
   await h.grader.tick();
   const [o] = await h.store.listOutcomes('k1');
   assert.equal(o!.label, 'POSITIVE');
-  assert.ok(o!.excursion! > 0, 'a fall is a win for a bearish signal');
+  assert.ok(o!.directionalReturnAtHorizon! > 0, 'a fall is a win for a bearish signal');
 });
 
 test('a move against the signal is NEGATIVE', async () => {
@@ -132,7 +132,7 @@ test('an AMBIGUOUS side is UNGRADED with a reason, never assigned a direction', 
   const [o] = await h.store.listOutcomes('k1');
   assert.equal(o!.label, 'UNGRADED');
   assert.match(o!.ungradedReason!, /implies no direction/);
-  assert.equal(o!.excursion, undefined);
+  assert.equal(o!.directionalReturnAtHorizon, undefined);
 });
 
 test('a missing entry mark is UNGRADED rather than interpolated', async () => {
@@ -436,6 +436,6 @@ test('a frozen feed answering both lookups with one stamp is never graded', asyn
 
   const [o] = await store.listOutcomes('k1');
   assert.equal(o!.label, 'UNGRADED', 'a FLAT here would be a measurement of nothing');
-  assert.equal(o!.excursion, undefined, 'and no excursion was computed from it');
+  assert.equal(o!.directionalReturnAtHorizon, undefined, 'and no excursion was computed from it');
   assert.ok(o!.ungradedReason, 'with a stated reason');
 });

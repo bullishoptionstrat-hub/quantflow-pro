@@ -78,7 +78,7 @@ test('direction comes from the dominant leg, not the one that printed first', as
   assert.equal(o!.label, 'POSITIVE',
     'a rise is a hit for the $102k call; reading legs[0] graded this NEGATIVE ' +
     'because the $2.2k put printed five milliseconds earlier');
-  assert.ok(o!.excursion! > 0);
+  assert.ok(o!.directionalReturnAtHorizon! > 0);
 });
 
 test('a straddle or strangle is not graded directionally at all', async () => {
@@ -95,7 +95,7 @@ test('a straddle or strangle is not graded directionally at all', async () => {
   const [o] = await store.listOutcomes(rec.signalKey);
   assert.equal(o!.label, 'UNGRADED',
     'two long wings is a position on movement, not on direction');
-  assert.equal(o!.excursion, undefined, 'and no directional excursion is computed');
+  assert.equal(o!.directionalReturnAtHorizon, undefined, 'and no directional excursion is computed');
   assert.match(o!.ungradedReason!, /no direction/i);
   assert.match(o!.ungradedReason!, /STRADDLE_STRANGLE/);
 });

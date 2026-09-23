@@ -34,7 +34,7 @@ export interface OutcomeTally {
   nGraded: number;
   nUngraded: number;
   hits: number;
-  excursions: number[];
+  directionalReturns: number[];
   /** Measured intervals, for graded rows that carried both mark stamps. */
   intervals: number[];
   /** Graded rows that carried neither, and so cannot say what they measured. */
@@ -45,14 +45,14 @@ export function emptyTally(kind: string, horizon: string): OutcomeTally {
   return {
     kind, horizon,
     nTotal: 0, nGraded: 0, nUngraded: 0, hits: 0,
-    excursions: [], intervals: [], nUndated: 0,
+    directionalReturns: [], intervals: [], nUndated: 0,
   };
 }
 
 /** The shape this module needs from an outcome, whichever store produced it. */
 export interface TallyableOutcome {
   label: string;
-  excursion?: number;
+  directionalReturnAtHorizon?: number;
   entryMarkAt?: number;
   exitMarkAt?: number;
 }
@@ -63,7 +63,8 @@ export function tallyOutcome(t: OutcomeTally, o: TallyableOutcome): void {
 
   t.nGraded++;
   if (o.label === 'POSITIVE') t.hits++;
-  if (typeof o.excursion === 'number') t.excursions.push(o.excursion);
+  if (typeof o.directionalReturnAtHorizon === 'number')
+    t.directionalReturns.push(o.directionalReturnAtHorizon);
 
   // The interval a row was actually measured over, which is not the horizon it
   // is filed under. Both stamps or neither: an interval computed from one is
@@ -137,7 +138,8 @@ export function tallyToRows(tallies: Iterable<OutcomeTally>): TrackRecordRow[] {
         return row;
       }
       row.hitRate = t.hits / t.nGraded;
-      if (t.excursions.length > 0) row.medianExcursion = median(t.excursions);
+      if (t.directionalReturns.length > 0)
+        row.medianDirectionalReturn = median(t.directionalReturns);
       return row;
     })
     .sort((a, b) => a.kind.localeCompare(b.kind) || a.horizon.localeCompare(b.horizon));

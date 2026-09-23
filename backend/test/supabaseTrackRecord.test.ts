@@ -15,7 +15,7 @@
  *      outcome read path never did, and when `trackRecord`'s excursion
  *      handling moved into a shared tally that gates on `typeof === 'number'`,
  *      every Supabase-backed row would have published a `hitRate` with
- *      `medianExcursion` silently gone.
+ *      `medianDirectionalReturn` silently gone.
  *   2. `timestamptz` columns arrive as ISO strings, so the mark stamps need
  *      `Date.parse` before an interval can be computed from them. Handed
  *      through raw they fail the same typeof gate and every row reports as
@@ -69,7 +69,7 @@ function stubDb(rows: { signals: unknown[]; outcomes: unknown[] }): SupabaseClie
 }
 
 /** A publishable sample, in the shapes PostgREST actually returns. */
-function wireRows(n: number, excursion: string) {
+function wireRows(n: number, directionalReturn: string) {
   const signals = [];
   const outcomes = [];
   for (let i = 0; i < n; i++) {
@@ -79,7 +79,7 @@ function wireRows(n: number, excursion: string) {
       signal_key: key,
       horizon: 'M15',
       label: 'POSITIVE',
-      excursion,                 // numeric  → string
+      directional_return_at_horizon: directionalReturn,  // numeric → string
       entry_mark_at: ENTRY,      // timestamptz → ISO string
       exit_mark_at: EXIT,
     });
@@ -97,7 +97,7 @@ test('a numeric column arriving as a string still reaches the published median',
   const row = report.rows[0]!;
   assert.equal(row.nGraded, MIN_PUBLISHABLE_SAMPLE);
   assert.equal(row.hitRate, 1);
-  assert.equal(row.medianExcursion, 0.023,
+  assert.equal(row.medianDirectionalReturn, 0.023,
     'PostgREST sends `numeric` as a string; without coercion this row publishes ' +
     'a hit rate with no excursion beside it and nothing says why');
 });
@@ -129,7 +129,7 @@ test('a blank numeric is absent, not zero', async () => {
     stubDb(wireRows(MIN_PUBLISHABLE_SAMPLE, '')),
   );
   const report = await store.trackRecord();
-  assert.equal(report.rows[0]!.medianExcursion, undefined,
+  assert.equal(report.rows[0]!.medianDirectionalReturn, undefined,
     'a blank must not publish as a 0.00% median excursion');
   assert.equal(report.rows[0]!.hitRate, 1, 'the rate itself is unaffected');
 });
@@ -143,10 +143,10 @@ test('the outcome read path coerces every numeric column it maps', () => {
   const { join } = require('node:path') as typeof import('node:path');
   const src = readFileSync(
     join(__dirname, '..', 'src', 'persistence', 'supabaseStore.ts'), 'utf8');
-  for (const col of ['r.excursion', 'r.entry_mark', 'r.exit_mark']) {
+  for (const col of ['r.directional_return_at_horizon', 'r.entry_mark', 'r.exit_mark']) {
     assert.match(src, new RegExp(`num\\(${col.replace('.', '\\.')}\\)`),
       `${col} is a numeric column and must be coerced, not passed through`);
   }
-  assert.ok(!/(excursion|entry_mark|exit_mark)\s*\?\?\s*undefined/.test(src),
+  assert.ok(!/(directional_return_at_horizon|entry_mark|exit_mark)\s*\?\?\s*undefined/.test(src),
     'a `?? undefined` on a numeric column leaves a string behind a number type');
 });
