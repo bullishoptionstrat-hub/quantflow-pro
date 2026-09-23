@@ -105,6 +105,18 @@ export interface FlowEvent {
   print_ids?: string[]
   /** True when the source was simulated, replayed, or chain-derived. */
   synthetic?: boolean
+  /**
+   * Provenance that travels with the row (F-16). `datasets` is every dataset
+   * that contributed a print — plural, because a cluster can span sources —
+   * and `rights_display` is the **weakest** DISPLAY class among them.
+   *
+   * The DISPLAY axis, deliberately not the PERSIST one: the same dataset can
+   * be permitted to show and prohibited to store. The CSV export carries both
+   * columns, because a spreadsheet leaving the building with no attribution is
+   * the gap this closed.
+   */
+  datasets?: string[]
+  rights_display?: 'PERMITTED' | 'PROHIBITED' | 'UNVERIFIED' | 'UNKNOWN_DATASET'
 }
 
 /**

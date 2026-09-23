@@ -26,6 +26,7 @@ import type {
   InferredSide,
   OptionTradeEvent,
 } from '../flow-engine/types';
+import { classifySource, type RightsClass } from '../provenance/rights';
 
 // ─── Input ──────────────────────────────────────────────────────────────────
 
@@ -200,6 +201,33 @@ export interface WireFlowEvent {
   print_ids: string[];
   /** True when the feeding source was simulated or replayed. */
   synthetic: boolean;
+  /**
+   * Every dataset that contributed a print, and the DISPLAY class in force.
+   *
+   * `SignalRecord` has carried `source` / `datasetId` / `rightsClass` since
+   * the store existed; the wire carried none of them, so §22's taint
+   * propagation held inside the database and stopped at the door — the CSV a
+   * reader downloads knew less about its own provenance than the row nobody
+   * exports. That is F-16.
+   *
+   * **Plural, because a cluster can span sources.** `originOf` already
+   * establishes that and the recorder already refuses to ignore it: checking
+   * only the first print's source would let one permitted print carry
+   * unverified ones into the record.
+   *
+   * **`rights_display`, not `rights_class`.** This is the DISPLAY axis — what
+   * governed these rows reaching a browser — and it is deliberately NOT the
+   * PERSIST decision the recorder makes, which differs for the same dataset:
+   * Finnhub is PERMITTED to display and PROHIBITED to persist. One field
+   * answering two questions is the defect this repo has hit with `synthetic`,
+   * with `connected`, and with `excursion`.
+   *
+   * The class published is the **weakest** across contributing datasets, the
+   * same fail-closed rule the recorder applies when it refuses on any refused
+   * source.
+   */
+  datasets: string[];
+  rights_display: RightsClass | 'UNKNOWN_DATASET';
 }
 
 // ─── Contract symbol / stats bookkeeping ────────────────────────────────────
@@ -523,6 +551,70 @@ export const UNUSUAL_SCORE = 75;
 
 // ─── Signal → wire ──────────────────────────────────────────────────────────
 
+/**
+ * Rank of a DISPLAY class, most restrictive first. Used to publish the
+ * **weakest** class across a cluster's datasets rather than the first one.
+ *
+ * A cluster spanning a PERMITTED source and an UNVERIFIED one is not a
+ * permitted cluster — the recorder already reasons this way for PERSIST, and
+ * publishing the strongest class would let one clean print launder the rest.
+ * `UNKNOWN_DATASET` ranks below everything: an unregistered source is the
+ * least established thing on the list, not the most.
+ *
+ * Keyed by the union rather than by `string`, so the lookup is total and
+ * needs no `?? 0`. `defaultedReadings.test.ts` refused the widened version,
+ * correctly: a default here would have been a silent claim about a class
+ * nobody declared — the same defect `nominalHorizonMs` was fixed for.
+ */
+const DISPLAY_RANK: Record<RightsClass | 'UNKNOWN_DATASET', number> = {
+  UNKNOWN_DATASET: 0,
+  PROHIBITED: 1,
+  UNVERIFIED: 2,
+  PERMITTED: 3,
+};
+
+/**
+ * The datasets behind a signal and the weakest DISPLAY class among them.
+ *
+ * Note this asks the **DISPLAY** question. `recorder.ts` asks PERSIST of the
+ * same sources and can get a different answer for the same dataset, which is
+ * exactly why the wire field is named for its axis.
+ */
+export function displayRightsOf(sources: string[]): {
+  datasets: string[];
+  rights_display: RightsClass | 'UNKNOWN_DATASET';
+} {
+  const seen = new Set<string>();
+  let weakest: RightsClass | 'UNKNOWN_DATASET' = 'PERMITTED';
+  let anyResolved = false;
+
+  for (const src of sources) {
+    const d = classifySource(src, 'DISPLAY');
+    const cls = d.rightsClass as RightsClass | 'UNKNOWN_DATASET';
+    if (DISPLAY_RANK[cls] < DISPLAY_RANK[weakest]) weakest = cls;
+
+    // Only a **registered** dataset is named. `classifySource` mints
+    // `source:<name>` as the id for an unregistered source, and publishing
+    // that would put a placeholder in the CSV's Datasets column beside real
+    // registry entries like TRADIER_STREAM, where a reader sorting the column
+    // could not tell which is which. `UNKNOWN_DATASET` on the class already
+    // says the row could not be attributed; the list does not need to invent
+    // a name for the thing it failed to find.
+    //
+    // Found by mutating this function: swapping the class resolution was an
+    // *equivalent* mutation, which is what exposed that the branch it touched
+    // was dead — and the dead branch was hiding this.
+    if (cls !== 'UNKNOWN_DATASET') {
+      seen.add(d.datasetId);
+      anyResolved = true;
+    }
+  }
+
+  // No resolvable source at all is not "permitted by default".
+  if (!anyResolved) return { datasets: [], rights_display: 'UNKNOWN_DATASET' };
+  return { datasets: [...seen].sort(), rights_display: weakest };
+}
+
 function toWireEvent(sig: ClassifiedSignal): WireFlowEvent {
   const dominant = [...sig.legs].sort((a, b) => b.totalPremium - a.totalPremium)[0];
   const leg = dominant ?? sig.legs[0]!;
@@ -532,7 +624,8 @@ function toWireEvent(sig: ClassifiedSignal): WireFlowEvent {
   const spot = stats?.underlyingPrice ?? null;
 
   const origins = sig.printIds.map((id) => printSource.get(id)).filter(Boolean);
-  const { source, synthetic } = originOf(sig);
+  const { source, sources, synthetic } = originOf(sig);
+  const rights = displayRightsOf(sources);
   const iv = origins.find((o) => o?.iv !== undefined)?.iv ?? null;
   const delta = origins.find((o) => o?.delta !== undefined)?.delta ?? null;
 
@@ -602,6 +695,8 @@ function toWireEvent(sig: ClassifiedSignal): WireFlowEvent {
     spread_guess: sig.spreadGuess,
     print_ids: sig.printIds,
     synthetic,
+    datasets: rights.datasets,
+    rights_display: rights.rights_display,
   };
 }
 

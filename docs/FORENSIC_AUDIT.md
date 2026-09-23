@@ -504,9 +504,18 @@ rather than encoding this year's DST rule as arithmetic.
   about a day earlier than this returns. SPXW weeklys are PM-settled and are
   correct. Separating them needs per-product settlement data this tree does
   not carry.
-- **Half-days and holidays.** An early close is 13:00 ET. A holiday calendar
-  is a thing to maintain, and CLAUDE.md records what happened the last time one
-  was assumed instead: a `MARKET OPEN` indicator green on Thanksgiving.
+- **Half-days and holidays.** ~~A holiday calendar is a thing to maintain.~~
+  **Partly closed 2026-09-23:** `backend/src/market/calendar.ts` is an
+  effective-dated table with a hard `COVERAGE` bound — a date outside it
+  returns `UNKNOWN`, never an extrapolated verdict. The objection recorded here
+  was never to a calendar but to an *assumed* one that keeps answering
+  confidently after its year has passed; a bound that expires loudly does not
+  have that failure mode, and §15/§73 require exactly this. 8 tests, 5
+  mutations, and the load-bearing assertion is `2027-11-25 → UNKNOWN` rather
+  than `Thanksgiving → HOLIDAY`. **Not yet wired into `expiryInstant`**, which
+  still returns 16:00 ET on a 13:00 half-day, nor into `coverage.ts`, which
+  still declines to emit `MARKET_CLOSED` — both are behaviour changes and get
+  their own reviewed step.
 
 **A note on the guard, since it is the interesting part.** The first version
 carried a date-shape regex in front of the lookup. The mutation that deleted it
@@ -514,6 +523,91 @@ failed **no test** — the round-trip check already rejects everything it would
 have. An unreachable guard is a check with nothing to check, so it was removed
 rather than kept for comfort, and the rejection test was widened to prove the
 remaining guard does the work.
+
+---
+
+## F-16 — Rights lineage stopped at the API boundary ✅ FIXED
+
+**Measured 2026-09-23.** `SignalRecord` carries `source`, `datasetId` and
+`rightsClass` on every persisted row. `FlowEvent` — the wire shape behind
+`/api/flow`, the `flow_batch` socket event, and the CSV export in
+`FlowFeed.tsx` — carries **none of the three**. `grep -c` for
+`rights_class|dataset_id|datasetId` returns **0** in both `frontend/lib/types.ts`
+and `flowEngineAdapter.ts`.
+
+So §22's taint propagation holds inside the database and stops at the door.
+The store, which nothing exports from, knows each row's provenance; the CSV a
+reader actually downloads does not.
+
+**Why the gate that exists does not cover this.** Rights are enforced at
+exactly two points: `mayOperateConnector` before a connector starts (DISPLAY)
+and `classifySource(…, 'PERSIST')` in the recorder and the mark registry. §23
+names that pattern specifically — *"Do not place one rights check only at
+connector startup and assume the problem is solved"* — and lists API SERVE,
+WEBSOCKET and CSV EXPORT as separate gates. None exists.
+
+**Scope, stated precisely, because overclaiming here would be the same defect.**
+This is **not** currently leaking prohibited data. The connector gate refuses
+`PROHIBITED` for DISPLAY *before* `start()`, so a prohibited dataset never
+produces a print at all — Yahoo is refused and emits nothing. And today every
+row on the wire is simulation or chain-derived, both of which the wire *does*
+mark, via `synthetic`.
+
+**It is a trap on the path the operator is being asked to fund.** The moment a
+licensed feed is connected — which is exactly what `PROVIDER_DECISION_RECORD.md`
+asks for — a CSV of real vendor prints leaves the building with no dataset
+attribution and no rights class, and §152 is explicit that *"an authenticated
+user is not automatically permitted to export licensed raw market data."* That
+is the same shape as F-2: correct-looking code with a live trap waiting for the
+first real OPRA feed.
+
+### Fixed
+
+`FlowEvent` carries `datasets: string[]` and `rights_display`, populated by
+`displayRightsOf()` from **every** contributing source — plural, because a
+cluster spans sources and the recorder already refuses to ignore that. The CSV
+export gains both columns. Verified on a live boot, not only in tests:
+`datasets: ["SIMULATION"], rights_display: "PERMITTED"`.
+
+**`rights_display`, not `rights_class`.** It is the DISPLAY axis and
+deliberately not the recorder's PERSIST decision, which differs for the same
+dataset — Finnhub is PERMITTED to display and PROHIBITED to persist. One field
+answering two questions is the defect this repo hit with `synthetic`, with
+`connected` and with `excursion`.
+
+The class published is the **weakest** across contributing datasets, the same
+fail-closed rule the recorder applies when it refuses on any refused source: a
+cluster mixing a PERMITTED print with an UNVERIFIED one is not permitted, and
+publishing the strongest class would let one clean print launder the rest.
+
+### Four things the mutation pass found that the fixture could not
+
+1. **`DISPLAY_RANK` as `Record<string, number>` needed a `?? 0`,** which
+   `defaultedReadings.test.ts` refused by name. Keyed by the union instead, the
+   lookup is total and no default is needed — `nominalHorizonMs`'s lesson.
+2. **Weakest-vs-strongest and empty-cluster-defaults-to-PERMITTED both passed
+   every fixture-driven test**, because every row in `flow.json` came from
+   `simulation` alone and no recorded signal mixes datasets or lacks one. The
+   recovery-mutation lesson again: an assertion about a sample that never
+   reaches the branch passes vacuously. `displayRightsOf` is exported and
+   driven directly.
+3. **An unregistered source published `datasets: ["source:unknown"]`** — a
+   placeholder `classifySource` mints, sitting in the CSV's Datasets column
+   beside real registry ids where a reader sorting the column could not tell
+   them apart. Only registered datasets are named now; the class already says
+   the row could not be attributed. **This was in the first draft of the fix**
+   and was exposed by a mutation that turned out to be *equivalent*, which is
+   how the dead branch hiding it came to light.
+4. **The adapter emitting `datasets: []` passed all 75 tests**, because the
+   fixture holds what a past boot produced and cannot witness the adapter
+   ceasing to populate it. Guarded positionally, like the grader's `continue`.
+
+### What this does not close
+
+`/api/flow` and the socket now *carry* the lineage; nothing yet *gates* on it.
+§23's FETCH / PERSIST / API-SERVE / WEBSOCKET / EXPORT / MODEL-TRAINING gates
+are still two of six. Carrying provenance is the precondition for gating on it,
+not the gate.
 
 ---
 
@@ -667,3 +761,4 @@ one-off command rather than in a committed test.
 | F-9 | `excursion` misnamed | **FIXED**, 3 tests, 3 mutations — renamed in TS and SQL, migration applied to the live database |
 | F-10 | Universal 20:00Z expiry | **PARTLY FIXED**, 6 tests, 3 mutations; AM-settlement and holidays open |
 | F-11 | Plaintext `api_keys.key_value`; disclosed credentials | OPEN, **external** |
+| F-16 | Rights lineage stopped at the API boundary | **FIXED**, 10 tests, 6 mutations — wire and CSV carry `datasets` + `rights_display` |
