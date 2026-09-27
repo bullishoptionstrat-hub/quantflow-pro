@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { getIngestionStatus, getSignalHistoryStatus } from '../ingestion/index';
 import { getEnrichmentStatus } from '../enrichment/index';
+import { marketSessionAt } from '../market/session';
 
 const router = Router();
 
@@ -18,6 +19,13 @@ router.get('/', (_req, res) => {
     // healthy while discarding every signal it classifies, and that failure is
     // invisible until someone asks for a track record months later.
     history: getSignalHistoryStatus(),
+    /**
+     * Whether the market is open, from the published calendar rather than from
+     * a weekday-and-clock guess. Served here because `/api/health` is the one
+     * unauthenticated payload the browser can read on every page — including
+     * `/login`, where the sidebar also mounts.
+     */
+    session: marketSessionAt(Date.now()),
     uptime: Math.floor(process.uptime()),
     memory: {
       heapUsedMB: Math.round(process.memoryUsage().heapUsed / 1_048_576),

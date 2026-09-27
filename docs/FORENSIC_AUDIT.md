@@ -863,6 +863,68 @@ reason, following the `unparsedFrames` precedent immediately above it.
 
 ---
 
+## F-18 — "Is the market open" was answered in the browser, by a clock ✅ FIXED
+
+`frontend/lib/utils.ts` held `isRegularHours()`: a weekday test and a hardcoded
+09:30–16:00 window, computed in the browser with no calendar behind it. The
+sidebar painted its result green on every page. Its own docstring named the cost:
+
+> "There is no holiday calendar here, so Thanksgiving, Good Friday and every
+> other full closure read as open, and half-days read as open past the 13:00
+> close. Adding a calendar means maintaining one."
+
+CLAUDE.md records the function being **renamed rather than fixed** on exactly
+that reasoning. **A calendar is now maintained**, so the justification has
+expired — which is this document's own recurring defect one level up: a claim
+about the code that the code no longer supports.
+
+**The fix is the F-16 shape: the backend knows, so the browser reads.**
+`backend/src/market/session.ts` combines the calendar with a clock and
+`/api/health` publishes the verdict; `frontend/lib/marketSession.ts` is the one
+reader. The table is **not** copied into the frontend — that would be a second
+calendar to keep correct, which is what cost the ticker tape seven tickers and
+the settings page three hand-maintained lists. `isRegularHours()` is **deleted**
+rather than left beside the new reader, and a source scan forbids any local
+weekday check or holiday name in `frontend/`.
+
+**Five states, because there are five facts.** `OPEN`,
+`CLOSED_OUTSIDE_HOURS`, `CLOSED_HOLIDAY`, `CLOSED_WEEKEND` and `UNKNOWN`.
+Holiday and weekend are kept apart so a reader is not sent to a holiday schedule
+to discover it is Saturday. And **`UNKNOWN` is never rendered as closed** — past
+`COVERAGE` the calendar refuses to answer, and converting "cannot say" into
+"closed" is the same flattering move `coverage.ts` refuses by name. The label
+reads `HOURS UNKNOWN` in grey, which is also what a backend that did not answer
+produces, and what a backend older than the field produces.
+
+**The calendar gained the published open**, 09:30, from the same schedules as the
+holiday dates and the 13:00 closes. It is carried as data rather than assumed by
+callers for the reason the close is: an assumed open is what let the green dot
+survive a half-day afternoon.
+
+**Why this is not in `calendar.ts`.** That module is deliberately clock-free —
+`sessionOn` takes a date string so no timezone rule can hide inside a table
+lookup — and a test asserts it never reads `Date.now()`.
+
+**Verification.** 9 backend tests, 8 frontend tests, 12 mutations. Confirmed on
+a live boot: `state: CLOSED_WEEKEND`, basis *"2026-09-27 is a Sunday"*,
+`nowMinutesEt: 400` from 10:40Z, which is EDT working. Stated plainly: a Sunday
+is the one case the old check also got right, so that boot proves the **wiring**
+and the half-day tests prove the **fix**.
+
+**Two mutations are worth recording rather than counting.** Hardcoding the open
+to `09:30` **passed every test** — an *equivalent* mutation, because every
+session in this table opens at 09:30, so the literal and the lookup agree. That
+does not make it harmless: the whole argument for carrying the open as data is
+that an assumption is what failed before, and an argument nothing can check is a
+comment that drifts. A source guard now requires both bounds to be read from the
+session, and rejects `570`/`960` — the deleted function's own literals. The
+second: the frontend scan matched **its own explanatory prose**, because the
+comment recording what `isRegularHours` replaced contains the name. That is the
+F-16 CSV guard's mistake repeated exactly, in the same session; both scans strip
+comments first now.
+
+---
+
 ## Status summary
 
 | ID | Finding | Status |
@@ -884,3 +946,4 @@ reason, following the `unparsedFrames` precedent immediately above it.
 | F-11 | Plaintext `api_keys.key_value`; disclosed credentials | OPEN, **external** |
 | F-16 | Rights lineage stopped at the API boundary | **FIXED**, 10 tests, 6 mutations — wire and CSV carry `datasets` + `rights_display` |
 | F-17 | Unreadable expiry published as 0DTE with a fabricated OCC symbol | **FIXED**, 8 tests, 7 mutations — gated at the seam, counted on `/api/health`, verified on a live boot |
+| F-18 | Session state guessed in the browser from a weekday-and-clock check | **FIXED**, 17 tests, 12 mutations — published from the calendar on `/api/health`, local helper deleted |

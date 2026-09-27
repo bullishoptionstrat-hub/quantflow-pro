@@ -91,12 +91,30 @@ export type SessionKind =
 
 export interface Session {
   kind: SessionKind;
+  /**
+   * Wall-clock open in `America/New_York`, or null when not a session.
+   *
+   * Uniform at 09:30 across every session in this table's coverage, including
+   * the early closes — a half-day is a short afternoon, not a late start. It is
+   * carried as a field rather than assumed by callers for the reason the close
+   * is: an assumed open is what let a `MARKET OPEN` dot stay green past a
+   * 13:00 close, and a caller that has to supply one will supply a guess.
+   */
+  openHour: number | null;
+  openMinute: number | null;
   /** Wall-clock close in `America/New_York`, or null when not open. */
   closeHour: number | null;
   closeMinute: number | null;
   /** Why this verdict — carried so a reader never has to guess the basis. */
   basis: string;
 }
+
+/**
+ * Regular open, in `America/New_York`. From the same published schedules as
+ * the holiday dates and the 13:00 early closes, read on the same date.
+ */
+const OPEN_HOUR = 9;
+const OPEN_MINUTE = 30;
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -115,13 +133,15 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 export function sessionOn(isoDate: string): Session {
   if (!ISO_DATE.test(isoDate)) {
     return {
-      kind: 'UNKNOWN', closeHour: null, closeMinute: null,
+      kind: 'UNKNOWN', openHour: null, openMinute: null,
+      closeHour: null, closeMinute: null,
       basis: `"${isoDate}" is not a YYYY-MM-DD date`,
     };
   }
   if (isoDate < COVERAGE.from || isoDate > COVERAGE.to) {
     return {
-      kind: 'UNKNOWN', closeHour: null, closeMinute: null,
+      kind: 'UNKNOWN', openHour: null, openMinute: null,
+      closeHour: null, closeMinute: null,
       basis:
         `${isoDate} is outside the calendar's coverage ` +
         `(${COVERAGE.from}..${COVERAGE.to}, ${SOURCE}, read ${READ_AT}). ` +
@@ -135,24 +155,28 @@ export function sessionOn(isoDate: string): Session {
   const day = new Date(`${isoDate}T12:00:00Z`).getUTCDay();
   if (day === 0 || day === 6) {
     return {
-      kind: 'WEEKEND', closeHour: null, closeMinute: null,
+      kind: 'WEEKEND', openHour: null, openMinute: null,
+      closeHour: null, closeMinute: null,
       basis: `${isoDate} is a ${day === 0 ? 'Sunday' : 'Saturday'}`,
     };
   }
   if (HOLIDAYS_2026.has(isoDate)) {
     return {
-      kind: 'HOLIDAY', closeHour: null, closeMinute: null,
+      kind: 'HOLIDAY', openHour: null, openMinute: null,
+      closeHour: null, closeMinute: null,
       basis: `${isoDate} is a published exchange holiday (${SOURCE})`,
     };
   }
   if (EARLY_CLOSE_2026.has(isoDate)) {
     return {
-      kind: 'EARLY_CLOSE', closeHour: 13, closeMinute: 0,
+      kind: 'EARLY_CLOSE', openHour: OPEN_HOUR, openMinute: OPEN_MINUTE,
+      closeHour: 13, closeMinute: 0,
       basis: `${isoDate} is a published early close, 13:00 ET (${SOURCE})`,
     };
   }
   return {
-    kind: 'REGULAR', closeHour: 16, closeMinute: 0,
+    kind: 'REGULAR', openHour: OPEN_HOUR, openMinute: OPEN_MINUTE,
+    closeHour: 16, closeMinute: 0,
     basis: `${isoDate} is a regular session, 16:00 ET`,
   };
 }

@@ -812,6 +812,8 @@ test('the alerts page distinguishes a dead feed from a quiet one', () => {
 const SIDEBAR = join(FRONTEND, 'components', 'layout', 'Sidebar.tsx');
 const HEATMAP = join(FRONTEND, 'app', 'heat-map', 'page.tsx');
 const UNUSUAL = join(FRONTEND, 'components', 'flow', 'UnusualActivity.tsx');
+const published = readFileSync(
+  join(__dirname, '..', 'src', 'market', 'session.ts'), 'utf8');
 
 test('the socket flag is not read as a claim about the data', () => {
   const code = readFileSync(SIDEBAR, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
@@ -820,13 +822,47 @@ test('the socket flag is not read as a claim about the data', () => {
   assert.match(code, /synthetic/, 'whether a print is constructed is per print');
 });
 
-test('the session indicator claims only the window it checks', () => {
+test('the session indicator reads the calendar rather than a local clock', () => {
+  // This guard used to REQUIRE `isRegularHours` and FORBID `MARKET OPEN`, on the
+  // premise that no holiday calendar existed. Both premises have flipped: the
+  // calendar is in the engine, `/api/health` publishes the verdict, and the
+  // local helper is deleted — so `MARKET OPEN` is now a supported claim.
+  //
+  // Re-pointed rather than deleted, the way `finnhubSpot.test.ts` was when its
+  // own prediction came true, and strictly stronger for it: instead of policing
+  // a function name and a string, it asserts that nothing in the browser
+  // computes the answer at all.
   const utils = readFileSync(join(FRONTEND, 'lib', 'utils.ts'), 'utf8');
-  assert.ok(!/export function isMarketOpen/.test(utils),
-    'there is no holiday calendar behind it');
-  assert.match(utils, /export function isRegularHours/, 'name it for what it computes');
-  const code = readFileSync(SIDEBAR, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
-  assert.ok(!/MARKET OPEN|MARKET CLOSED/.test(code), 'the sidebar must not assert it either');
+  assert.ok(!/export function (isMarketOpen|isRegularHours)/.test(utils),
+    'the browser must not compute the session — the backend publishes it');
+
+  const code = readFileSync(SIDEBAR, 'utf8').replace(/\/\*[\s\S]*?\*\/|\{\/\*[\s\S]*?\*\/\}|\/\/[^\n]*/g, '');
+  assert.match(code, /useMarketSession\(\)/, 'the sidebar reads the published verdict');
+  assert.ok(!/getDay\(\)/.test(code), 'and does not decide a weekday itself');
+
+  // And the field it reads is one the backend actually sends. The frontend's
+  // interface is an assertion about a separate process, which is the whole
+  // reason this file exists.
+  const session = readFileSync(join(FRONTEND, 'lib', 'marketSession.ts'), 'utf8');
+  const route = readFileSync(join(__dirname, '..', 'src', 'routes', 'health.ts'), 'utf8');
+  assert.match(route, /session: marketSessionAt/);
+  for (const field of [
+    'state', 'date', 'nowMinutesEt', 'openMinutesEt', 'closeMinutesEt',
+    'basis', 'source', 'readAt', 'coverage',
+  ]) {
+    assert.match(session, new RegExp(`\\b${field}\\b`),
+      `the frontend declares ${field}`);
+    assert.match(published, new RegExp(`\\b${field}\\b`),
+      `and src/market/session.ts publishes ${field} — a field the UI reads and ` +
+      'the API does not send is this repo\'s single most repeated defect');
+  }
+  // Every state the frontend renders must be one the backend can produce.
+  for (const st of [
+    'OPEN', 'CLOSED_OUTSIDE_HOURS', 'CLOSED_HOLIDAY', 'CLOSED_WEEKEND', 'UNKNOWN',
+  ]) {
+    assert.match(published, new RegExp(`'${st}'`), `backend can emit ${st}`);
+    assert.match(session, new RegExp(`'${st}'`), `frontend handles ${st}`);
+  }
 });
 
 test('the heat map does not describe a window as the whole tape', () => {

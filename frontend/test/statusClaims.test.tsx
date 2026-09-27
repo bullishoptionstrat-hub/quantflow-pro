@@ -24,7 +24,6 @@ vi.mock('next/navigation', () => ({ usePathname: () => '/flow' }))
 import HeatMapPage from '@/app/heat-map/page'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { useStore } from '@/store/useStore'
-import { isRegularHours } from '@/lib/utils'
 import type { FlowEvent } from '@/lib/types'
 
 const flow = (o: Partial<FlowEvent> = {}): FlowEvent => ({
@@ -37,6 +36,34 @@ const flow = (o: Partial<FlowEvent> = {}): FlowEvent => ({
 beforeEach(() => {
   useStore.setState({ flowEvents: [], powerAlerts: [], connected: false } as never)
 })
+
+/**
+ * Every frontend source file, discovered rather than listed.
+ *
+ * This was `['app', 'components', 'lib']` inside one test and missed `hooks/`,
+ * where the desktop notification announced a real Schwab feed as
+ * "🧪 SIMULATED" — a hand-listed scope, which is the failure this repo has now
+ * found three times. Hoisted here because two guards below need it, and two
+ * copies of a scope is how one of them would drift narrow again.
+ */
+const ROOT = join(__dirname, '..')
+const files: string[] = (() => {
+  const out: string[] = []
+  const walk = (d: string) => {
+    for (const n of readdirSync(d)) {
+      if (n === 'node_modules' || n === '.next' || n === 'test') continue
+      const p = join(d, n)
+      if (statSync(p).isDirectory()) walk(p)
+      else if (/\.tsx?$/.test(n)) out.push(p)
+    }
+  }
+  for (const d of readdirSync(ROOT)) {
+    if (['node_modules', '.next', 'test', 'public'].includes(d)) continue
+    const p = join(ROOT, d)
+    if (statSync(p).isDirectory()) walk(p)
+  }
+  return out
+})()
 
 describe('the sidebar reports transport as transport', () => {
   test('a connected socket is not a claim about the data', () => {
@@ -91,27 +118,11 @@ describe('the sidebar reports transport as transport', () => {
     // `app/dark-pool/page.tsx` is excluded on purpose: it branches on
     // `p.source === 'simulation'`, which really is generated data, and
     // "SIMULATED" there is the correct word.
-    const ROOT = join(__dirname, '..')
-    const files: string[] = []
-    const walk = (d: string) => {
-      for (const n of readdirSync(d)) {
-        if (n === 'node_modules' || n === '.next' || n === 'test') continue
-        const p = join(d, n)
-        if (statSync(p).isDirectory()) walk(p)
-        else if (/\.tsx?$/.test(n)) files.push(p)
-      }
-    }
     // Every source directory, discovered — not ['app', 'components', 'lib'],
     // which is what this guard said first and which missed `hooks/`, where
     // the *desktop notification* announced a real Schwab feed as
     // "🧪 SIMULATED". A hand-listed scope is the exact failure this repo has
     // now found three times.
-    for (const d of readdirSync(ROOT)) {
-      if (['node_modules', '.next', 'test', 'public'].includes(d)) continue
-      const p = join(ROOT, d)
-      if (statSync(p).isDirectory()) walk(p)
-    }
-
     const offenders: string[] = []
     for (const f of files) {
       const rel = f.slice(ROOT.length + 1)
@@ -124,12 +135,36 @@ describe('the sidebar reports transport as transport', () => {
     expect(offenders).toEqual([])
   })
 
-  test('the session indicator claims only what it checks', () => {
-    // No holiday calendar exists here, so "MARKET OPEN" was an assertion the
-    // code could not support.
+  test('the session indicator says it cannot say, before the backend answers', () => {
+    // `MARKET OPEN` used to be asserted from a weekday-and-clock check with no
+    // calendar behind it. The verdict now arrives on `/api/health`, so the
+    // first render — before any fetch resolves — must claim nothing rather
+    // than guess, which is the `Panel<'loading'>` rule the news page follows.
     const { container } = render(<Sidebar />)
-    expect(container.textContent).toMatch(isRegularHours() ? /REGULAR HOURS/ : /OUTSIDE HOURS/)
-    expect(container.textContent).not.toMatch(/MARKET OPEN|MARKET CLOSED/)
+    expect(container.textContent).toMatch(/HOURS UNKNOWN/)
+    expect(container.textContent).not.toMatch(/MARKET OPEN|REGULAR HOURS/)
+  })
+
+  test('the frontend holds no second session calendar', () => {
+    // The whole reason the verdict is fetched. A local weekday-and-clock check
+    // is how the old label went green on Thanksgiving, and a copy of the table
+    // here is how the ticker tape ended up with a 2024 price map in front of a
+    // live feed. Neither may come back.
+    const offenders: string[] = []
+    for (const f of files) {
+      const rel = f.slice(ROOT.length + 1)
+      if (rel === 'lib/marketSession.ts') continue   // names them to forbid them
+      const src = readFileSync(f, 'utf8')
+        .replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*|\{\/\*[\s\S]*?\*\/\}/g, '')
+      if (/getDay\(\)/.test(src)) offenders.push(`${rel}: decides a weekday itself`)
+      if (/\bisRegularHours\b|\bisMarketOpen\b/.test(src)) {
+        offenders.push(`${rel}: a local session check`)
+      }
+      if (/Thanksgiving|Juneteenth|Good Friday/.test(src)) {
+        offenders.push(`${rel}: a holiday name — the table belongs in the backend`)
+      }
+    }
+    expect(offenders).toEqual([])
   })
 
   test('no static LIVE pill contradicts the connection dot', () => {
