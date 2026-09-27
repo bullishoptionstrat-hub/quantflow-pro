@@ -925,6 +925,51 @@ comments first now.
 
 ---
 
+## F-19 — `/api/health` is unauthenticated and only one block of it was checked ✅ FIXED
+
+`healthLeak.test.ts` drives `getSignalHistoryStatus()` and asserts the recorder's
+raw error never reaches the wire. That is **one field**. The route also publishes
+`ingestion` (sources, errors, notes, entitlement, rights refusals, mark sources,
+OCC volume, coverage), `enrichment`, `history`, `session`, `uptime` and `memory` —
+and nothing had ever looked at the payload as a whole, on a route this repo's own
+comments call world-readable (`describeHttpError` exists *because* that was
+learned once already, with `sourceErrors`).
+
+**Found from the outside, on a false premise.** A PR-audit bot raised
+`action_required` naming `backend/src/market/session.ts` as a "security-sensitive
+path" — a match on the word *session*. That file reads a calendar and a clock and
+touches no credential, no request input and no network; verified by grep, and the
+premise is wrong. The **adjacent** question was not: a field had just been added
+to an unauthenticated payload and no guard covered the payload. This is the
+guard-scope failure this document has now recorded six times, so the fix is the
+**whole surface** rather than one more named block.
+
+`backend/test/healthPublicSurface.test.ts` drives the **real router** — express on
+port 0, a real `fetch` — rather than re-composing the four status functions,
+because a test that rebuilds the route is a second copy of it and would keep
+passing after the route began publishing something else. It walks every string in
+the response, at any depth, against credential *shapes* rather than a field list:
+a list of fields fails silent, since a field nobody added to it passes, while a
+pattern that is too narrow fails loud. Each pattern is anchored to a real
+credential prefix rather than to the word "key", because the dangerous error here
+is a pattern too broad.
+
+The detector is exercised against a planted payload in the real shapes, since
+with the route clean it has nothing live left to catch and a check with nothing to
+check stops working quietly — the `committedSecrets.test.ts` lesson. And the
+`session` block's key set is pinned, so a new key on that route gets a look.
+
+**3 tests, 3 mutations**, each failing the intended test: a vendor error carrying
+`?apikey=` into `sourceErrors`, an internal hostname added to the session block,
+and the scan reading only the top level.
+
+**What it does not do:** it inspects one live payload from this container, so a
+string that only appears under a failure this boot did not produce is unscanned.
+The shapes are checked wherever they *do* appear, which is why the planted-payload
+test matters more than the live one.
+
+---
+
 ## Status summary
 
 | ID | Finding | Status |
@@ -947,3 +992,4 @@ comments first now.
 | F-16 | Rights lineage stopped at the API boundary | **FIXED**, 10 tests, 6 mutations — wire and CSV carry `datasets` + `rights_display` |
 | F-17 | Unreadable expiry published as 0DTE with a fabricated OCC symbol | **FIXED**, 8 tests, 7 mutations — gated at the seam, counted on `/api/health`, verified on a live boot |
 | F-18 | Session state guessed in the browser from a weekday-and-clock check | **FIXED**, 17 tests, 12 mutations — published from the calendar on `/api/health`, local helper deleted |
+| F-19 | Unauthenticated `/api/health` checked one block, not the payload | **FIXED**, 3 tests, 3 mutations — the real router driven, every string scanned at any depth |
