@@ -4,9 +4,9 @@
  * This repository refused a holiday calendar twice, for a reason worth keeping
  * in front of whoever reads this file: `isMarketOpen()` once checked a weekday
  * and a clock with no calendar at all, so `MARKET OPEN` was green on
- * Thanksgiving and through a half-day's afternoon — and `coverage.ts` still
- * declines to emit `MARKET_CLOSED` because *"the union's `MARKET_CLOSED` needs
- * a holiday calendar this codebase does not have"*.
+ * Thanksgiving and through a half-day's afternoon, and `coverage.ts` declined
+ * to emit `MARKET_CLOSED` because *"the union's `MARKET_CLOSED` needs a holiday
+ * calendar this codebase does not have"*. Both now read this table.
  *
  * **The objection was never to a calendar. It was to an ASSUMED one** — a
  * table with no stated coverage that keeps answering confidently after the
@@ -23,11 +23,21 @@
  * constants buried in a comment. `SOURCE` and `READ_AT` are here for that
  * reason, and `docs/` records the review date.
  *
+ * **Why it lives inside the engine.** `expiry.ts` needs it, and that file is
+ * *vendored* — `backend/src/flow-engine/` is a byte-identical copy of this
+ * directory, held so by `vendorMirror.test.ts`. The alternative was threading a
+ * close lookup through `expiryInstantMs` → `daysToExpiry` → `score.ts`, and an
+ * **optional** parameter there would be the failure `classifyWindow` refuses by
+ * name: a caller that forgets it silently gets the old answer, and the
+ * degradation is invisible because every date classifies exactly as it did
+ * before. So the table is engine reference data, at the cost of two edits a
+ * year instead of one — and the mirror guard makes a missed second edit loud.
+ *
  * **What this is NOT.** It is not settlement data. An AM-settled SPX monthly
  * stops trading the preceding Thursday, which is a *product* fact this table
- * knows nothing about — F-10's other half stays open and `expiryInstant` is
- * still wrong for those. A calendar answers "was the market open that day";
- * it does not answer "could this contract still be traded".
+ * knows nothing about — that half of F-10 stays open. A calendar answers "was
+ * the market open that day"; it does not answer "could this contract still be
+ * traded".
  */
 
 /** Effective-dated source for the facts below (§15). */
@@ -231,8 +241,14 @@ export function closureThroughout(
     };
   }
 
-  const last = marketDateOf(endMs);
-  if (last === null) return { closed: false, basis: 'window end is not a readable instant' };
+  const firstDate = marketDateOf(startMs);
+  if (firstDate === null) {
+    return { closed: false, basis: 'window start is not a readable instant' };
+  }
+  const lastDate = marketDateOf(endMs);
+  if (lastDate === null) {
+    return { closed: false, basis: 'window end is not a readable instant' };
+  }
 
   const seen: string[] = [];
   // Step by whole days from the start instant. The final iteration is pinned
@@ -251,10 +267,17 @@ export function closureThroughout(
     if (t >= endMs) break;
   }
 
+  // Indexed reads are narrowed rather than asserted. The module's tsconfig sets
+  // `noUncheckedIndexedAccess` and the backend's does not, so `seen[0]` is
+  // `string | undefined` here and `string` there — the vendored copy typechecks
+  // under the LOOSER config, which is how this line passed for four days while
+  // `${seen[seen.length - 1]}` could have rendered the literal "undefined" into
+  // a gap row's reason. `firstDate`/`lastDate` are already narrowed above.
+  const only = seen.length === 1 ? seen[0] : undefined;
   return {
     closed: true,
-    basis: seen.length === 1
-      ? sessionOn(seen[0]).basis
-      : `every date in ${seen[0]}..${seen[seen.length - 1]} is an established closure`,
+    basis: only !== undefined
+      ? sessionOn(only).basis
+      : `every date in ${firstDate}..${lastDate} is an established closure`,
   };
 }

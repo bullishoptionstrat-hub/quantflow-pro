@@ -510,7 +510,7 @@ rather than encoding this year's DST rule as arithmetic.
   correct. Separating them needs per-product settlement data this tree does
   not carry.
 - **Half-days and holidays.** ~~A holiday calendar is a thing to maintain.~~
-  **Partly closed 2026-09-23:** `backend/src/market/calendar.ts` is an
+  **Partly closed 2026-09-23:** `flow-engine/calendar.ts` is an
   effective-dated table with a hard `COVERAGE` bound — a date outside it
   returns `UNKNOWN`, never an extrapolated verdict. The objection recorded here
   was never to a calendar but to an *assumed* one that keeps answering
@@ -525,9 +525,41 @@ rather than encoding this year's DST rule as arithmetic.
   `openGap.kind = MARKET_CLOSED`, basis *"2026-09-26 is a Saturday"*, taken at
   00:08 **UTC on the 27th**, which is the instant→market-date conversion doing
   the one thing it exists for. 18 mutations, every one biting exactly the
-  intended test. **`expiryInstant` is still not wired** and returns 16:00 ET on
-  a 13:00 half-day; it is a behaviour change inside the *vendored* engine (two
-  byte-identical copies held by `vendorMirror.test.ts`) and gets its own step.
+  intended test.
+
+**Where the calendar lives, and why that is the load-bearing decision.** It
+moved **into** the engine (`quantflow-modules/flow-engine/src/calendar.ts`, with
+the vendored copy at `backend/src/flow-engine/calendar.ts`), because `expiry.ts`
+needs it and that file is vendored. The alternative was threading a close lookup
+through `expiryInstantMs` → `daysToExpiry` → `score.ts`, and an **optional**
+parameter there would be the exact failure `classifyWindow` refuses by name: a
+caller that forgets it silently gets the old answer, and the degradation is
+invisible because every date classifies as it did before. The cost is two edits
+a year instead of one, and `vendorMirror.test.ts` makes a missed second edit
+loud — confirmed, since every mutation that touched only the backend copy also
+tripped it.
+
+**The fallback is what makes this safe, and it is not obvious.** `ingestPrint`
+gates on `Number.isNaN(expiryInstantMs(print.expiry))` (F-17), so returning
+`NaN` for a date the calendar will not answer for would turn `COVERAGE` into a
+**cliff that silently drops every print with a 2027 expiry** — every LEAPS
+today, and everything at all once the year rolls over. So `UNKNOWN`, `HOLIDAY`
+and `WEEKEND` all fall back to the regular close, `sessionCloseFor` reports
+`basis: 'fallback'` with the reason, and a test asserts the six non-answering
+cases are *never* `NaN`. An unreadable *string* is still `NaN` — a different
+refusal, and it stays intact.
+
+**The move found a four-day-old defect, because the engine is typechecked more
+strictly than the copy that ships.** The module's `tsconfig.json` sets
+`noUncheckedIndexedAccess` and the backend's does not, so `calendar.ts` passed
+the backend's typecheck for four days carrying
+`` `every date in ${seen[0]}..${seen[seen.length - 1]}` `` — under the strict
+flag those are `string | undefined`, and a gap row's reason could have rendered
+the literal `"undefined"`. It was found by running the module's typecheck **by
+hand**, which is exactly the check nobody runs, so `backend/npm run typecheck`
+now runs it (`typecheck:engine`) and `vendorMirror.test.ts` fails if either the
+flag or that script is removed. Byte-identity was never the whole obligation:
+the canonical copy is bound by a stricter contract than the vendored one.
 
 **A note on the guard, since it is the interesting part.** The first version
 carried a date-shape regex in front of the lookup. The mutation that deleted it
@@ -848,7 +880,7 @@ reason, following the `unparsedFrames` precedent immediately above it.
 | F-7 | No entitled options-event source | OPEN, **external blocker** |
 | F-8 | No corrections / cancels / ordering | OPEN |
 | F-9 | `excursion` misnamed | **FIXED**, 3 tests, 3 mutations — renamed in TS and SQL, migration applied to the live database |
-| F-10 | Universal 20:00Z expiry | **PARTLY FIXED**, 6 tests, 3 mutations; calendar built and wired into `coverage.ts` (14 tests, 18 mutations); AM-settlement and `expiryInstant` half-days open |
+| F-10 | Universal 20:00Z expiry | **PARTLY FIXED** — DST, the calendar, `coverage.ts` and `expiryInstant` half-days all closed (46 tests, 29 mutations); **AM-settlement open** |
 | F-11 | Plaintext `api_keys.key_value`; disclosed credentials | OPEN, **external** |
 | F-16 | Rights lineage stopped at the API boundary | **FIXED**, 10 tests, 6 mutations — wire and CSV carry `datasets` + `rights_display` |
 | F-17 | Unreadable expiry published as 0DTE with a fabricated OCC symbol | **FIXED**, 8 tests, 7 mutations — gated at the seam, counted on `/api/health`, verified on a live boot |

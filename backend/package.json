@@ -6,11 +6,12 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "test": "tsx --test test/*.test.ts",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json && npm run typecheck:engine",
     "verify": "npm run typecheck && npm test",
     "preview:capture": "tsx tools/preview/capture.ts",
     "preview": "tsx tools/preview/serve.ts",
-    "collection:doctor": "tsx tools/collection/doctor.ts"
+    "collection:doctor": "tsx tools/collection/doctor.ts",
+    "typecheck:engine": "tsc --noEmit -p ../quantflow-modules/flow-engine/tsconfig.json"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.43.1",

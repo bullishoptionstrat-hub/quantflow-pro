@@ -22,7 +22,7 @@
  * **`MARKET_CLOSED` used to be refused here outright**, on the grounds that
  * classifying a window as benignly shut "needs a holiday calendar this
  * codebase does not have". That was true when it was written and it is not
- * now: `market/calendar.ts` is effective-dated, carries a hard `COVERAGE`
+ * now: `flow-engine/calendar.ts` is effective-dated, carries a hard `COVERAGE`
  * bound, and answers `UNKNOWN` outside it.
  *
  * The objection it recorded was never to the verdict — it was to *guessing*
@@ -45,7 +45,7 @@
  * union's own words) and silently removes the hard cases from every rate
  * computed over the window.
  */
-import { closureThroughout } from '../market/calendar';
+import { closureThroughout } from '../flow-engine/calendar';
 import type { CollectionGap, GapKind } from './types';
 
 /** What the runtime can tell us at one instant. */
@@ -112,7 +112,7 @@ export function classifyWindow(
       reason:
         `Market established shut for the whole window: ${closure.basis}. ` +
         'Benign — this does not reduce coverage. Established from the ' +
-        'effective-dated calendar in src/market/calendar.ts, never inferred ' +
+        'effective-dated calendar in src/flow-engine/calendar.ts, never inferred ' +
         'from a date it cannot answer for.',
     };
   }

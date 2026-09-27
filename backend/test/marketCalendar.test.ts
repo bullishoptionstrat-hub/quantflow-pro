@@ -19,7 +19,7 @@ import { join } from 'node:path';
 import {
   sessionOn, isEstablishedClosure, COVERAGE, SOURCE, READ_AT,
   marketDateOf, closureThroughout, MARKET_TZ,
-} from '../src/market/calendar';
+} from '../src/flow-engine/calendar';
 
 test('a date past the coverage window is UNKNOWN, never extrapolated', () => {
   for (const d of ['2027-11-25', '2027-01-01', '2025-12-31', '2030-07-04']) {
@@ -96,7 +96,7 @@ test('the calendar does not claim to answer settlement questions', () => {
   // saying so in the file is what stops the next reader wiring it into
   // `expiryInstant` and believing the problem is closed.
   const src = readFileSync(
-    join(__dirname, '..', 'src', 'market', 'calendar.ts'), 'utf8',
+    join(__dirname, '..', 'src', 'flow-engine', 'calendar.ts'), 'utf8',
   );
   assert.match(src, /AM-settled/, 'the settlement gap is named in the file');
   assert.ok(!/settlement[A-Za-z]*\s*[:(]/.test(
@@ -186,16 +186,34 @@ test('an absurd span is refused rather than walked', () => {
   assert.equal(closureThroughout(Number.NaN, 0).closed, false);
 });
 
-test('the market timezone has one name, shared with the expiry clock', () => {
-  // `flow-engine/expiry.ts` carries its own `MARKET_TZ` and cannot import
-  // across the vendored boundary. Two files naming the exchange's zone is two
-  // places for it to disagree, so the coupling is asserted rather than trusted
-  // — the same move as `outcomeDecision.test.ts` holding two homes of the
-  // decision-time rule to agreement.
+test('the market timezone has exactly one declaration', () => {
+  // `expiry.ts` used to carry its own `MARKET_TZ` because it could not import
+  // across the vendored boundary. Moving the calendar INTO the engine removes
+  // that excuse, so the coupling is collapsed rather than held in agreement —
+  // which is the better version of the `outcomeDecision.test.ts` move: nothing
+  // left to disagree.
   assert.equal(MARKET_TZ, 'America/New_York');
   const expiry = readFileSync(
     join(__dirname, '..', 'src', 'flow-engine', 'expiry.ts'), 'utf8');
-  const m = expiry.match(/MARKET_TZ\s*=\s*["']([^"']+)["']/);
-  assert.ok(m, 'expiry.ts still declares a market timezone');
-  assert.equal(m![1], MARKET_TZ, 'and it is the same zone this calendar uses');
+  assert.ok(!/const\s+MARKET_TZ\s*=/.test(expiry),
+    'expiry.ts must not redeclare the zone — it imports it from ./calendar');
+  assert.match(expiry, /import\s*\{[^}]*MARKET_TZ[^}]*\}\s*from\s*["']\.\/calendar["']/,
+    'and it must actually import it, or the constant is unused and the zone is ' +
+    'wherever Intl happens to default');
+});
+
+test('the calendar and the expiry fallback agree about the regular close', () => {
+  // `expiry.ts` keeps a `CLOSE_HOUR = 16` as the fallback for a date the
+  // calendar will not answer for. If the table's REGULAR close ever moved, the
+  // fallback would silently disagree with every answered date — two homes for
+  // one number, which is the defect this repo keeps closing.
+  const regular = sessionOn('2026-09-24');
+  assert.equal(regular.kind, 'REGULAR');
+  const expiry = readFileSync(
+    join(__dirname, '..', 'src', 'flow-engine', 'expiry.ts'), 'utf8');
+  const h = expiry.match(/const\s+CLOSE_HOUR\s*=\s*(\d+)/);
+  const m = expiry.match(/const\s+CLOSE_MINUTE\s*=\s*(\d+)/);
+  assert.ok(h && m, 'expiry.ts declares its fallback close');
+  assert.equal(Number(h![1]), regular.closeHour);
+  assert.equal(Number(m![1]), regular.closeMinute);
 });

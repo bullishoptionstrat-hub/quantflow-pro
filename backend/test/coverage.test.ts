@@ -142,7 +142,7 @@ test('MARKET_CLOSED is only reachable through the calendar', () => {
       'every MARKET_CLOSED must be guarded by closureThroughout()\'s verdict, ' +
       'never by a weekday-and-clock check decided in this file');
   }
-  assert.match(code, /from '\.\.\/market\/calendar'/,
+  assert.match(code, /from '\.\.\/flow-engine\/calendar'/,
     'and the calendar is the only source of that fact');
   assert.ok(!/getDay\(\)|getUTCDay\(\)/.test(code),
     'coverage.ts must not decide a weekend itself — that is the calendar\'s job, ' +

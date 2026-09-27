@@ -540,7 +540,7 @@ every day is sample.
       nothing. `persistence/coverage.ts` is the writer, on the grader's existing
       tick; `/api/health` carries the open gap. ~~`MARKET_CLOSED` is never
       emitted — that needs a holiday calendar this repo does not have~~
-      **superseded 2026-09-27:** `market/calendar.ts` exists, so the verdict is
+      **superseded 2026-09-27:** `flow-engine/calendar.ts` exists, so the verdict is
       emitted whenever *every* date a window touches is a published closure;
       `UNKNOWN` is still never one, which is where the flattering direction
       actually lives. `/api/health` also carries `coverage.summary` now — the
