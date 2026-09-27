@@ -1,0 +1,71 @@
+# The executor this repository did not have.
+#
+# Until this file, "CI green" on a pull request meant Vercel built the frontend
+# and Supabase skipped its preview — nothing ran the backend, frontend or
+# flow-engine test suites on a push. Their only executor was whoever ran them
+# locally, on a working tree that could differ from the commit. That gap was
+# measured, not hypothesised: commit ee61ad4 was pushed as "714 pass" and is
+# 713/714, because the failing guard reads what git tracks and the new file was
+# untracked when the suite ran.
+#
+# Deliberately minimal: the three suites the docs already name, and both
+# production builds, on every push and pull request. No scanner, no SBOM, no
+# matrix — those are separate decisions for the repository's owner.
+name: verify
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Frontend first: backend/test/socketHandlers.test.ts loads
+      # socket.io-client from frontend/node_modules, so the backend suite
+      # cannot run on a checkout where the frontend is not installed.
+      - name: Install frontend
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install backend
+        working-directory: backend
+        run: npm ci
+
+      - name: Install flow-engine module
+        working-directory: quantflow-modules/flow-engine
+        run: npm ci
+
+      # Backend `typecheck` runs src, test (+ tools) AND the flow-engine
+      # module's stricter tsconfig — the vendored copy is checked under the
+      # looser config, and the module's `noUncheckedIndexedAccess` is what
+      # caught a four-day-old defect in calendar.ts.
+      - name: Backend verify (typecheck + suite)
+        working-directory: backend
+        run: npm run verify
+
+      - name: Frontend verify (typecheck + suite)
+        working-directory: frontend
+        run: npm run verify
+
+      - name: Flow-engine module suite
+        working-directory: quantflow-modules/flow-engine
+        run: npm test
+
+      - name: Backend build
+        working-directory: backend
+        run: npm run build
+
+      - name: Frontend build
+        working-directory: frontend
+        run: npm run build

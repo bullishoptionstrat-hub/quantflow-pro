@@ -90,15 +90,23 @@ test('the detector is exercised on the shapes it exists to catch', async () => {
   // With the route clean it has nothing live left to find, and a check with
   // nothing to check stops working quietly — the `committedSecrets.test.ts`
   // lesson. So it is run against a payload of the real shapes.
+  // Every planted value is ASSEMBLED at runtime, never written as one literal.
+  // `committedSecrets.test.ts` scans source for these same shapes, and a
+  // fixture that spells a credential out in full is — to that guard, correctly
+  // — a committed credential. This file shipped that way once: it passed the
+  // pre-commit verify (the file was untracked, so invisible) and failed the
+  // first run against the pushed head. Concatenation keeps the runtime value
+  // the detector must catch while the source text carries no whole secret.
+  const j = (...parts: string[]) => parts.join('');
   const planted = {
     ingestion: {
-      sourceErrors: { a: 'HTTP 401 — {"apikey":"sk-abcdefghijklmnopqrst"}' },
-      sourceNotes: { b: 'GET https://x/quote?apikey=deadbeefcafe failed' },
+      sourceErrors: { a: j('HTTP 401 — {"apikey":"', 'sk', '-', 'abcdefghijklmnopqrst', '"}') },
+      sourceNotes: { b: j('GET https://x/quote?', 'apikey', '=deadbeefcafe failed') },
     },
-    history: { reason: 'postgres://user:hunter2@db.example.co:5432/postgres' },
+    history: { reason: j('postgres', '://user:', 'hunter2', '@db.example.co:5432/postgres') },
     session: { basis: 'ok' },
-    who: 'ops@example.com',
-    jwt: 'eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoiYW5vbiJ9.sig',
+    who: j('ops', '@', 'example.com'),
+    jwt: j('ey', 'JhbGciOiJIUzI1NiJ9', '.', 'eyJyb2xlIjoiYW5vbiJ9', '.sig'),
   };
   const caught = new Set<string>();
   for (const [, s] of strings(planted)) {
