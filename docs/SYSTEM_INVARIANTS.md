@@ -27,15 +27,42 @@ than quietly listed alongside the others.
 | **INV-014** | Old documentation cannot activate a nonexistent feature. | `renderBlueprint.test.ts` (a variable read by no code fails), `schemaSetup.test.ts` (docs must name `supabase/migrations`). Does **not** cover README feature tables — see F-5. | **PARTIAL** |
 | **INV-015** | A historical research result always identifies its code, data and coverage versions. | `SignalRecord` carries `source`, `datasetId`, `rightsClass`, `decisionBasis`; outcomes carry mark source and stamp. **No** `engineVersion`, `scoreVersion`, `configHash` or `codeCommit` is persisted (§35, §36). | **UNENFORCED** |
 
+
+### Event truth, sessions, contracts, research and rights (Event Model V2, 2026-09-27)
+
+IDs follow the directive's numbering. Every row names a test that fails when the
+invariant is broken — each was confirmed by applying the plausible defect and
+watching the named test fail (commit messages record the mutation passes).
+
+| ID | Invariant | Enforced by | Status |
+|---|---|---|---|
+| **INV-EVENT-001** | A cancellation never makes the original observed event disappear. | `eventModelFixtures.test.ts` (every fixture: each appended trade is in the FINAL view and in `events()`), `eventModelProperties.test.ts` (stored events are frozen; `Reflect.set` refused) | **ENFORCED** |
+| **INV-EVENT-002** | The final corrected tape can differ from the as-known tape, and neither overwrites the other. | fixtures 05, 06, 08, 20 (`ACTIVE` as known, `CANCELLED` final); FINAL is asserted equal to AS_KNOWN_AT(last arrival) for every fixture and 150 generated logs | **ENFORCED** |
+| **INV-EVENT-003** | Late and out-of-sequence events are explicitly classified. | fixtures 03, 04, 09, 12: provider codes → `reportLifecycle`; arrival lateness → `LATE_EVENT` from the reorder buffer; the detector refuses both | **ENFORCED** |
+| **INV-EVENT-004** | No event is finalised before its `availableAt`. | every fixture asserts `finalizedAt ≥ availableAt` for every emission; 300 generated streams in `eventModelProperties.test.ts` | **ENFORCED** |
+| **INV-EVENT-005** | Provider sequence / order uncertainty is never silently treated as chronological certainty. | "order that cannot be established is not tie-broken" (a CNCL over two same-instant reports disputes both); emissions carry `orderBasis: TIE_BROKEN_BY_ID` | **ENFORCED** |
+| **INV-SESSION-001** | Feed availability is not product tradability. | `sessionAuthority.test.ts`: OPRA window `SUPPORTED` while SPY is `UNKNOWN` (07:45); SPX `OPEN` while OPRA is `OUTSIDE_FEED_WINDOW` (21:00) | **ENFORCED** |
+| **INV-SESSION-002** | Product tradability is not research eligibility. | `sessionAuthority.test.ts`: SPX `OPEN` in its curb session, an extended-hours trade `EXCLUDED` from H-001-v2 | **ENFORCED** |
+| **INV-SESSION-003** | Provider session evidence outranks clock inference. | fixtures 14, 16; `sessionAuthority.test.ts` (identifier `1` at 10:00 ET is `EXCLUDED`; clock inference only on basis `NONE`, and only where the rule allows it) | **ENFORCED** |
+| **INV-SESSION-004** | The OPRA ETH transitional encoding stays interpretable while both formats are valid. | fixture 15 (identifier at its default `0` beside `v` → `EXTENDED`, not a conflict); fixture 16 (a conflict needs an explicit, non-default regular value) | **ENFORCED** — on SEARCH_ONLY semantics; see `OPRA_EVENT_SEMANTICS.md` |
+| **INV-CONTRACT-001** | Last trading time is product- and effective-date-specific. | `sessionAuthority.test.ts`: at 10:00 ET on 2026-10-16 SPX (AM) is `LAST_TRADING_DAY_ENDED` while SPXW (PM) is `OPEN`; SPXO before 2026-11-09 is `UNKNOWN`; unknown products carry no fabricated instant | **ENFORCED** — on UNVERIFIED rules |
+| **INV-RESEARCH-001** | No holdout result is viewed without an exposure-ledger entry. | `researchIntegrity.test.ts`: the ledger's shape and closed role vocabulary, and that no row touches H-001-v2's confirmatory or holdout window. A file cannot stop a person opening data; it can make the record of doing so mandatory and checkable | **PARTIAL** — process, mechanically checked where a file can be |
+| **INV-RESEARCH-002** | One economic event cannot become several observations because it generated several prints. | `aggregateNotPrints.test.ts` (INV-004) at the adapter; `researchIntegrity.test.ts` for the meta-event unit H-001-v2 freezes (`research/metaEvents.ts`) | **ENFORCED** |
+| **INV-RIGHTS-001** | Technical accessibility does not promote a rights classification. | `historicalImport.test.ts` "a download is not a permission": `PERMITTED` without the permitting words, or on SEARCH_ONLY evidence, is a manifest problem and blocks the import gate | **ENFORCED** |
+
 ---
 
 ## Invariants this system cannot yet state
 
 Recorded so they are not mistaken for satisfied:
 
-- **Corrections and cancels.** No event type, sequence number or correction
-  linkage exists (F-8). "A signal affected by a correction is recomputed or
-  invalidated" is not expressible today.
+- **Corrections and cancels on the LIVE path.** Event Model V2 represents
+  them (INV-EVENT-001–005) for historical and fixture events, and signal
+  revisions say what a correction means for each kind of research. The live
+  path still enters as `RawPrint`, has no reorder buffer, and persists no V2
+  events — it has no OPRA source to need them (§29). Until the first live
+  OPRA adapter produces V2, "a live signal affected by a correction is
+  revised" is not expressible for live data.
 - **Observation denominators.** `collection_gaps` records *outages*. It does
   not record the subscribed universe, strike/expiry coverage, or
   new-contract discovery, so §49's rule — do not report event frequencies as if

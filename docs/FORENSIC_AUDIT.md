@@ -355,7 +355,7 @@ amount of engineering here removes it.
 
 ---
 
-## F-8 — Corrections and cancels are not modelled ❌ OPEN
+## F-8 — Corrections and cancels are not modelled ⚠️ PARTLY FIXED (historical and fixture paths)
 
 `grep` for correction/cancel semantics in `flow-engine/types.ts` and
 `flowEngineAdapter.ts` returns nothing. `RawPrint` has no `eventType`, no
@@ -367,6 +367,32 @@ correctness requirement the moment one does (§21). Related: there is no
 out-of-order handling either; the engine's watermark assumes roughly-ascending
 arrival, which `RawPrint.ts`'s own comment states as a requirement rather than
 enforcing.
+
+### 2026-09-27 — Event Model V2 (`backend/src/events/`, `docs/EVENT_MODEL_V2.md`)
+
+The audit of 2026-09-27 moved this to P0: a research history accumulated before
+cancels can be represented leaves signals in the record that never should have
+existed, and correcting it later destroys the answer to what the live system
+believed before the cancel arrived. What now exists, for **historical and
+fixture events**:
+
+- an immutable V2 envelope with three clocks and `availableAt`, raw codes kept
+  beside their interpretation, and identity that makes re-import idempotent and
+  a changed record a recorded conflict;
+- an append-only log where a cancel is its own event, with `AS_KNOWN_AT(t)` and
+  `FINAL_CORRECTED` derived — never stored, so neither can overwrite the other;
+- cancel resolution that never guesses (unresolved cancels dispute every trade
+  they could have meant);
+- a reorder buffer with an exact, property-tested lateness bound and
+  `LATE_EVENT` instead of insertion;
+- signal revisions with stated research consequences;
+- twenty golden fixtures for the §10 cases, pinned by a manifest; 34 mutations,
+  each failing its intended test.
+
+**Still open:** the live path enters as `RawPrint`, has no reorder buffer and
+persists no V2 events (it has no OPRA source, §29); nothing persists V2 events
+durably; and every code's meaning is UNVERIFIED or SEARCH_ONLY because the
+OPRA specification is unreachable from this environment.
 
 ---
 
@@ -923,6 +949,28 @@ comment recording what `isRegularHours` replaced contains the name. That is the
 F-16 CSV guard's mistake repeated exactly, in the same session; both scans strip
 comments first now.
 
+### 2026-09-27 — the right move, the wrong abstraction
+
+The audit of 2026-09-27 found that F-18 centralised session knowledge
+correctly and then **named the verdict wrongly**: "is the US options market
+open?" has no single answer. The OPRA feed window (07:30–17:00 from
+2026-09-21), a product's own sessions (SPX's curb and overnight global hours),
+a contract's last trading moment and a study's sample are separate facts, and
+at 21:00 on a Sunday SPX trades while the sidebar said CLOSED.
+
+**This refutes a claim recorded here and in `wireContract.test.ts`**: that once
+the calendar existed, `MARKET OPEN` had become "a supported claim". It had not.
+The calendar establishes the exchange's regular session and nothing wider.
+
+Fixed by splitting the authorities (`docs/SESSION_AUTHORITY_MODEL.md`:
+`civil.ts`, the exchange calendar, `feedSessions.ts`, `productSessions.ts`,
+`contractLifecycle.ts`, `researchEligibility.ts`), each tested at a moment where
+it disagrees with another, and by relabelling: `RTH OPEN`, `OUTSIDE RTH`,
+`NO RTH · WEEKEND`, `SESSION UNKNOWN` — never `MARKET OPEN`, never a label that
+begins `CLOSED`. The verdict now carries `authority: 'EXCHANGE_REGULAR_SESSION'`
+on `/api/health`, and the wire guard forbids the wider label again, for a better
+reason than before.
+
 ---
 
 ## F-19 — `/api/health` is unauthenticated and only one block of it was checked ✅ FIXED
@@ -970,6 +1018,35 @@ test matters more than the live one.
 
 ---
 
+## F-20 — The directive's example session conflict was the transitional encoding ✅ FIXED
+
+The directive offered, as the model of a session conflict: *"provider session
+says REGULAR but sale condition says ETH → SESSION_CONFLICT."* The first cut of
+Event Model V2 implemented exactly that.
+
+A search on 2026-09-27 surfaced this from the OPRA Pillar Output Specification
+(SEARCH_ONLY — the document itself is unreachable here, and the search tool
+summarises): *"Participants not yet migrated to this field will continue to use
+Message Type 'v' (Extended Hours Trade) to identify extended hours trades; in
+those cases, the Trading Session Identifier will carry its default value of
+0."* So `0` beside `v` is the **ordinary** encoding of an extended-hours trade
+from a participant that has not migrated. The rule written to satisfy
+INV-SESSION-004 — the transitional encoding stays interpretable — would have
+filed every legacy extended-hours print under a data conflict for as long as
+the migration lasts.
+
+`SessionEncoding` now carries its default value; an identifier at its default
+beside `v` is `EXTENDED` (`LEGACY_SALE_CONDITION`), and `CONFLICT` is reserved
+for an explicit, non-default regular value — which OPRA's own encoding cannot
+produce and a vendor encoding can. Fixtures 15 and 16 exercise both; two
+mutations restoring the old rule each fail them. Commit `d6ad915`.
+
+This is the directive's instruction — *"Do not trust this prompt as the
+authority"* — applied to the directive, and it is the reason every row of the
+OPRA table carries its own status.
+
+---
+
 ## Status summary
 
 | ID | Finding | Status |
@@ -985,11 +1062,12 @@ test matters more than the live one.
 | F-5 | README advertises deleted ML service | **FIXED** — `readmeClaims.test.ts`, 3 tests (status row was stale) |
 | F-6 | Tier-4 controls absent from this tree | OPEN (documented) |
 | F-7 | No entitled options-event source | OPEN, **external blocker** |
-| F-8 | No corrections / cancels / ordering | OPEN |
+| F-8 | No corrections / cancels / ordering | **PARTLY FIXED** — Event Model V2 for historical and fixture events: 20 golden fixtures, 19 property/edge tests, 34 mutations; **live path and durable V2 storage open** |
 | F-9 | `excursion` misnamed | **FIXED**, 3 tests, 3 mutations — renamed in TS and SQL, migration applied to the live database |
-| F-10 | Universal 20:00Z expiry | **PARTLY FIXED** — DST, the calendar, `coverage.ts` and `expiryInstant` half-days all closed (46 tests, 29 mutations); **AM-settlement open** |
+| F-10 | Universal 20:00Z expiry | **PARTLY FIXED** — DST, the calendar, `coverage.ts` and `expiryInstant` half-days closed; AM vs PM settlement now in an effective-dated contract lifecycle registry (SPX, SPXW, SPXO, SPY, XSP); **the engine's DTE does not consume it yet** |
 | F-11 | Plaintext `api_keys.key_value`; disclosed credentials | OPEN, **external** |
 | F-16 | Rights lineage stopped at the API boundary | **FIXED**, 10 tests, 6 mutations — wire and CSV carry `datasets` + `rights_display` |
 | F-17 | Unreadable expiry published as 0DTE with a fabricated OCC symbol | **FIXED**, 8 tests, 7 mutations — gated at the seam, counted on `/api/health`, verified on a live boot |
-| F-18 | Session state guessed in the browser from a weekday-and-clock check | **FIXED**, 17 tests, 12 mutations — published from the calendar on `/api/health`, local helper deleted |
+| F-18 | Session state guessed in the browser from a weekday-and-clock check | **FIXED**, then **re-scoped 2026-09-27**: one verdict split into feed, product, contract and research authorities; labels name RTH, never the market |
 | F-19 | Unauthenticated `/api/health` checked one block, not the payload | **FIXED**, 3 tests, 3 mutations — the real router driven, every string scanned at any depth |
+| F-20 | The directive's example session conflict was the transitional encoding | **FIXED** — default identifier beside `v` is EXTENDED; CONFLICT needs an explicit non-default value; fixtures 15–16, 2 mutations |

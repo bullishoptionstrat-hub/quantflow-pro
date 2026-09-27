@@ -40,20 +40,22 @@ either branch.
 | FETCH | `DISPLAY` — the gate runs before `start()` | **covered** |
 | PRIVATE_DISPLAY | `DISPLAY` under `PRIVATE_RESEARCH` | **covered** |
 | PUBLIC_DISPLAY | `DISPLAY` under `PUBLIC_COMMERCIAL` | **covered** |
-| PERSIST_RAW | — | **not distinguished** from PERSIST_DERIVED |
-| PERSIST_NORMALIZED | — | **not distinguished** |
+| PERSIST_RAW | `persistRaw` in a research manifest (§21) | **distinguished, not answered** — `UNVERIFIED` for both candidate datasets |
+| PERSIST_NORMALIZED | `persistNormalized` in a research manifest | **distinguished, not answered** |
 | PERSIST_DERIVED | `PERSIST` | covered, but collapses three questions into one |
-| HISTORICAL_RESEARCH | — | **unanswered** |
-| MODEL_TRAINING | — | **unanswered**, and there is no model |
-| EXPORT | — | **unanswered.** F-16 made the CSV *carry* `rights_display`; nothing *gates* on it |
+| HISTORICAL_RESEARCH | `researchUse` in a research manifest | **distinguished, not answered** |
+| MODEL_TRAINING | `modelTraining` in a research manifest | **distinguished, not answered**, and there is no model |
+| EXPORT | `export` in a research manifest | **distinguished, not answered.** F-16 made the CSV *carry* `rights_display`; nothing *gates* on it |
 | NON_DISPLAY | — | **unanswered, and it is the expensive one.** See `PROVIDER_DECISION_RECORD.md` §1: OPRA licenses this separately and the flow engine is squarely inside its definition |
 | REDISTRIBUTION | partly — Finnhub's PERSIST refusal turns on its redistribution clause | **partly**, dataset by dataset, not as an axis |
 | COMMERCIAL_INTERNAL | `BUSINESS_MODE` | **partly** — the mode exists; per-dataset commercial terms are not read |
 | COMMERCIAL_EXTERNAL | `BUSINESS_MODE` | **partly**, same |
-| RETENTION | — | **unanswered by construction.** Roadmap 0.4 established that Twelve Data's retention clause defers to a document that states no timeframe. A cap that points at silence is neither permission nor prohibition |
+| RETENTION | `retention` in a research manifest | **unanswered by construction** for Twelve Data (Roadmap 0.4: its clause defers to a document that states no timeframe); **distinguished, not answered** for the research candidates |
 
-**Six of fifteen are genuinely unanswered. Three more are collapsed into one.**
-That is the finding this file exists to record.
+**Distinguishing is not answering.** Since 2026-09-27 a research dataset's
+manifest separates the axes the connector registry collapses — and every one of
+them is `UNVERIFIED` for both candidates, because no terms were read. The
+finding this file exists to record is unchanged: the axes are unanswered.
 
 ## What would have to happen to fill it in
 
@@ -67,3 +69,32 @@ That is the finding this file exists to record.
 Until then, **expanding the registry's axes would make it look more thorough
 while making it less true**, which is the failure mode this repository is
 organised against.
+
+## Research dataset manifests (§21, 2026-09-27)
+
+A historical research corpus is used in more ways than a live panel, so it
+carries its own manifest (`backend/src/provenance/researchManifest.ts`,
+instances in `research/manifests/`) with eight axes: `fetch`, `persistRaw`,
+`persistNormalized`, `researchUse`, `modelTraining`, `export`, `redistribution`,
+`retention`. It is separate from `rights.ts`, which answers DISPLAY and PERSIST
+for connectors this service runs; nothing here widens that registry.
+
+Three rules, enforced by `manifestProblems` and tested in
+`historicalImport.test.ts`:
+
+1. **Unknown is `UNVERIFIED`.** Every axis starts there.
+2. **`PERMITTED` needs its own words**: a verbatim quote, the document, the read
+   date, and evidence at least `PROVIDER_VERIFIED`. A search snippet is not a
+   licence, and a quote without a document or date is not evidence.
+3. **A successful download is not a permission** (INV-RIGHTS-001). No field
+   can be set by a fetch; `importPermitted` reads only the manifest.
+
+| candidate | fetch | persist raw | persist normalised | research | training | export | redistribution | retention |
+|---|---|---|---|---|---|---|---|---|
+| Databento OPRA historical | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | LEGAL_INTERPRETATION_REQUIRED | UNVERIFIED |
+| ThetaData OPRA history | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | LEGAL_INTERPRETATION_REQUIRED | UNVERIFIED |
+
+Every `quote` is `null`: no primary document was read, so there are no words to
+quote. The operator audit's summaries of each vendor's terms are recorded in the
+manifests' `note` fields, attributed as summaries. The §17 import gate's
+`rights-metadata` check fails on both, which is correct.

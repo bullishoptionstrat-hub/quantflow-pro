@@ -19,3 +19,18 @@ by. A pre-registration written after the first look is not a pre-registration.
   excellent is not the same evidence as one pre-registered strategy looking
   excellent, and the only way that stays visible is if the other 499 are still
   on disk.
+
+**2026-09-27.** Three additions, all before any real data:
+
+- `hypotheses/H-001-v2-…` — H-001 re-frozen with an exact stop date, a unit of
+  analysis, an estimand, an inference plan, a precision target instead of
+  n ≥ 30, an equivalence margin, matched controls and a strictly causal quote.
+  v1 is preserved unchanged; both files are pinned by hash in
+  `backend/test/researchIntegrity.test.ts`.
+- `DATASET_EXPOSURE_LEDGER.csv` — every look at data, with its role
+  (DEVELOPMENT / VALIDATION / HOLDOUT / CONTAMINATED). A role is never reset.
+  Today every row is synthetic or operational, and none touches H-001-v2's
+  windows — which a test asserts.
+- `SEARCH_LEDGER.csv` — every registered version, superseded ones included.
+- `manifests/` — the rights a research dataset carries, per axis. Both
+  candidates are UNVERIFIED on every axis; nothing may be imported against them.

@@ -274,6 +274,37 @@ PERSIST. Nothing else on this table competes with that.
 
 ---
 
+### 2026-09-27 — event truth before data (the next-phase directive)
+
+The audit of 2026-09-27 reordered the plan: before any real options data is
+bought, the system must be able to represent what the tape actually did. Done in
+PR #71: Event Model V2 (`docs/EVENT_MODEL_V2.md`), the OPRA code table with a
+standing per row (`docs/OPRA_EVENT_SEMANTICS.md`), four session authorities in
+place of one "market open" (`docs/SESSION_AUTHORITY_MODEL.md`), an effective-dated
+contract lifecycle registry (`docs/CONTRACT_LIFECYCLE_MODEL.md`), a
+provider-neutral historical source contract with the §17 small-sample gate,
+rights manifests per research dataset, H-001-v2 frozen with dated windows, and
+the exposure and search ledgers.
+
+**Exit gate (§27) — not passed, and the failures are external:**
+
+| item | state |
+|---|---|
+| current branch independently verified | yes — re-run at every commit |
+| Event Model V2; cancellation; late/out-of-sequence; append-only lineage; as-known and final views | yes — 20 fixtures, property tests, 34 mutations |
+| session identifier; legacy ETH transition | yes — on SEARCH_ONLY / UNVERIFIED semantics |
+| feed / product / research sessions separated | yes |
+| AM vs PM settlement | yes, in the registry; the engine's DTE does not consume it yet |
+| unknown product / session fails honestly | yes |
+| H-001-v2 frozen; exposure and search ledgers | yes |
+| historical adapter interface; provider field matrix | yes — every discriminating cell `AMBIGUOUS` until a sample is inspected |
+| **primary-source rights facts updated without legal overclaim** | **no** — every primary host refused by the egress policy; nothing promoted |
+
+So the next step is not engineering: allow the OPRA, Cboe and vendor hosts in
+the environment's network policy, read the specification and terms, then run
+the §17 gate on two SPY days (2026-09-22, 2026-09-24) from whichever provider
+the operator chooses to trial.
+
 ## Part 4 — The plan
 
 Five phases. Phase 0 is hours and starts the clock; nothing later is worth

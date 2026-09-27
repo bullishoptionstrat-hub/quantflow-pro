@@ -10,7 +10,7 @@ decision, never make the purchase).
 **Status:** decision NOT made. No subscription purchased, no agreement signed,
 no account upgraded. Nothing in this document authorises spend.
 
-**Written:** 2026-09-23. **Re-review by:** before any purchase, because every
+**Written:** 2026-09-23; **re-reviewed 2026-09-27 (§7)**. **Re-review by:** before any purchase, because every
 figure below carries a verification status and most of them are `SEARCH_ONLY`.
 
 ---
@@ -169,3 +169,82 @@ and event ordering), F-10 (AM settlement, holiday calendar).
   entitlement, as this repository already measured against Polygon.
 - **No decision is recorded here**, because the deployment mode that would
   decide it has not been stated.
+
+---
+
+## 7. Re-review 2026-09-27 — conformance against the research requirements (§16)
+
+**Primary sources: still unreachable.** Re-probed 2026-09-27 13:21Z —
+`www.opraplan.com`, `www.cboe.com`, `databento.com`, `www.thetadata.net`,
+`docs.thetadata.us`, `www.sec.gov` each `CONNECT tunnel failed, response 403`;
+`registry.npmjs.org` `200` as the control. **Nothing below is
+`PRIMARY_VERIFIED` and nothing may enter `rights.ts` from this section.**
+
+### The status vocabulary, extended
+
+| status | meaning here |
+|---|---|
+| `PRIMARY_VERIFIED` | read in the primary document by this system, text matched literally — **none** |
+| `PROVIDER_VERIFIED` | read in the vendor's own documentation by this system — **none** |
+| `OPERATOR_REPORTED` | the operator audit of 2026-09-27 reports reading it at the source; **not read here**, so treated as `UNVERIFIED` for every code and registry purpose |
+| `SEARCH_ONLY` | surfaced by a summarising search tool |
+| `UNVERIFIED` | recalled |
+| `LEGAL_INTERPRETATION_REQUIRED` | the question turns on what a clause means for this use |
+| `DOCUMENTED_CAPABILITY_ONLY` | a provider page reportedly offers it; no sample has been pulled, no entitlement tested |
+
+Operator-reported facts carried into this section, each `OPERATOR_REPORTED`:
+OPRA Non-Display Use fees of $2,000/month per enterprise (Categories 1 and 2)
+and $2,000 per platform (Category 3); OPRA's definition of "current" as within
+the preceding 15 minutes, with no usage or device fees for delayed data;
+Databento's TCBBO pairing each trade with the consolidated BBO immediately
+before the trade's effect, with event and receive timestamps and publisher and
+instrument identities; Databento's position that historical data (24h+)
+generally needs no live exchange licence, except for redistribution;
+ThetaData Standard at $80/month and Pro at $160/month, and `trade_quote` with
+`exclusive=true` requiring the quote timestamp to be strictly before the trade;
+ThetaData's subscriber agreement permitting internal research and restricting
+furnishing OPRA data to others.
+
+### The matrix — against H-001-v2 and Event Model V2, not against feature count
+
+Each cell: `AVAILABLE` / `DERIVED` / `MISSING` / `AMBIGUOUS`, then its evidence.
+Rows are ordered by how much of the study depends on them.
+
+| requirement (why it matters) | Databento OPRA (`trades`, `tcbbo`, `definition`) | ThetaData (`trade_quote` exclusive, `trade`, `quote`) |
+|---|---|---|
+| **Cancels, late and out-of-sequence reports** (Event Model V2 exists for this; without them the final tape cannot be built) | `AMBIGUOUS` — whether OPRA message types reach the normalised schemas is not established; recalled that the normalised trade record carries flags, not OPRA types — **the first thing a sample must answer** | `AMBIGUOUS` — a `condition` field is reported; whether it is OPRA's message type or a vendor enumeration, and whether cancelled trades are delivered or silently removed, is not established |
+| **Strictly pre-trade NBBO** (H-001-v2 §H) | `AVAILABLE`, `DOCUMENTED_CAPABILITY_ONLY` (TCBBO, operator-reported) | `AVAILABLE`, `DOCUMENTED_CAPABILITY_ONLY` (`exclusive=true`, operator-reported) |
+| **Receive timestamp** (availableAt; H-001-v2 excludes `EVENT_TIME_LOWER_BOUND`) | `AVAILABLE`, `DOCUMENTED_CAPABILITY_ONLY` (operator-reported) | `AMBIGUOUS` — not established. **If MISSING, every ThetaData event is `EVENT_TIME_LOWER_BOUND` and H-001-v2 cannot use it as a sole source without a new version.** |
+| **Trade event timestamp and its resolution** | `AVAILABLE`, `DOCUMENTED_CAPABILITY_ONLY` | `AVAILABLE` — millisecond of day reported; `UNVERIFIED` |
+| **Provider sequence** (gaps, duplicates, reporting order for positional cancels) | `AMBIGUOUS` — recalled, not established for OPRA | `AMBIGUOUS` — listed as a focus by the audit, not established |
+| **Venue / participant** | `AVAILABLE` (publisher id), `DOCUMENTED_CAPABILITY_ONLY` | `AVAILABLE` (trade exchange), `UNVERIFIED` |
+| **Contract identity** | `AVAILABLE` (definition schema), `UNVERIFIED` | `AVAILABLE` (root, expiration, strike, right), `UNVERIFIED` |
+| **Session identifier / `v`** | `AMBIGUOUS` — not established whether the post-2026-09-21 field or `v` is carried; irrelevant to H-001-v2's pre-2026-08 window | `AMBIGUOUS` — same |
+| **Historical coverage of 2026-01-02..2026-08-14** | `AVAILABLE` (history reported to span years), `SEARCH_ONLY` | `AVAILABLE` by tier, `SEARCH_ONLY` |
+| **SPY underlying quotes for the marks** (H-001-v2 §C) | `MISSING` from the OPRA dataset — a separate equities dataset, with its own rights | `AMBIGUOUS` — stock quotes reported on some tiers; not established |
+| **Aggressor-side truth set** (H-001-v2 §K) | `MISSING` — OPRA carries no aggressor side | `MISSING` — same |
+
+### What the matrix decides, and what it cannot
+
+**Technical fidelity, independent of price:** it cannot be ranked yet, and
+saying otherwise would be ranking by documentation. Both vendors document a
+strict pre-trade quote. Everything that separates them — whether OPRA's own
+message types (and so cancels and late reports) survive into the delivered
+records, whether a receive timestamp exists, whether sequence numbers are
+delivered — is `AMBIGUOUS` for both, and is exactly what the §17 small-sample
+gate (`backend/src/events/importGate.ts`) is built to answer from one or two
+real days. The first row decides the most: a source that delivers trades
+without their cancel and late-report codes cannot build the final corrected
+tape at all, whatever its quotes look like.
+
+**Cost and ease, separately:** operator-reported retail prices put ThetaData
+($80–$160/month) below Databento ($199/month, `SEARCH_ONLY`). For historical
+data OPRA's non-display fees are reported not to apply (delayed is not
+"current"), which removes the largest cost from §1 for the research path. None
+of this is combined with fidelity into one score.
+
+**Neither is purchasable on this record.** Both research manifests
+(`research/manifests/`) are `UNVERIFIED` on every axis, with redistribution
+`LEGAL_INTERPRETATION_REQUIRED`, and `importPermitted` refuses both. The
+decision packet §28 asks for comes after the exit gate, and the gate cannot
+pass while the primary documents are unread.
