@@ -76,7 +76,7 @@ export interface FlowEvent {
   iv: number | null
   delta: number | null
   open_interest: number | null
-  days_to_expiry: number
+  days_to_expiry: number | null
   /** `UNKNOWN` where the underlying's price was not known — it used to say OTM. */
   moneyness: 'ITM' | 'ATM' | 'OTM' | 'UNKNOWN'
   spot_price: number | null

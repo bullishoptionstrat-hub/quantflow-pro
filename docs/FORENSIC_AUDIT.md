@@ -754,6 +754,83 @@ one-off command rather than in a committed test.
 
 ---
 
+## F-17 — An unreadable expiry was published as 0DTE ✅ FIXED
+
+`ingestPrint` guards the fields that make a contract, and this file already
+records `strike` joining that guard late: it had been checked for *presence*
+and not for `> 0`, so `occSymbol` padded `Math.round(0 * 1000)` into a
+real-looking symbol and the print was classified, scored and published.
+
+`expiry` was the same defect one field over, and was still checked for
+**truthiness only**. Measured through the real adapter, one print stamped
+2026-09-24 against an October expiry:
+
+```
+expiry "2026-10-16" -> occ SPY261016C00550000    dte 22     <- control
+expiry "20261016"   -> occ SPY261016C00550000    dte  0
+expiry "2026-6-19"  -> occ SPY26619C00550000     dte  0
+expiry "10/16/2026" -> occ SPY/16/2026C00550000  dte  0
+expiry "not-a-date" -> occ SPYtadateC00550000    dte  0
+expiry "2026-13-45" -> occ SPY261345C00550000    dte  0
+```
+
+Two separate consequences, and neither is cosmetic. The OCC symbol is the
+contract's **identity** — the key for the NBBO book and the per-contract stats
+table — so a malformed one silently partitions or merges contracts. And the
+wire's `days_to_expiry` fell to `0`, which does not read as *unknown*: it reads
+as **0DTE**, the shortest-dated and loudest bucket on the board.
+
+**The compact-ISO row is what makes this worth a guard rather than a comment.**
+`20261016` is a format a vendor could plausibly switch to, it yields the
+**correct** OCC symbol, and it publishes every contract as expiring today.
+Nothing on any surface would look wrong — the same shape as CoinGecko's
+`$0.00` and Cboe's green `0.00`, arrived at through a date instead of a price.
+
+**Reachability, stated rather than assumed.** Three of the four chain
+connectors pass a vendor string through with a type-or-truthiness check only
+(`marketData` takes `data.expiration?.[i]`, `schwab` takes
+`expirationDate?.split('T')[0]`, `tastytrade` takes `exp['expiration-date']`);
+`yahoo` derives ISO from a unix stamp and cannot produce a malformed one.
+Polygon's path passes `details.expiration_date` straight from vendor JSON.
+**None of those five has ever run against a live vendor from this tree**, so
+this was a live trap on every real data path rather than an observed failure —
+the same standing F-2 had.
+
+**The fix, and the two decisions in it.** The gate asks `expiryInstantMs`
+rather than carrying a regex, because that is the one home for reading an
+expiry and its own docstring already argues why it rejects a loose parse; a
+second date rule here is the duplication this tree keeps closing. And the
+refusal is **counted per source and named on `/api/health`** through
+`sourceNotes` — the "arriving and qualified" channel `polygonQuoteNote` and the
+unparsed-frame counters already use. That second half is what the strike-0 fix
+left out: it returns `[]` and tells nobody, so a connector whose every row is
+rejected looks exactly like a quiet tape.
+
+`days_to_expiry` is `number | null` on both sides of the wire. It is
+unreachable behind the gate today and nullable anyway, because the previous
+type *could not express the honest answer* — the defect `SpotQuote.change` had,
+where a `number` field forced two connectors to write a zero for a reading the
+vendor had not sent.
+
+**Verified by running it**, not only by test: a 40-second keyless boot produced
+72 signals with DTEs from 1 to 61, zero nulls and zero refusals, so the gate
+does not reject the simulation's own ISO dates. 8 tests, 7 mutations, each
+failing exactly the intended test.
+
+**The guard that could not have caught this.** `defaultedReadings.test.ts`
+scans for `?? <number>` and `|| <number>`. The invented zero here was
+`Number.isNaN(dte) ? 0 : Math.round(dte)` — a **ternary**, a third form the
+scanner does not read. The rule that file states is *"an invented number is a
+finding by default, not by list"*, and its implementation is still a list of
+two operators. Widening it to ternaries is not done here: the pattern
+`cond ? 0 : x` is common and mostly innocent, so a scan for it would be noise
+rather than a finding, and a guard nobody can read is rubber-stamped. Recorded
+as a known limit instead. It did, however, catch a `?? 0` written *in this
+change* — the refusal counter — which is registered in the ledger with its
+reason, following the `unparsedFrames` precedent immediately above it.
+
+---
+
 ## Status summary
 
 | ID | Finding | Status |
@@ -774,3 +851,4 @@ one-off command rather than in a committed test.
 | F-10 | Universal 20:00Z expiry | **PARTLY FIXED**, 6 tests, 3 mutations; calendar built and wired into `coverage.ts` (14 tests, 18 mutations); AM-settlement and `expiryInstant` half-days open |
 | F-11 | Plaintext `api_keys.key_value`; disclosed credentials | OPEN, **external** |
 | F-16 | Rights lineage stopped at the API boundary | **FIXED**, 10 tests, 6 mutations — wire and CSV carry `datasets` + `rights_display` |
+| F-17 | Unreadable expiry published as 0DTE with a fabricated OCC symbol | **FIXED**, 8 tests, 7 mutations — gated at the seam, counted on `/api/health`, verified on a live boot |

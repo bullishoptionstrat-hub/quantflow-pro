@@ -19,7 +19,9 @@
  */
 import { FlowEngine } from '../flow-engine/engine';
 import { sideBucket } from '../flow-engine/nbbo';
-import { daysToExpiry as engineDaysToExpiry } from '../flow-engine/expiry';
+import {
+  daysToExpiry as engineDaysToExpiry, expiryInstantMs,
+} from '../flow-engine/expiry';
 import type {
   ClassifiedSignal,
   ContractStats,
@@ -159,7 +161,7 @@ export interface WireFlowEvent {
   iv: number | null;
   delta: number | null;
   open_interest: number | null;
-  days_to_expiry: number;
+  days_to_expiry: number | null;
   /**
    * `UNKNOWN` where the underlying's price is not known.
    *
@@ -391,6 +393,53 @@ function originOf(sig: ClassifiedSignal): SignalOrigin {
 // ─── Ingest ─────────────────────────────────────────────────────────────────
 
 /**
+ * Prints refused at the seam for an expiry nothing could read, per source.
+ *
+ * Counted rather than silently dropped, and this is the half the strike-0 fix
+ * left out: that refusal returns `[]` and tells nobody, so a connector whose
+ * every row is rejected looks exactly like a quiet tape. `sourceNotes` is the
+ * channel for "arriving and qualified", which is what this is.
+ */
+const unreadableExpiries: Record<string, number> = {};
+/** The first malformed value seen per source, so the note can name the shape. */
+const unreadableExpirySample: Record<string, string> = {};
+
+function noteUnreadableExpiry(source: string, expiry: string): void {
+  const n = (unreadableExpiries[source] ?? 0) + 1;
+  unreadableExpiries[source] = n;
+  if (unreadableExpirySample[source] === undefined) {
+    unreadableExpirySample[source] = expiry.slice(0, 32);
+  }
+  // First, then sparsely. A vendor using a different date format produces one
+  // per print, and a log line per print is its own outage — `noteUnparsedFrame`
+  // settled this argument already.
+  if (n === 1 || n % 500 === 0) {
+    console.warn(
+      `[${source}] ${n} print(s) refused: expiry ` +
+      `${JSON.stringify(unreadableExpirySample[source])} is not a readable ` +
+      `calendar date. The contract cannot be identified, so the print is ` +
+      `dropped rather than published with a fabricated symbol.`,
+    );
+  }
+}
+
+/**
+ * Per source: how many prints were refused, and an example of the value.
+ *
+ * Read by `getIngestionStatus()` into `sourceNotes`. Exported rather than
+ * folded into a note string here, because formatting a health note is that
+ * module's job and a second copy of the vocabulary is how `sourceNotes` and
+ * `sourceErrors` would start disagreeing.
+ */
+export function unreadableExpiryCounts(): Record<string, { count: number; sample: string }> {
+  const out: Record<string, { count: number; sample: string }> = {};
+  for (const [source, count] of Object.entries(unreadableExpiries)) {
+    out[source] = { count, sample: unreadableExpirySample[source] ?? '' };
+  }
+  return out;
+}
+
+/**
  * Feed one print. Returns the signals finalized by this print (often none —
  * the engine emits on burst close, not per trade).
  */
@@ -409,6 +458,38 @@ export function ingestPrint(print: RawPrint): WireFlowEvent[] {
   // gets it without knowing about it.
   if (!print.symbol || !print.expiry || !(print.price > 0) || !(print.size > 0)) return [];
   if (!(print.strike > 0)) return [];
+  // `expiry` was the sixth field, and it was checked for TRUTHINESS only —
+  // which is exactly what `strike` was before the line above, and produced the
+  // same class of outcome. Measured through this function, one print at
+  // 2026-09-24 against an October expiry:
+  //
+  //     expiry "2026-10-16" -> occ SPY261016C00550000    dte 22
+  //     expiry "20261016"   -> occ SPY261016C00550000    dte  0
+  //     expiry "10/16/2026" -> occ SPY/16/2026C00550000  dte  0
+  //     expiry "not-a-date" -> occ SPYtadateC00550000    dte  0
+  //     expiry "2026-13-45" -> occ SPY261345C00550000    dte  0
+  //
+  // Two things came out of it. `occSymbol` splits on '-' and slices, so any
+  // string produces a real-looking contract symbol — and that symbol is the
+  // contract's identity for the NBBO book and the stats table, so a malformed
+  // one silently partitions or merges contracts. And the wire's
+  // `days_to_expiry` fell to 0, which does not read as "unknown": it reads as
+  // **0DTE**, the shortest-dated and highest-attention bucket there is.
+  //
+  // The compact-ISO row is the one that decides this. `20261016` is a format a
+  // vendor could plausibly switch to, it yields the CORRECT OCC symbol, and it
+  // publishes every contract as expiring today. Nothing would look wrong.
+  //
+  // The test is `expiryInstantMs` rather than a regex here, because that is the
+  // one home for reading an expiry and its docstring already argues why it
+  // rejects a loose parse. Three of the four chain connectors pass a vendor
+  // string through with a truthiness check only, and none of them has ever run
+  // against a live vendor from this tree — so a format mismatch surfaces here,
+  // counted and named on /api/health, instead of as a tape of 0DTE prints.
+  if (Number.isNaN(expiryInstantMs(print.expiry))) {
+    noteUnreadableExpiry(print.source, print.expiry);
+    return [];
+  }
 
   const ts = print.ts ?? Date.now();
   // Receipt time is stamped here, at the boundary — the earliest moment this
@@ -722,9 +803,14 @@ export function sentimentOf(
  * stays here, because a whole number of days is a presentation choice for this
  * wire field and not a property of the contract.
  */
-function daysToExpiry(tsMs: number, expiry: string): number {
+function daysToExpiry(tsMs: number, expiry: string): number | null {
   const dte = engineDaysToExpiry(tsMs, expiry);
-  return Number.isNaN(dte) ? 0 : Math.round(dte);
+  // `null`, never 0. A 0 here does not read as "unknown", it reads as 0DTE —
+  // which is a claim about the contract, and the loudest one on the board.
+  // `ingestPrint` refuses an unreadable expiry at the seam, so this branch is
+  // unreachable today; it is `null` anyway because the previous type could not
+  // express the honest answer, which is the defect `SpotQuote.change` had.
+  return Number.isNaN(dte) ? null : Math.round(dte);
 }
 
 /**
