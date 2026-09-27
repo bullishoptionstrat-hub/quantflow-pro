@@ -227,12 +227,18 @@ export const OPRA_LAST_SALE_CODES: readonly CodeRow[] = [
   {
     code: 'v',
     meaning: { kind: 'SESSION_QUALIFIER', session: 'EXTENDED' },
-    status: 'UNVERIFIED',
-    corroboration: null,
+    status: 'SEARCH_ONLY',
+    corroboration: {
+      text: "Message Type 'v' (Extended Hours Trade)",
+      surfacedFrom: 'https://cdn.opraplan.com/documents/OPRA_Pillar_Output_Specification.pdf',
+      surfacedOn: '2026-09-27',
+    },
     note:
-      'Supplied by the operator audit of 2026-09-27 as the legacy extended-hours sale ' +
-      'condition, used by participants not yet migrated to the Trading Session Identifier. ' +
-      'Not read in any document; a search on 2026-09-27 surfaced no text for it.',
+      'The association of v with extended-hours trades was surfaced twice, independently: by a ' +
+      'search over the OPRA Pillar Output Specification, and by one over Cboe\'s Equity Options ' +
+      'Extended Trading Hours FAQ ("Cboe will mark these trades with an Extended Hours \"v\" sale ' +
+      'condition when reporting GTH and Curb trades to the OPRA RTH system"). Both came through a ' +
+      'search tool that summarises, so the wording is SEARCH_ONLY, not a quotation of either document.',
   },
   // Qualifiers recalled as existing whose meaning this table will not assert.
   ...(['AUTO', 'REOP', 'AJST', 'SPIM', 'BNMT', 'XMPT'] as const).map((code): CodeRow => ({
@@ -268,20 +274,44 @@ export const OPRA_CODE_TABLE: CodeTable = codeTableOf(OPRA_LAST_SALE_CODES);
  */
 export interface SessionEncoding {
   values: Readonly<Record<string, 'REGULAR' | 'EXTENDED'>>;
+  /**
+   * The value a participant that has NOT migrated to the identifier sends,
+   * which therefore asserts nothing on its own when the legacy marker is
+   * present. Null for an encoding with no such default — where every value is
+   * an explicit claim and a disagreement with the legacy marker is a conflict.
+   */
+  defaultValue: string | null;
   status: SourceStatus;
   source: string;
+  /** Wording surfaced for the encoding, with where and when; see CodeRow.corroboration. */
+  corroboration: { text: string; surfacedFrom: string; surfacedOn: string } | null;
 }
 
 /**
- * OPRA's Trading Session Identifier, as supplied by the operator audit of
- * 2026-09-27 — not read. The notice was behind the egress policy, and a
- * search the same day confirmed OPRA carries extended-hours data but surfaced
- * nothing about the identifier's values.
+ * OPRA's Trading Session Identifier.
+ *
+ * The value meanings (0 regular, 1 extended) are the operator audit's, not
+ * read. The transitional rule is what a search surfaced from the OPRA Pillar
+ * Output Specification on 2026-09-27, and it overturned the audit's own
+ * example: participants not yet migrated keep marking extended-hours trades
+ * with Message Type `v`, and "in those cases, the Trading Session Identifier
+ * will carry its default value of 0". So `0` beside `v` is the ordinary
+ * transitional encoding of an EXTENDED trade — not the conflict the audit
+ * described, which would have filed every legacy extended-hours print under a
+ * data conflict (INV-SESSION-004).
  */
 export const OPRA_SESSION_ENCODING: SessionEncoding = {
   values: { '0': 'REGULAR', '1': 'EXTENDED' },
+  defaultValue: '0',
   status: 'UNVERIFIED',
-  source: 'OPRA Trading Session Identifier notice, as quoted by the operator audit of 2026-09-27 (not read)',
+  source: 'OPRA Trading Session Identifier: values as quoted by the operator audit of 2026-09-27 (not read); ' +
+    'transitional default as surfaced by search from the OPRA Pillar Output Specification',
+  corroboration: {
+    text: "Participants not yet migrated to this field will continue to use Message Type 'v' (Extended Hours Trade) " +
+      'to identify extended hours trades; in those cases, the Trading Session Identifier will carry its default value of 0.',
+    surfacedFrom: 'https://cdn.opraplan.com/documents/OPRA_Pillar_Output_Specification.pdf',
+    surfacedOn: '2026-09-27',
+  },
 };
 
 /** Everything needed to read one provider's raw records. */

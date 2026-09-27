@@ -42,6 +42,8 @@ import { DEFAULT_CONFIG } from '../src/flow-engine/types';
 import { H001_V2_SESSION_RULE, researchEligibility } from '../src/market/researchEligibility';
 import { feedSessionAt } from '../src/market/feedSessions';
 import { productSessionAt } from '../src/market/productSessions';
+import { OPRA_CODE_TABLE, OPRA_SEMANTICS } from '../src/events/semantics';
+import type { ProviderSemantics } from '../src/events/semantics';
 
 const DIR = join(__dirname, 'fixtures', 'events');
 
@@ -73,14 +75,17 @@ function run(f: Json): Run {
   const refOf = new Map<string, string>();
   const built: Array<{ ref: string; e: MarketEvent }> = [];
   for (const r of f.records) {
-    const { ref, type, ...rest } = r;
+    const { ref, type, sessionEncoding, ...rest } = r;
     const rec = { ...f.defaults, ...rest, instrument: rest.instrument ?? f.defaults.instrument };
+    // A record may declare its provider's session encoding; otherwise OPRA's.
+    const semantics: ProviderSemantics = sessionEncoding === undefined
+      ? OPRA_SEMANTICS : { codes: OPRA_CODE_TABLE, session: sessionEncoding };
     for (const k of ['eventTime', 'providerReceiveTime', 'quantflowReceiveTime']) {
       if (typeof rec[k] === 'string') rec[k] = ms(rec[k]);
     }
     const e = type === 'quote'
-      ? buildQuoteEvent(rec as RawQuoteRecord)
-      : buildTradeEvent(rec as RawTradeRecord);
+      ? buildQuoteEvent(rec as RawQuoteRecord, semantics)
+      : buildTradeEvent(rec as RawTradeRecord, semantics);
     byRef.set(ref, e);
     if (!refOf.has(e.eventId)) refOf.set(e.eventId, ref);
     built.push({ ref, e });

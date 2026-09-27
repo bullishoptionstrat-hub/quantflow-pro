@@ -1,14 +1,15 @@
 /**
  * Reading a trade's trading session from what the provider actually sent.
  *
- * Two encodings coexist during a migration the operator's audit describes: a
- * dedicated Trading Session Identifier (0 = regular, 1 = extended) and a legacy
- * sale condition `v` marking extended-hours trades from participants that have
- * not migrated. **Neither encoding was read in a primary document** — the OPRA
- * notices are behind this environment's egress policy, and a search on
- * 2026-09-27 confirmed OPRA is carrying extended-hours data but surfaced no
- * detail of the identifier's values. So every rule below is UNVERIFIED, and
- * every evidence object says so in `semanticsStatus`.
+ * Two encodings coexist during a migration: a dedicated Trading Session
+ * Identifier and the legacy Message Type `v` that participants not yet
+ * migrated keep using for extended-hours trades. **Neither was read in a
+ * primary document** — the OPRA and Cboe documents are behind this
+ * environment's egress policy. The identifier's values come from the
+ * operator's audit; the transitional rule and the meaning of `v` were
+ * surfaced by search (semantics.ts records the wording and its weakness). So
+ * every reading here is at best SEARCH_ONLY, and every evidence object says
+ * so in `semanticsStatus`.
  *
  * The rules are the part that does not depend on the encoding details:
  *
@@ -18,9 +19,14 @@
  *     migrated participant sends no `v` for extended trades either; reading
  *     "no v" as "regular" would put every migrated extended-hours print into
  *     a regular-hours sample.
- *   - **Disagreement is `CONFLICT`, never a silent preference.** If the
- *     identifier says regular and the condition says extended, one of them is
- *     wrong and nothing here can say which.
+ *   - **An identifier at its default beside the legacy marker is the legacy
+ *     encoding, not a disagreement.** Non-migrated participants send exactly
+ *     that (see OPRA_SESSION_ENCODING for what was surfaced, and how weakly).
+ *   - **A genuine disagreement is `CONFLICT`, never a silent preference.** An
+ *     explicit, non-default "regular" beside the extended marker means one of
+ *     them is wrong, and nothing here can say which. OPRA's own encoding cannot
+ *     produce one — its regular value IS its default — so CONFLICT is reached
+ *     only through a provider encoding with an explicit regular value.
  *   - **An unreadable identifier is `UNKNOWN`,** and the legacy condition does
  *     not get to overrule a primary field the parser could not read.
  */
@@ -68,9 +74,16 @@ export function readSessionEvidence(
     }
     if (legacyExtended) {
       const semanticsStatus = weakestStatus([encoding.status, ...legacyStatuses]);
-      return fromId === 'EXTENDED'
-        ? { ...base, normalized: 'EXTENDED', basis: 'BOTH_AGREE', semanticsStatus }
-        : { ...base, normalized: 'CONFLICT', basis: 'BOTH_DISAGREE', semanticsStatus };
+      if (fromId === 'EXTENDED') return { ...base, normalized: 'EXTENDED', basis: 'BOTH_AGREE', semanticsStatus };
+      // The identifier at its DEFAULT beside the legacy marker is how a
+      // participant that has not migrated reports an extended-hours trade: the
+      // identifier asserts nothing, and the marker decides (INV-SESSION-004).
+      if (encoding.defaultValue !== null && key === encoding.defaultValue) {
+        return { ...base, normalized: 'EXTENDED', basis: 'LEGACY_SALE_CONDITION', semanticsStatus };
+      }
+      // An explicit, non-default "regular" beside the extended marker: one of
+      // them is wrong and nothing here can say which.
+      return { ...base, normalized: 'CONFLICT', basis: 'BOTH_DISAGREE', semanticsStatus };
     }
     return {
       ...base, normalized: fromId, basis: 'PROVIDER_SESSION_IDENTIFIER',

@@ -221,7 +221,11 @@ test('gate: each broken property fails exactly its own check', async () => {
     ['raw-provenance', (s) => ({ ...s, trades: s.trades.map((t, i) => i === 1 ? { ...t, rawRecordRef: undefined } : t) }), PERMISSIVE],
     ['rights-metadata', (s) => s, null],
     ['event-counts-reconcile', (s) => ({ ...s, reportedCount: 12 }), PERMISSIVE],
-    ['session-semantics', (s) => ({ ...s, trades: s.trades.map((t, i) => i === 0 ? { ...t, rawConditions: ['v'] } : t) }), PERMISSIVE],
+    // A genuine conflict needs an encoding whose regular value is explicit, not a default.
+    ['session-semantics', (s) => ({
+      ...s, semantics: { ...VERIFIED, session: { ...VERIFIED.session, defaultValue: null } },
+      trades: s.trades.map((t, i) => i === 0 ? { ...t, rawConditions: ['v'] } : t),
+    }), PERMISSIVE],
     ['corrections-and-cancels', (s) => ({ ...s, trades: s.trades.map((t, i) => i === 4 ? { ...t, referencedProviderEventId: 'nope' } : t) }), PERMISSIVE],
     ['real-provider-data', (s) => ({ ...s, trades: s.trades.map((t, i) => i === 0 ? { ...t, synthetic: true } : t) }), PERMISSIVE],
   ];
@@ -240,6 +244,13 @@ test('gate: an unreadable cancel code is two failures, because it is two problem
   const { verdict } = await gate(spec);
   assert.deepEqual(verdict.checks.filter((c) => c.status !== 'PASS').map((c) => c.id),
     ['corrections-and-cancels', 'code-semantics-verified']);
+  // Likewise an unreadable session identifier: a session problem, and a reading
+  // that established nothing.
+  const spec2 = conforming();
+  spec2.trades[0] = { ...spec2.trades[0]!, rawSessionIdentifier: 7 };
+  const { verdict: v2 } = await gate(spec2);
+  assert.deepEqual(v2.checks.filter((c) => c.status !== 'PASS').map((c) => c.id),
+    ['session-semantics', 'code-semantics-verified']);
 });
 
 test('gate: a rejected record is counted, not dropped', async () => {
