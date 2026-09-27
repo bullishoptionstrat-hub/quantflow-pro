@@ -141,8 +141,8 @@ describe('the sidebar reports transport as transport', () => {
     // first render — before any fetch resolves — must claim nothing rather
     // than guess, which is the `Panel<'loading'>` rule the news page follows.
     const { container } = render(<Sidebar />)
-    expect(container.textContent).toMatch(/HOURS UNKNOWN/)
-    expect(container.textContent).not.toMatch(/MARKET OPEN|REGULAR HOURS/)
+    expect(container.textContent).toMatch(/SESSION UNKNOWN/)
+    expect(container.textContent).not.toMatch(/MARKET OPEN|REGULAR HOURS|RTH OPEN/)
   })
 
   test('the frontend holds no second session calendar', () => {

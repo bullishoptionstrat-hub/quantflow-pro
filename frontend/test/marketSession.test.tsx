@@ -21,32 +21,41 @@ const base: MarketSession = {
 }
 
 describe('the session label', () => {
-  test('an open regular session is plainly open, and says so in green', () => {
+  test('an open regular session is plainly open, and says which session', () => {
     // A marker that is always on is a marker nobody reads — the same reason the
-    // degraded-source badge had to leave clean sources plainly live.
+    // degraded-source badge had to leave clean sources plainly live. And it
+    // names RTH: the verdict is the exchange's regular session, not "the
+    // market", which at 21:00 on a Sunday is SPX's overnight session.
     const d = describeSession(base)
-    expect(d.label).toBe('MARKET OPEN')
+    expect(d.label).toBe('RTH OPEN')
     expect(d.tone).toBe('open')
     expect(d.detail).toContain('NYSE/Cboe')
+    expect(d.detail).toMatch(/not the OPRA feed window/)
   })
 
   test('a half-day is named as one rather than reported as an ordinary session', () => {
     const d = describeSession({ ...base, closeMinutesEt: 13 * 60 })
-    expect(d.label).toBe('OPEN · HALF DAY')
+    expect(d.label).toBe('RTH OPEN · HALF DAY')
     expect(d.tone).toBe('open')
   })
 
-  test('a published closure is closed, and names which kind', () => {
+  test('no regular session is not "closed", and names which kind', () => {
     // Two facts, two labels. Telling a reader "CLOSED" on a Saturday and
     // leaving them to check a holiday schedule is the heat map's own finding
-    // about answering "no data" to two different problems.
+    // about answering "no data" to two different problems. And none of them
+    // says CLOSED: outside RTH, extended and overnight sessions may be
+    // trading, and this verdict cannot see them.
     expect(describeSession({ ...base, state: 'CLOSED_HOLIDAY' }).label)
-      .toBe('CLOSED · HOLIDAY')
+      .toBe('NO RTH · HOLIDAY')
     expect(describeSession({ ...base, state: 'CLOSED_WEEKEND' }).label)
-      .toBe('CLOSED · WEEKEND')
+      .toBe('NO RTH · WEEKEND')
     const outside = describeSession({ ...base, state: 'CLOSED_OUTSIDE_HOURS' })
-    expect(outside.label).toBe('CLOSED · 09:30–16:00 ET')
+    expect(outside.label).toBe('OUTSIDE RTH · 09:30–16:00 ET')
     expect(outside.tone).toBe('closed')
+    for (const st of ['OPEN', 'CLOSED_OUTSIDE_HOURS', 'CLOSED_HOLIDAY', 'CLOSED_WEEKEND', 'UNKNOWN'] as const) {
+      const label = describeSession({ ...base, state: st }).label
+      expect(label).not.toMatch(/MARKET|CLOSED/)
+    }
   })
 
   test('UNKNOWN is never rendered as closed', () => {
@@ -57,7 +66,7 @@ describe('the session label', () => {
       describeSession({ ...base, state: 'UNKNOWN', openMinutesEt: null, closeMinutesEt: null }),
       describeSession(null),   // the backend did not answer
     ]) {
-      expect(s.label).toBe('HOURS UNKNOWN')
+      expect(s.label).toBe('SESSION UNKNOWN')
       expect(s.tone).toBe('unknown')
       expect(s.label).not.toMatch(/CLOSED|OPEN/)
     }

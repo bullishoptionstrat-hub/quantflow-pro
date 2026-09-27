@@ -123,12 +123,13 @@ test('the detector is exercised on the shapes it exists to catch', async () => {
 test('the session block publishes calendar facts and nothing about the deployment', async () => {
   // The field the bot pointed at, checked on its own terms rather than by
   // asserting the bot was wrong. Its keys are a state, a date, three integers,
-  // the calendar's own prose, the publisher's name, a read date and a coverage
-  // range — all public facts about the NYSE schedule.
+  // the calendar's own prose, the publisher's name, a read date, a coverage
+  // range and the constant naming which session authority this is — all
+  // public facts about the NYSE schedule.
   const body = await readHealth() as { session?: Record<string, unknown> };
   assert.ok(body.session, '/api/health carries the session verdict');
   assert.deepEqual(Object.keys(body.session).sort(), [
-    'basis', 'closeMinutesEt', 'coverage', 'date', 'nowMinutesEt',
+    'authority', 'basis', 'closeMinutesEt', 'coverage', 'date', 'nowMinutesEt',
     'openMinutesEt', 'readAt', 'source', 'state',
   ], 'the published shape is exactly this — a new key here needs a look, ' +
      'because everything on this route is world-readable');

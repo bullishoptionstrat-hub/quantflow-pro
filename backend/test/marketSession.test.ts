@@ -15,7 +15,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { marketSessionAt, minutesEt } from '../src/market/session';
+import { marketSessionAt } from '../src/market/session';
+import { minutesEt } from '../src/market/civil';
 
 /** An instant, given in market-local terms. EDT is UTC-4, EST is UTC-5. */
 const edt = (date: string, hhmm: string) =>

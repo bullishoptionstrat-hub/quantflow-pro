@@ -1,0 +1,79 @@
+{
+  "schema": "quantflow-dataset-rights-v1",
+  "provider": "ThetaData",
+  "dataset": "OPRA option history, candidate endpoints: trade, trade_quote (exclusive=true), quote",
+  "subscriptionTier": null,
+  "intendedDeploymentMode": "PRIVATE_RESEARCH",
+  "rights": {
+    "fetch": {
+      "status": "UNVERIFIED",
+      "quote": null,
+      "document": null,
+      "readAt": null,
+      "evidence": "UNVERIFIED",
+      "note": "Primary documents not read: the provider's site was refused by this environment's egress policy on 2026-09-27."
+    },
+    "persistRaw": {
+      "status": "UNVERIFIED",
+      "quote": null,
+      "document": null,
+      "readAt": null,
+      "evidence": "UNVERIFIED",
+      "note": "Primary documents not read: the provider's site was refused by this environment's egress policy on 2026-09-27."
+    },
+    "persistNormalized": {
+      "status": "UNVERIFIED",
+      "quote": null,
+      "document": null,
+      "readAt": null,
+      "evidence": "UNVERIFIED",
+      "note": "Primary documents not read: the provider's site was refused by this environment's egress policy on 2026-09-27."
+    },
+    "researchUse": {
+      "status": "UNVERIFIED",
+      "quote": null,
+      "document": null,
+      "readAt": null,
+      "evidence": "UNVERIFIED",
+      "note": "Primary documents not read: the provider's site was refused by this environment's egress policy on 2026-09-27. The operator audit summarises the subscriber agreement as permitting internal personal trading, analysis and research. A summary, not a quotation; UNVERIFIED until the agreement is read."
+    },
+    "modelTraining": {
+      "status": "UNVERIFIED",
+      "quote": null,
+      "document": null,
+      "readAt": null,
+      "evidence": "UNVERIFIED",
+      "note": "Primary documents not read: the provider's site was refused by this environment's egress policy on 2026-09-27."
+    },
+    "export": {
+      "status": "UNVERIFIED",
+      "quote": null,
+      "document": null,
+      "readAt": null,
+      "evidence": "UNVERIFIED",
+      "note": "Primary documents not read: the provider's site was refused by this environment's egress policy on 2026-09-27."
+    },
+    "redistribution": {
+      "status": "LEGAL_INTERPRETATION_REQUIRED",
+      "quote": null,
+      "document": null,
+      "readAt": null,
+      "evidence": "UNVERIFIED",
+      "note": "Primary documents not read: the provider's site was refused by this environment's egress policy on 2026-09-27. The operator audit summarises the subscriber agreement as restricting furnishing OPRA data to others. Whether a published research result derived from the data is 'furnishing' it is a legal question; the Finnhub entry in rights.ts is the precedent for how narrowly such a clause can read."
+    },
+    "retention": {
+      "status": "UNVERIFIED",
+      "quote": null,
+      "document": null,
+      "readAt": null,
+      "evidence": "UNVERIFIED",
+      "note": "Primary documents not read: the provider's site was refused by this environment's egress policy on 2026-09-27."
+    }
+  },
+  "sourceDocuments": [
+    "ThetaData subscriber agreement (not read \u2014 egress refused 2026-09-27)",
+    "ThetaData option history documentation (not read \u2014 egress refused 2026-09-27)",
+    "OPRA fee schedule and Non-Display Use policy (not read \u2014 egress refused 2026-09-27)"
+  ],
+  "verifiedAt": null
+}

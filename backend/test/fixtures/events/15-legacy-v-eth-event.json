@@ -1,0 +1,183 @@
+{
+  "schema": "quantflow-event-fixture-v1",
+  "case": 15,
+  "name": "legacy v ETH event",
+  "about": "Before migrating, a participant marks extended hours with sale condition v. It is read wherever it arrives, it is consumed by the session reader rather than left 'uninterpreted', and it is case-sensitive: V is a different code.",
+  "defaults": {
+    "provider": "fixture",
+    "datasetId": "FIXTURE.OPRA.V1",
+    "sequenceScope": "opra-line-7:2026-09-24",
+    "venue": "C",
+    "rawSessionIdentifier": 0,
+    "instrument": {
+      "underlying": "SPY",
+      "expiry": "2026-10-16",
+      "strike": 550,
+      "right": "C"
+    },
+    "synthetic": true,
+    "replay": true
+  },
+  "records": [
+    {
+      "ref": "T1",
+      "type": "trade",
+      "providerSequence": "1001",
+      "eventTime": "2026-09-24T20:30:00.000Z",
+      "providerReceiveTime": "2026-09-24T20:30:00.004Z",
+      "price": 2.4,
+      "size": 5,
+      "rawSessionIdentifier": null,
+      "rawConditions": [
+        "v"
+      ]
+    },
+    {
+      "ref": "T2",
+      "type": "trade",
+      "providerSequence": "1002",
+      "eventTime": "2026-09-24T20:31:00.000Z",
+      "providerReceiveTime": "2026-09-24T20:31:00.004Z",
+      "price": 2.41,
+      "size": 5,
+      "rawSessionIdentifier": null,
+      "rawMessageType": "v"
+    },
+    {
+      "ref": "T3",
+      "type": "trade",
+      "providerSequence": "1003",
+      "eventTime": "2026-09-24T20:32:00.000Z",
+      "providerReceiveTime": "2026-09-24T20:32:00.004Z",
+      "price": 2.42,
+      "size": 5,
+      "rawSessionIdentifier": null,
+      "rawConditions": [
+        "V"
+      ]
+    },
+    {
+      "ref": "T4",
+      "type": "trade",
+      "providerSequence": "1004",
+      "eventTime": "2026-09-24T20:33:00.000Z",
+      "providerReceiveTime": "2026-09-24T20:33:00.004Z",
+      "price": 2.43,
+      "size": 5,
+      "rawSessionIdentifier": 1,
+      "rawConditions": [
+        "v"
+      ]
+    }
+  ],
+  "reorder": {
+    "allowedLatenessMs": 1000
+  },
+  "expect": {
+    "append": {
+      "T1": "APPENDED",
+      "T2": "APPENDED",
+      "T3": "APPENDED",
+      "T4": "APPENDED"
+    },
+    "events": {
+      "T1": {
+        "kind": "TRADE_REPORT",
+        "reportLifecycle": "REGULAR",
+        "iso": false,
+        "complex": false,
+        "uninterpretedCodes": [],
+        "semanticsStatus": "UNVERIFIED",
+        "availableAt": "2026-09-24T20:30:00.004Z",
+        "availableAtBasis": "PROVIDER_RECEIPT",
+        "clockInversion": false,
+        "session": {
+          "normalized": "EXTENDED",
+          "basis": "LEGACY_SALE_CONDITION"
+        }
+      },
+      "T2": {
+        "kind": "TRADE_REPORT",
+        "reportLifecycle": "REGULAR",
+        "iso": false,
+        "complex": false,
+        "uninterpretedCodes": [],
+        "semanticsStatus": "UNVERIFIED",
+        "availableAt": "2026-09-24T20:31:00.004Z",
+        "availableAtBasis": "PROVIDER_RECEIPT",
+        "clockInversion": false,
+        "session": {
+          "normalized": "EXTENDED",
+          "basis": "LEGACY_SALE_CONDITION"
+        }
+      },
+      "T3": {
+        "kind": "TRADE_REPORT",
+        "reportLifecycle": "UNKNOWN",
+        "iso": null,
+        "complex": null,
+        "uninterpretedCodes": [
+          "V"
+        ],
+        "semanticsStatus": "UNVERIFIED",
+        "availableAt": "2026-09-24T20:32:00.004Z",
+        "availableAtBasis": "PROVIDER_RECEIPT",
+        "clockInversion": false,
+        "session": {
+          "normalized": "UNKNOWN",
+          "basis": "NONE"
+        }
+      },
+      "T4": {
+        "kind": "TRADE_REPORT",
+        "reportLifecycle": "REGULAR",
+        "iso": false,
+        "complex": false,
+        "uninterpretedCodes": [],
+        "semanticsStatus": "UNVERIFIED",
+        "availableAt": "2026-09-24T20:33:00.004Z",
+        "availableAtBasis": "PROVIDER_RECEIPT",
+        "clockInversion": false,
+        "session": {
+          "normalized": "EXTENDED",
+          "basis": "BOTH_AGREE"
+        }
+      }
+    },
+    "views": [
+      {
+        "asOf": "FINAL",
+        "trades": {
+          "T1": "ACTIVE",
+          "T2": "ACTIVE",
+          "T3": "ACTIVE",
+          "T4": "ACTIVE"
+        }
+      }
+    ],
+    "research": {
+      "T1": {
+        "eligibility": "EXCLUDED",
+        "basis": "PROVIDER_EVIDENCE"
+      },
+      "T3": {
+        "eligibility": "UNKNOWN",
+        "basis": "CLOCK_INFERENCE"
+      }
+    },
+    "feed": {
+      "T1": "SUPPORTED"
+    },
+    "signals": [
+      {
+        "evidence": [
+          "T1"
+        ],
+        "decidedAt": "2026-09-24T20:30:00.500Z",
+        "view": "FINAL",
+        "status": "FINAL",
+        "finalTapeStudies": "INCLUDE"
+      }
+    ]
+  }
+}

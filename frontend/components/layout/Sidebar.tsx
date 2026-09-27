@@ -88,9 +88,11 @@ export function Sidebar() {
             published calendar via `/api/health`, and the three tones are three
             different facts: open, established closed, and cannot say. A
             published closure is painted grey-red rather than alarm-red because
-            Sunday is not a fault, and `HOURS UNKNOWN` is never painted as
+            Sunday is not a fault, and `SESSION UNKNOWN` is never painted as
             closed — the calendar refusing to answer is the one case where the
-            terminal genuinely does not know. */}
+            terminal genuinely does not know. Every label names RTH: the
+            verdict is the exchange's regular session and nothing wider, so it
+            may not be printed as "the market". */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}
           title={session.detail}>
           <span style={{ width: 7, height: 7, borderRadius: '50%', background: tone, display: 'inline-block', boxShadow: session.tone === 'open' ? '0 0 0 2px rgba(34,197,94,0.3)' : 'none' }} />

@@ -35,8 +35,30 @@ import { classifySource, type RightsClass } from '../provenance/rights';
 /** Provider-agnostic print. Every connector normalizes to this. */
 export interface RawPrint {
   id?: string;
-  /** Epoch ms. Defaults to now. Prints must arrive roughly ascending. */
+  /**
+   * Epoch ms. Defaults to now.
+   *
+   * This said "Prints must arrive roughly ascending", which was an assumption
+   * written as a contract: nothing enforced it and no feed guarantees it.
+   * Historical and fixture events now reach this seam through
+   * `events/reorder.ts`, which releases them in a stated order and reports
+   * anything later than its bound as a LATE_EVENT instead of inserting it.
+   * The LIVE path has no reorder buffer yet, and says so: its only sources
+   * today are the simulation and chain snapshots, which emit in order, and
+   * the first live OPRA source is exactly what would need one (§29).
+   */
   ts?: number;
+  /**
+   * When the print became knowable, carried from an upstream record that
+   * measured it — a Market Event V2's `availableAt`. When absent the adapter
+   * stamps its own wall clock, or nothing for replay.
+   *
+   * A historical record with a provider receipt is not "replay with no
+   * clock": dropping that receipt here would hand its signals a decision
+   * basis of EVENT_TIME_ONLY for data that has a better one, which is the
+   * historical shortcut §22 forbids.
+   */
+  receivedAt?: number;
   symbol: string;                 // underlying, e.g. "SPY"
   expiry: string;                 // ISO date, "2026-06-19"
   strike: number;
@@ -496,7 +518,7 @@ export function ingestPrint(print: RawPrint): WireFlowEvent[] {
   // process could possibly have known about the print. Distinct from `ts`,
   // which is when it happened at the venue; the gap between them is the feed
   // latency a forward measurement must be charged.
-  const receivedAt = print.replay ? undefined : Date.now();
+  const receivedAt = print.receivedAt ?? (print.replay ? undefined : Date.now());
   lastPrintTs = Math.max(lastPrintTs, ts);
   const symbol = occSymbol(print.symbol, print.expiry, print.right, print.strike);
 

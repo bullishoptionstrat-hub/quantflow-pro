@@ -1,0 +1,148 @@
+{
+  "schema": "quantflow-event-fixture-v1",
+  "case": 13,
+  "name": "regular-session event",
+  "about": "Provider evidence REGULAR admits a trade to the H-001-v2 sample. With no session evidence at all the clock may say REGULAR inside the exchange's regular hours, labelled as inference; outside them it says nothing.",
+  "defaults": {
+    "provider": "fixture",
+    "datasetId": "FIXTURE.OPRA.V1",
+    "sequenceScope": "opra-line-7:2026-09-24",
+    "venue": "C",
+    "rawSessionIdentifier": 0,
+    "instrument": {
+      "underlying": "SPY",
+      "expiry": "2026-10-16",
+      "strike": 550,
+      "right": "C"
+    },
+    "synthetic": true,
+    "replay": true
+  },
+  "records": [
+    {
+      "ref": "T1",
+      "type": "trade",
+      "providerSequence": "1001",
+      "eventTime": "2026-09-24T15:00:00.000Z",
+      "providerReceiveTime": "2026-09-24T15:00:00.004Z",
+      "price": 2.15,
+      "size": 5
+    },
+    {
+      "ref": "T2",
+      "type": "trade",
+      "providerSequence": "1002",
+      "eventTime": "2026-09-24T15:00:01.000Z",
+      "providerReceiveTime": "2026-09-24T15:00:01.004Z",
+      "price": 2.16,
+      "size": 5,
+      "rawSessionIdentifier": null
+    },
+    {
+      "ref": "T3",
+      "type": "trade",
+      "providerSequence": "1003",
+      "eventTime": "2026-09-24T20:10:00.000Z",
+      "providerReceiveTime": "2026-09-24T20:10:00.004Z",
+      "price": 2.4,
+      "size": 5,
+      "rawSessionIdentifier": null
+    }
+  ],
+  "reorder": {
+    "allowedLatenessMs": 1000
+  },
+  "expect": {
+    "append": {
+      "T1": "APPENDED",
+      "T2": "APPENDED",
+      "T3": "APPENDED"
+    },
+    "events": {
+      "T1": {
+        "kind": "TRADE_REPORT",
+        "reportLifecycle": "REGULAR",
+        "iso": false,
+        "complex": false,
+        "uninterpretedCodes": [],
+        "semanticsStatus": "UNVERIFIED",
+        "availableAt": "2026-09-24T15:00:00.004Z",
+        "availableAtBasis": "PROVIDER_RECEIPT",
+        "clockInversion": false,
+        "session": {
+          "normalized": "REGULAR",
+          "basis": "PROVIDER_SESSION_IDENTIFIER"
+        }
+      },
+      "T2": {
+        "kind": "TRADE_REPORT",
+        "reportLifecycle": "REGULAR",
+        "iso": false,
+        "complex": false,
+        "uninterpretedCodes": [],
+        "semanticsStatus": "UNVERIFIED",
+        "availableAt": "2026-09-24T15:00:01.004Z",
+        "availableAtBasis": "PROVIDER_RECEIPT",
+        "clockInversion": false,
+        "session": {
+          "normalized": "UNKNOWN",
+          "basis": "NONE"
+        }
+      },
+      "T3": {
+        "kind": "TRADE_REPORT",
+        "reportLifecycle": "REGULAR",
+        "iso": false,
+        "complex": false,
+        "uninterpretedCodes": [],
+        "semanticsStatus": "UNVERIFIED",
+        "availableAt": "2026-09-24T20:10:00.004Z",
+        "availableAtBasis": "PROVIDER_RECEIPT",
+        "clockInversion": false,
+        "session": {
+          "normalized": "UNKNOWN",
+          "basis": "NONE"
+        }
+      }
+    },
+    "views": [
+      {
+        "asOf": "FINAL",
+        "trades": {
+          "T1": "ACTIVE",
+          "T2": "ACTIVE",
+          "T3": "ACTIVE"
+        }
+      }
+    ],
+    "research": {
+      "T1": {
+        "eligibility": "INCLUDED",
+        "basis": "PROVIDER_EVIDENCE"
+      },
+      "T2": {
+        "eligibility": "INCLUDED",
+        "basis": "CLOCK_INFERENCE"
+      },
+      "T3": {
+        "eligibility": "UNKNOWN",
+        "basis": "CLOCK_INFERENCE"
+      }
+    },
+    "feed": {
+      "T1": "SUPPORTED",
+      "T3": "SUPPORTED"
+    },
+    "signals": [
+      {
+        "evidence": [
+          "T1"
+        ],
+        "decidedAt": "2026-09-24T15:00:00.500Z",
+        "view": "FINAL",
+        "status": "FINAL",
+        "finalTapeStudies": "INCLUDE"
+      }
+    ]
+  }
+}

@@ -1,0 +1,130 @@
+{
+  "schema": "quantflow-event-fixture-v1",
+  "case": 4,
+  "name": "out-of-sequence trade (OSEQ)",
+  "about": "An OSEQ report stamped 30 s earlier than trades already reported. Classified LATE_OUT_OF_SEQUENCE by its code and LATE_EVENT by the buffer; the tape keeps it.",
+  "defaults": {
+    "provider": "fixture",
+    "datasetId": "FIXTURE.OPRA.V1",
+    "sequenceScope": "opra-line-7:2026-09-24",
+    "venue": "C",
+    "rawSessionIdentifier": 0,
+    "instrument": {
+      "underlying": "SPY",
+      "expiry": "2026-10-16",
+      "strike": 550,
+      "right": "C"
+    },
+    "synthetic": true,
+    "replay": true
+  },
+  "records": [
+    {
+      "ref": "T1",
+      "type": "trade",
+      "providerSequence": "1001",
+      "eventTime": "2026-09-24T14:00:00.000Z",
+      "providerReceiveTime": "2026-09-24T14:00:00.004Z",
+      "price": 2.15,
+      "size": 5
+    },
+    {
+      "ref": "T2",
+      "type": "trade",
+      "providerSequence": "1002",
+      "eventTime": "2026-09-24T14:00:01.000Z",
+      "providerReceiveTime": "2026-09-24T14:00:01.004Z",
+      "price": 2.16,
+      "size": 5
+    },
+    {
+      "ref": "T3",
+      "type": "trade",
+      "providerSequence": "1003",
+      "eventTime": "2026-09-24T13:59:30.000Z",
+      "providerReceiveTime": "2026-09-24T14:00:10.000Z",
+      "price": 2.12,
+      "size": 8,
+      "rawMessageType": "OSEQ"
+    }
+  ],
+  "reorder": {
+    "allowedLatenessMs": 1000
+  },
+  "expect": {
+    "append": {
+      "T1": "APPENDED",
+      "T2": "APPENDED",
+      "T3": "APPENDED"
+    },
+    "events": {
+      "T3": {
+        "kind": "TRADE_REPORT",
+        "reportLifecycle": "LATE_OUT_OF_SEQUENCE",
+        "iso": false,
+        "complex": false,
+        "uninterpretedCodes": [],
+        "semanticsStatus": "UNVERIFIED",
+        "availableAt": "2026-09-24T14:00:10.000Z",
+        "availableAtBasis": "PROVIDER_RECEIPT",
+        "clockInversion": false,
+        "session": {
+          "normalized": "REGULAR",
+          "basis": "PROVIDER_SESSION_IDENTIFIER"
+        }
+      }
+    },
+    "views": [
+      {
+        "asOf": "2026-09-24T14:00:05.000Z",
+        "trades": {
+          "T1": "ACTIVE",
+          "T2": "ACTIVE"
+        }
+      },
+      {
+        "asOf": "FINAL",
+        "trades": {
+          "T1": "ACTIVE",
+          "T2": "ACTIVE",
+          "T3": "ACTIVE"
+        }
+      }
+    ],
+    "emissions": {
+      "T1": "ORDERED",
+      "T2": "ORDERED",
+      "T3": "LATE_EVENT"
+    },
+    "lateByMs": {
+      "T3": 30000
+    },
+    "signals": [
+      {
+        "evidence": [
+          "T1",
+          "T2"
+        ],
+        "decidedAt": "2026-09-24T14:00:01.500Z",
+        "view": "2026-09-24T14:00:05.000Z",
+        "status": "PROVISIONAL",
+        "finalTapeStudies": "NOT_YET_ELIGIBLE",
+        "clusterGapMs": 300000
+      },
+      {
+        "evidence": [
+          "T1",
+          "T2"
+        ],
+        "decidedAt": "2026-09-24T14:00:01.500Z",
+        "view": "FINAL",
+        "status": "REVISED",
+        "finalTapeStudies": "RECOMPUTE_BEFORE_USE",
+        "clusterGapMs": 300000,
+        "lateEvidence": [
+          "T3"
+        ]
+      }
+    ]
+  }
+}

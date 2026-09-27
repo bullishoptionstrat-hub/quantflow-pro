@@ -1,0 +1,95 @@
+{
+  "schema": "quantflow-event-fixture-v1",
+  "case": 18,
+  "name": "quote after the trade",
+  "about": "The only quotes are one stamped after the trade and one stamped before it that arrived after it. Neither was in the live book when the trade was knowable, so there is no causal quote and the side is AMBIGUOUS.",
+  "defaults": {
+    "provider": "fixture",
+    "datasetId": "FIXTURE.OPRA.V1",
+    "sequenceScope": "opra-line-7:2026-09-24",
+    "venue": "C",
+    "rawSessionIdentifier": 0,
+    "instrument": {
+      "underlying": "SPY",
+      "expiry": "2026-10-16",
+      "strike": 550,
+      "right": "C"
+    },
+    "synthetic": true,
+    "replay": true
+  },
+  "records": [
+    {
+      "ref": "T1",
+      "type": "trade",
+      "providerSequence": "1001",
+      "eventTime": "2026-09-24T14:00:00.000Z",
+      "providerReceiveTime": "2026-09-24T14:00:00.004Z",
+      "price": 2.2,
+      "size": 5
+    },
+    {
+      "ref": "Q1",
+      "type": "quote",
+      "providerSequence": "1002",
+      "eventTime": "2026-09-24T14:00:00.050Z",
+      "providerReceiveTime": "2026-09-24T14:00:00.052Z",
+      "bid": 2.1,
+      "ask": 2.2,
+      "bidSize": 50,
+      "askSize": 40
+    },
+    {
+      "ref": "Q2",
+      "type": "quote",
+      "eventTime": "2026-09-24T13:59:59.900Z",
+      "providerReceiveTime": "2026-09-24T14:00:00.300Z",
+      "bid": 2.05,
+      "ask": 2.15,
+      "bidSize": 20,
+      "askSize": 20
+    }
+  ],
+  "reorder": {
+    "allowedLatenessMs": 1000
+  },
+  "expect": {
+    "append": {
+      "T1": "APPENDED",
+      "Q1": "APPENDED",
+      "Q2": "APPENDED"
+    },
+    "views": [
+      {
+        "asOf": "FINAL",
+        "trades": {
+          "T1": "ACTIVE"
+        },
+        "quotes": [
+          "Q2",
+          "Q1"
+        ]
+      }
+    ],
+    "causal": [
+      {
+        "trade": "T1",
+        "status": "NONE_PRIOR",
+        "simultaneousExcluded": 0,
+        "arrivedLaterExcluded": 1,
+        "side": "AMBIGUOUS"
+      }
+    ],
+    "signals": [
+      {
+        "evidence": [
+          "T1"
+        ],
+        "decidedAt": "2026-09-24T14:00:00.500Z",
+        "view": "FINAL",
+        "status": "FINAL",
+        "finalTapeStudies": "INCLUDE"
+      }
+    ]
+  }
+}

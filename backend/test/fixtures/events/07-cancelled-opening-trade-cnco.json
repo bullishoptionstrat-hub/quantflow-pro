@@ -1,0 +1,111 @@
+{
+  "schema": "quantflow-event-fixture-v1",
+  "case": 7,
+  "name": "cancelled opening trade (CNCO)",
+  "about": "CNCO resolves to the first report of the day on this contract and venue.",
+  "defaults": {
+    "provider": "fixture",
+    "datasetId": "FIXTURE.OPRA.V1",
+    "sequenceScope": "opra-line-7:2026-09-24",
+    "venue": "C",
+    "rawSessionIdentifier": 0,
+    "instrument": {
+      "underlying": "SPY",
+      "expiry": "2026-10-16",
+      "strike": 550,
+      "right": "C"
+    },
+    "synthetic": true,
+    "replay": true
+  },
+  "records": [
+    {
+      "ref": "T1",
+      "type": "trade",
+      "providerSequence": "1001",
+      "eventTime": "2026-09-24T13:30:00.050Z",
+      "providerReceiveTime": "2026-09-24T13:30:00.054Z",
+      "price": 3.0,
+      "size": 20
+    },
+    {
+      "ref": "T2",
+      "type": "trade",
+      "providerSequence": "1002",
+      "eventTime": "2026-09-24T13:30:05.000Z",
+      "providerReceiveTime": "2026-09-24T13:30:05.004Z",
+      "price": 3.05,
+      "size": 5
+    },
+    {
+      "ref": "C1",
+      "type": "trade",
+      "providerSequence": "1003",
+      "eventTime": "2026-09-24T13:31:00.000Z",
+      "providerReceiveTime": "2026-09-24T13:31:00.004Z",
+      "rawMessageType": "CNCO",
+      "price": 3.0,
+      "size": 20
+    }
+  ],
+  "reorder": {
+    "allowedLatenessMs": 1000
+  },
+  "expect": {
+    "append": {
+      "T1": "APPENDED",
+      "T2": "APPENDED",
+      "C1": "APPENDED"
+    },
+    "events": {
+      "C1": {
+        "kind": "TRADE_CANCEL",
+        "cancelScope": "OPENING",
+        "semanticsStatus": "UNVERIFIED",
+        "availableAt": "2026-09-24T13:31:00.004Z",
+        "availableAtBasis": "PROVIDER_RECEIPT",
+        "clockInversion": false,
+        "session": {
+          "normalized": "REGULAR",
+          "basis": "PROVIDER_SESSION_IDENTIFIER"
+        }
+      }
+    },
+    "views": [
+      {
+        "asOf": "FINAL",
+        "trades": {
+          "T1": "CANCELLED",
+          "T2": "ACTIVE"
+        },
+        "cancels": {
+          "C1": {
+            "outcome": "RESOLVED",
+            "rule": "OPENING",
+            "target": "T1"
+          }
+        }
+      }
+    ],
+    "emissions": {
+      "T1": "ORDERED",
+      "T2": "ORDERED",
+      "C1": "ORDERED"
+    },
+    "signals": [
+      {
+        "evidence": [
+          "T1",
+          "T2"
+        ],
+        "decidedAt": "2026-09-24T13:30:05.500Z",
+        "view": "FINAL",
+        "status": "REVISED",
+        "finalTapeStudies": "RECOMPUTE_BEFORE_USE",
+        "cancelledEvidence": [
+          "T1"
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,103 @@
+{
+  "schema": "quantflow-event-fixture-v1",
+  "case": 1,
+  "name": "normal trade",
+  "about": "A regular report with a provider receipt. availableAt is the receipt, not the event time; a view one millisecond earlier does not contain it.",
+  "defaults": {
+    "provider": "fixture",
+    "datasetId": "FIXTURE.OPRA.V1",
+    "sequenceScope": "opra-line-7:2026-09-24",
+    "venue": "C",
+    "rawSessionIdentifier": 0,
+    "instrument": {
+      "underlying": "SPY",
+      "expiry": "2026-10-16",
+      "strike": 550,
+      "right": "C"
+    },
+    "synthetic": true,
+    "replay": true
+  },
+  "records": [
+    {
+      "ref": "T1",
+      "type": "trade",
+      "providerSequence": "1001",
+      "eventTime": "2026-09-24T14:00:00.000Z",
+      "providerReceiveTime": "2026-09-24T14:00:00.004Z",
+      "price": 2.15,
+      "size": 5
+    }
+  ],
+  "reorder": {
+    "allowedLatenessMs": 1000
+  },
+  "expect": {
+    "append": {
+      "T1": "APPENDED"
+    },
+    "events": {
+      "T1": {
+        "kind": "TRADE_REPORT",
+        "reportLifecycle": "REGULAR",
+        "iso": false,
+        "complex": false,
+        "uninterpretedCodes": [],
+        "semanticsStatus": "UNVERIFIED",
+        "availableAt": "2026-09-24T14:00:00.004Z",
+        "availableAtBasis": "PROVIDER_RECEIPT",
+        "clockInversion": false,
+        "session": {
+          "normalized": "REGULAR",
+          "basis": "PROVIDER_SESSION_IDENTIFIER"
+        },
+        "price": 2.15,
+        "size": 5
+      }
+    },
+    "views": [
+      {
+        "asOf": "2026-09-24T14:00:00.003Z",
+        "trades": {}
+      },
+      {
+        "asOf": "FINAL",
+        "trades": {
+          "T1": "ACTIVE"
+        }
+      }
+    ],
+    "emissions": {
+      "T1": "ORDERED"
+    },
+    "research": {
+      "T1": {
+        "eligibility": "INCLUDED",
+        "basis": "PROVIDER_EVIDENCE"
+      }
+    },
+    "feed": {
+      "T1": "SUPPORTED"
+    },
+    "signals": [
+      {
+        "evidence": [
+          "T1"
+        ],
+        "decidedAt": "2026-09-24T14:00:00.004Z",
+        "view": "2026-09-24T14:00:01.000Z",
+        "status": "PROVISIONAL",
+        "finalTapeStudies": "NOT_YET_ELIGIBLE"
+      },
+      {
+        "evidence": [
+          "T1"
+        ],
+        "decidedAt": "2026-09-24T14:00:00.004Z",
+        "view": "FINAL",
+        "status": "FINAL",
+        "finalTapeStudies": "INCLUDE"
+      }
+    ]
+  }
+}

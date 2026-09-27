@@ -824,9 +824,14 @@ test('the socket flag is not read as a claim about the data', () => {
 
 test('the session indicator reads the calendar rather than a local clock', () => {
   // This guard used to REQUIRE `isRegularHours` and FORBID `MARKET OPEN`, on the
-  // premise that no holiday calendar existed. Both premises have flipped: the
-  // calendar is in the engine, `/api/health` publishes the verdict, and the
-  // local helper is deleted — so `MARKET OPEN` is now a supported claim.
+  // premise that no holiday calendar existed. The calendar now exists, and the
+  // previous revision of this comment concluded that `MARKET OPEN` had become a
+  // supported claim. **The audit of 2026-09-27 refuted that**: the calendar
+  // establishes the exchange's REGULAR session and nothing wider. The OPRA
+  // window, a product's curb and overnight sessions, and a study's sample are
+  // separate facts, and at 21:00 on a Sunday SPX trades while the label said
+  // CLOSED. So `MARKET OPEN` is forbidden again, for a better reason than
+  // before, and the label must name the authority it has: RTH.
   //
   // Re-pointed rather than deleted, the way `finnhubSpot.test.ts` was when its
   // own prediction came true, and strictly stronger for it: instead of policing
@@ -847,7 +852,7 @@ test('the session indicator reads the calendar rather than a local clock', () =>
   const route = readFileSync(join(__dirname, '..', 'src', 'routes', 'health.ts'), 'utf8');
   assert.match(route, /session: marketSessionAt/);
   for (const field of [
-    'state', 'date', 'nowMinutesEt', 'openMinutesEt', 'closeMinutesEt',
+    'authority', 'state', 'date', 'nowMinutesEt', 'openMinutesEt', 'closeMinutesEt',
     'basis', 'source', 'readAt', 'coverage',
   ]) {
     assert.match(session, new RegExp(`\\b${field}\\b`),
@@ -856,6 +861,13 @@ test('the session indicator reads the calendar rather than a local clock', () =>
       `and src/market/session.ts publishes ${field} — a field the UI reads and ` +
       'the API does not send is this repo\'s single most repeated defect');
   }
+  // The label names the authority it has, and never a wider one.
+  const labels = session.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  // A quoted label that begins with CLOSED — not the state names, which are
+  // CLOSED_… identifiers the backend owns.
+  assert.ok(!/MARKET OPEN|['`]CLOSED(?:['`]| ·)/.test(labels),
+    'the verdict is the exchange\'s regular session — it may not be printed as the market, or as closed');
+  assert.match(labels, /RTH OPEN/);
   // Every state the frontend renders must be one the backend can produce.
   for (const st of [
     'OPEN', 'CLOSED_OUTSIDE_HOURS', 'CLOSED_HOLIDAY', 'CLOSED_WEEKEND', 'UNKNOWN',

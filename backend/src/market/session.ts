@@ -1,31 +1,26 @@
 /**
- * Is the US options market open **right now**, and on what basis?
+ * The EXCHANGE'S REGULAR SESSION right now: is it a published session day, and
+ * is the clock inside that day's published regular hours?
  *
- * The browser used to answer this by itself. `frontend/lib/utils.ts` held
- * `isRegularHours()` — a weekday test and a clock window — and the sidebar
- * rendered its result as `REGULAR HOURS`/`OUTSIDE HOURS`. CLAUDE.md records the
- * function being *renamed* rather than fixed, on the grounds that "a calendar is
- * a thing to maintain":
+ * **This used to call itself "is the US options market open right now", and
+ * that question has no single answer.** The audit of 2026-09-27 put it plainly:
+ * OPRA's supported window, a venue's session, a product's session and a study's
+ * sample are four separate facts. At 07:45 ET the OPRA window may be open while
+ * SPY has no regular session and H-001 admits nothing; at 21:00 SPX may be
+ * trading in its global session while every equity option is shut. A verdict
+ * named "open" answered all of those with whichever one this function happened
+ * to compute — the exchange's regular hours — and the sidebar printed it as
+ * MARKET OPEN.
  *
- *   "There is no holiday calendar here, so Thanksgiving, Good Friday and every
- *    other full closure read as open, and half-days read as open past the 13:00
- *    close."
+ * So this is now exactly what it computes and is labelled that way (`authority`
+ * below). The other answers have their own modules: `civil.ts` lists them.
  *
- * That justification has expired. `flow-engine/calendar.ts` is maintained, and
- * this is the F-16 shape again: the backend knows the answer and the browser was
- * guessing. So the verdict is computed here, published on `/api/health`, and read
- * there — rather than the calendar being copied into the frontend, which is the
- * duplication this repository keeps closing.
- *
- * **Why this is not in `calendar.ts`.** That module is deliberately clock-free:
- * `sessionOn` takes a date string so that no timezone rule can hide inside a
- * table lookup, and `marketDateOf` is the one conversion from an instant. Asking
- * "is it open now" needs both plus a wall clock, which is a different job, and
- * putting it there would give the table a second reason to exist.
+ * The browser used to answer even this much by itself, with a weekday test and
+ * a clock window and no holiday calendar; the verdict is computed here from
+ * `flow-engine/calendar.ts`, published on `/api/health`, and read there.
  */
-import {
-  sessionOn, marketDateOf, MARKET_TZ, SOURCE, READ_AT, COVERAGE,
-} from '../flow-engine/calendar';
+import { sessionOn, SOURCE, READ_AT, COVERAGE } from '../flow-engine/calendar';
+import { marketDateOf, minutesEt } from './civil';
 
 /** What the board may say about the current session. */
 export type SessionState =
@@ -44,6 +39,12 @@ export type SessionState =
   | 'UNKNOWN';
 
 export interface MarketSession {
+  /**
+   * What this verdict is about. Only the exchange's published regular session:
+   * not the feed window, not a product's extended or global session, not any
+   * study's sample. A label rendered from it must say RTH, never MARKET.
+   */
+  authority: 'EXCHANGE_REGULAR_SESSION';
   state: SessionState;
   /** The market-local date this verdict is about. */
   date: string | null;
@@ -58,33 +59,12 @@ export interface MarketSession {
   coverage: { from: string; to: string };
 }
 
-const CLOCK = new Intl.DateTimeFormat('en-US', {
-  timeZone: MARKET_TZ, hour: '2-digit', minute: '2-digit', hour12: false,
-});
-
-/**
- * Minutes past midnight in the market's zone, or null when unreadable.
- *
- * `hour12: false` renders midnight as "24" in some ICU versions, so the hour is
- * taken modulo 24 rather than trusted — the same defensive read `expiry.ts`
- * makes, and the one hour where getting it wrong would put the verdict a whole
- * day out.
- */
-export function minutesEt(atMs: number): number | null {
-  if (!Number.isFinite(atMs)) return null;
-  const d = new Date(atMs);
-  if (Number.isNaN(d.getTime())) return null;
-  const parts = CLOCK.formatToParts(d);
-  const at = (k: string) => parts.find((p) => p.type === k)?.value;
-  const h = Number(at('hour'));
-  const m = Number(at('minute'));
-  if (!Number.isInteger(h) || !Number.isInteger(m)) return null;
-  return (h % 24) * 60 + m;
-}
-
 /** The session verdict at an instant. Pure, so the whole table is drivable. */
 export function marketSessionAt(atMs: number): MarketSession {
-  const meta = { source: SOURCE, readAt: READ_AT, coverage: { ...COVERAGE } };
+  const meta = {
+    authority: 'EXCHANGE_REGULAR_SESSION' as const,
+    source: SOURCE, readAt: READ_AT, coverage: { ...COVERAGE },
+  };
   const date = marketDateOf(atMs);
   const nowMinutesEt = minutesEt(atMs);
 

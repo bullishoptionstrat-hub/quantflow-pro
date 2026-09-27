@@ -3,7 +3,16 @@ import { useEffect, useState } from 'react'
 import { loadPanel, type Panel } from './panel'
 
 /**
- * The one place the terminal learns whether the market is open.
+ * The one place the terminal learns whether the EXCHANGE'S REGULAR SESSION is
+ * in hours — and only that.
+ *
+ * This used to be labelled "the market", and printed as MARKET OPEN. The audit
+ * of 2026-09-27 showed why that claim was never ours to make: the OPRA feed
+ * window (07:30–17:00 from 2026-09-21), a product's own sessions (SPX trades in
+ * a curb and an overnight global session), and a study's sample are separate
+ * facts, and at 21:00 on a Sunday SPX is trading while every label here said
+ * CLOSED. So every label now names the authority behind it: RTH, the exchange's
+ * regular trading hours, which is all the backend's verdict establishes.
  *
  * It used to be `isRegularHours()` in `lib/utils.ts` — a weekday test and a
  * hardcoded 09:30–16:00 window, computed in the browser with no calendar behind
@@ -31,6 +40,8 @@ export type SessionState =
   | 'UNKNOWN'
 
 export interface MarketSession {
+  /** Which session authority this is. Older backends omit it. */
+  authority?: 'EXCHANGE_REGULAR_SESSION'
   state: SessionState
   date: string | null
   nowMinutesEt: number | null
@@ -76,7 +87,7 @@ export function describeSession(s: MarketSession | null): {
 } {
   if (!s) {
     return {
-      label: 'HOURS UNKNOWN',
+      label: 'SESSION UNKNOWN',
       tone: 'unknown',
       detail: 'The backend did not answer, so the session calendar could not be read.',
     }
@@ -84,27 +95,33 @@ export function describeSession(s: MarketSession | null): {
   const hours = s.openMinutesEt !== null && s.closeMinutesEt !== null
     ? `${etClock(s.openMinutesEt)}–${etClock(s.closeMinutesEt)} ET`
     : null
+  // Every tooltip says what this is NOT, because the label is short and the
+  // mistake it replaces was a short label read as a larger claim.
+  const scope = 'Exchange regular trading hours only — not the OPRA feed window, ' +
+    'not extended, curb or overnight product sessions, and not any study\'s sample. '
+  const cite = `${s.basis} (${s.source}, read ${s.readAt})`
   switch (s.state) {
     case 'OPEN':
-      return { label: hours === '09:30–13:00 ET' ? 'OPEN · HALF DAY' : 'MARKET OPEN',
-        tone: 'open', detail: `${s.basis} (${s.source}, read ${s.readAt})` }
+      return { label: hours === '09:30–13:00 ET' ? 'RTH OPEN · HALF DAY' : 'RTH OPEN',
+        tone: 'open', detail: scope + cite }
     case 'CLOSED_OUTSIDE_HOURS':
-      return { label: hours ? `CLOSED · ${hours}` : 'CLOSED',
-        tone: 'closed', detail: `${s.basis} (${s.source}, read ${s.readAt})` }
+      // Outside RTH is not "closed": extended and overnight sessions may be
+      // trading, and this verdict cannot see them.
+      return { label: hours ? `OUTSIDE RTH · ${hours}` : 'OUTSIDE RTH',
+        tone: 'closed', detail: scope + cite }
     case 'CLOSED_HOLIDAY':
-      return { label: 'CLOSED · HOLIDAY', tone: 'closed',
-        detail: `${s.basis} (${s.source}, read ${s.readAt})` }
+      return { label: 'NO RTH · HOLIDAY', tone: 'closed', detail: scope + cite }
     case 'CLOSED_WEEKEND':
-      return { label: 'CLOSED · WEEKEND', tone: 'closed', detail: s.basis }
+      return { label: 'NO RTH · WEEKEND', tone: 'closed', detail: scope + s.basis }
     default:
-      return { label: 'HOURS UNKNOWN', tone: 'unknown', detail: s.basis }
+      return { label: 'SESSION UNKNOWN', tone: 'unknown', detail: scope + s.basis }
   }
 }
 
 function pick(body: unknown): MarketSession | null {
   const s = (body as { session?: unknown } | null)?.session
   // A backend older than this field answers 200 with no `session`. That is
-  // `HOURS UNKNOWN`, not a crash and not a guess — the same reason the settings
+  // `SESSION UNKNOWN`, not a crash and not a guess — the same reason the settings
   // page tolerates a payload with no `sourceNotes`.
   if (!s || typeof s !== 'object') return null
   return s as MarketSession
