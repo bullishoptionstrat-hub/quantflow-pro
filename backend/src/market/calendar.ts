@@ -93,11 +93,14 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 /**
  * The session on a calendar date, given as `YYYY-MM-DD` in market-local terms.
  *
- * The caller supplies a date already expressed in the market's own zone. This
- * function deliberately does not convert an instant, because doing so would
- * put a second timezone rule here beside the one in `flow-engine/expiry.ts`,
- * and two tables that must agree about what day it is in New York is exactly
- * the duplication this repo keeps closing.
+ * The caller supplies a date already expressed in the market's own zone.
+ * `marketDateOf()` below is the one conversion from an instant, and it is a
+ * separate function on purpose: `sessionOn` taking an epoch would hide a
+ * timezone rule inside a table lookup, and a caller passing a UTC-derived date
+ * would get a silently wrong answer for every instant between 19:00 and
+ * midnight ET. The conversion asks the IANA database rather than carrying an
+ * offset table, for the same reason `flow-engine/expiry.ts` does — a hardcoded
+ * DST rule is the same class of stale constant as a 2024 price map.
  */
 export function sessionOn(isoDate: string): Session {
   if (!ISO_DATE.test(isoDate)) {
@@ -155,4 +158,103 @@ export function sessionOn(isoDate: string): Session {
 export function isEstablishedClosure(isoDate: string): boolean {
   const k = sessionOn(isoDate).kind;
   return k === 'HOLIDAY' || k === 'WEEKEND';
+}
+
+/** The exchange whose clock decides what day it is. */
+export const MARKET_TZ = 'America/New_York';
+
+// `en-CA` formats as YYYY-MM-DD, which is the shape `sessionOn` reads. Built
+// once: constructing an Intl formatter per call is measurable at tick rates.
+const MARKET_DATE = new Intl.DateTimeFormat('en-CA', {
+  timeZone: MARKET_TZ,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+/**
+ * The market-local calendar date of an instant, or `null` when unreadable.
+ *
+ * `null` rather than today's date: a caller handed an unparseable clock must
+ * not be told what day it is in New York, because the answer would be about a
+ * different instant than the one it asked about.
+ */
+export function marketDateOf(ms: number): string | null {
+  if (!Number.isFinite(ms)) return null;
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return null;
+  return MARKET_DATE.format(d);
+}
+
+/**
+ * The longest run of consecutive full closures this table can produce.
+ *
+ * Christmas 2026 is a Friday, so 25–27 December is three. The bound exists so
+ * that `closureThroughout` cannot be made to walk an unbounded number of days
+ * by an absurd `startedAt` — a gap row whose start is the epoch, say. Nothing
+ * legitimate reaches it: the walk stops at the first date that is not a
+ * closure, and outside `COVERAGE` that is the first date it looks at.
+ */
+const MAX_CLOSURE_RUN_DAYS = 10;
+
+const DAY_MS = 86_400_000;
+
+/**
+ * Was the market established as shut for **every** calendar date the window
+ * `[startMs, endMs]` touches?
+ *
+ * Every date, not any — and that is the whole design. A window from Friday
+ * afternoon to Monday morning spans a weekend *and two open sessions*, and
+ * calling it a closure would convert a real outage into a benign one, which is
+ * the flattering direction `collection_gaps` exists to refuse.
+ *
+ * **Day granularity, stated rather than implied.** This answers "was the
+ * market shut all day", so an overnight window on a weekday — 02:00 Tuesday,
+ * when the market is just as shut — is NOT established as a closure and the
+ * caller will treat it as an ordinary gap. That overstates the gap, which
+ * costs a reader's time; the opposite error costs the record its honesty.
+ * Narrowing it needs session *open* times, which this table does not publish.
+ */
+export function closureThroughout(
+  startMs: number,
+  endMs: number,
+): { closed: boolean; basis: string } {
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) {
+    return { closed: false, basis: 'window bounds are not a readable interval' };
+  }
+  if (endMs - startMs > MAX_CLOSURE_RUN_DAYS * DAY_MS) {
+    return {
+      closed: false,
+      basis:
+        `window spans more than ${MAX_CLOSURE_RUN_DAYS} days, which is longer ` +
+        'than any run of closures this calendar can establish',
+    };
+  }
+
+  const last = marketDateOf(endMs);
+  if (last === null) return { closed: false, basis: 'window end is not a readable instant' };
+
+  const seen: string[] = [];
+  // Step by whole days from the start instant. The final iteration is pinned
+  // to `endMs` itself so a window shorter than a day still checks its end
+  // date, and so a DST day (23 or 25 hours long) cannot skip one.
+  for (let t = startMs; ; t += DAY_MS) {
+    const date = marketDateOf(Math.min(t, endMs));
+    if (date === null) return { closed: false, basis: 'window start is not a readable instant' };
+    if (!seen.includes(date)) {
+      const s = sessionOn(date);
+      if (s.kind !== 'HOLIDAY' && s.kind !== 'WEEKEND') {
+        return { closed: false, basis: s.basis };
+      }
+      seen.push(date);
+    }
+    if (t >= endMs) break;
+  }
+
+  return {
+    closed: true,
+    basis: seen.length === 1
+      ? sessionOn(seen[0]).basis
+      : `every date in ${seen[0]}..${seen[seen.length - 1]} is an established closure`,
+  };
 }

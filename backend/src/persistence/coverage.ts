@@ -19,17 +19,33 @@
  * single row, and a track record computed today would carry exactly the bias it
  * was designed to expose. This module is the missing writer.
  *
- * **`MARKET_CLOSED` is deliberately never emitted here**, though the union
- * offers it. Classifying a window as benignly shut needs a holiday calendar
- * this codebase does not have, and CLAUDE.md already records what happens
- * without one — a `MARKET OPEN` indicator over "a weekday-and-clock check with
- * no holiday calendar: a green dot on Thanksgiving". The failure direction is
- * what settles it: mislabelling a real outage as a benign closure converts
- * missing data into data that was never expected, which is the flattering
- * direction and the one this table exists to prevent. An honest
- * `NOT_OBSERVED` over a closed market overstates the gap, which is the
- * direction that costs nothing but a reader's time.
+ * **`MARKET_CLOSED` used to be refused here outright**, on the grounds that
+ * classifying a window as benignly shut "needs a holiday calendar this
+ * codebase does not have". That was true when it was written and it is not
+ * now: `market/calendar.ts` is effective-dated, carries a hard `COVERAGE`
+ * bound, and answers `UNKNOWN` outside it.
+ *
+ * The objection it recorded was never to the verdict — it was to *guessing*
+ * one. So the rule this module applies is deliberately the narrowest thing
+ * that can be established rather than assumed:
+ *
+ *   - `MARKET_CLOSED` only when **every calendar date the window touches** is
+ *     a published holiday or a weekend. A window from Friday afternoon to
+ *     Monday morning spans two open sessions and stays an outage.
+ *   - `UNKNOWN` — a date past the calendar's coverage — is **not** a closure.
+ *     A caller reading "not open" out of "cannot say" is precisely how a
+ *     `MARKET_CLOSED` row gets written over a real outage.
+ *   - Day granularity only. 02:00 on a Tuesday is a shut market and is still
+ *     `NOT_OBSERVED`, because deciding otherwise needs session open times the
+ *     calendar does not publish.
+ *
+ * Every one of those goes the unflattering way, which is the point. An honest
+ * `NOT_OBSERVED` over a closed market overstates the gap and costs a reader's
+ * time; a `MARKET_CLOSED` over a real outage "does not reduce coverage" (the
+ * union's own words) and silently removes the hard cases from every rate
+ * computed over the window.
  */
+import { closureThroughout } from '../market/calendar';
 import type { CollectionGap, GapKind } from './types';
 
 /** What the runtime can tell us at one instant. */
@@ -54,20 +70,53 @@ export interface WindowVerdict {
   reason: string;
 }
 
+/** The interval a verdict is about, in epoch ms. */
+export interface Window {
+  startMs: number;
+  endMs: number;
+}
+
 /**
  * Classify one window. Pure — the whole point is that this is drivable.
  *
- * Three outcomes, and the middle one is the one people forget:
+ * Four outcomes, and the middle two are the ones people forget:
  *
- *   - not collecting        → NOT_OBSERVED. An absence of data.
- *   - collecting, nothing   → OBSERVED_EMPTY. This *is* data: the tape really
- *                             was quiet, and a backtest may use the window.
- *   - collecting, something → no gap.
+ *   - market established shut → MARKET_CLOSED. Benign; does not reduce coverage.
+ *   - not collecting          → NOT_OBSERVED. An absence of data.
+ *   - collecting, nothing     → OBSERVED_EMPTY. This *is* data: the tape really
+ *                               was quiet, and a backtest may use the window.
+ *   - collecting, something   → no gap.
+ *
+ * `window` is required rather than optional. It could have defaulted to "no
+ * dates known, so never a closure", which is the safe direction — but a
+ * parameter that silently degrades is a parameter callers forget to pass, and
+ * the degradation would be invisible: every window would classify exactly as
+ * it did before this rule existed. Making it required means a caller that
+ * cannot supply an interval has to say so in its own source.
  */
 export function classifyWindow(
   sample: CoverageSample,
   recordedAtWindowStart: number,
+  window: Window,
 ): WindowVerdict | null {
+  // A productive window is not a gap, whatever the calendar says — and the
+  // calendar is asked only about windows that would otherwise be one, so a
+  // closure verdict can never displace a real observation.
+  const productive = sample.collecting && sample.recorded > recordedAtWindowStart;
+  if (productive) return null;
+
+  const closure = closureThroughout(window.startMs, window.endMs);
+  if (closure.closed) {
+    return {
+      kind: 'MARKET_CLOSED',
+      reason:
+        `Market established shut for the whole window: ${closure.basis}. ` +
+        'Benign — this does not reduce coverage. Established from the ' +
+        'effective-dated calendar in src/market/calendar.ts, never inferred ' +
+        'from a date it cannot answer for.',
+    };
+  }
+
   if (!sample.collecting) {
     return {
       kind: 'NOT_OBSERVED',
@@ -76,7 +125,6 @@ export function classifyWindow(
       reason: `Not collecting: ${sample.reason}`,
     };
   }
-  if (sample.recorded > recordedAtWindowStart) return null;
   return {
     kind: 'OBSERVED_EMPTY',
     reason:
@@ -149,7 +197,9 @@ export class CoverageRecorder {
       return null;
     }
 
-    const verdict = classifyWindow(sample, this.recordedAtWindowStart);
+    const verdict = classifyWindow(sample, this.recordedAtWindowStart, {
+      startMs: windowStart, endMs: now,
+    });
     this.recordedAtWindowStart = sample.recorded;
 
     if (!verdict) {
@@ -186,11 +236,16 @@ export class CoverageRecorder {
  * evidence for: the newest recorded gap's end, or the newest signal's decision
  * time, whichever is later. Anything after that and before `now` was not
  * observed, whatever the reason — the process was down, asleep, or not
- * deployed. **`NOT_OBSERVED` is correct for all three**, and deliberately does
- * not try to distinguish them: the union's `MARKET_CLOSED` needs a holiday
- * calendar this codebase does not have, and the failure direction is settled
- * in the docstring above — overstating a gap costs a reader's time, while
- * understating one flatters every rate computed over the window.
+ * deployed. **`NOT_OBSERVED` does not try to distinguish those three**, and
+ * that is deliberate: from here they are the same fact.
+ *
+ * It *does* ask the calendar, on the same terms `classifyWindow` does — every
+ * date the hole touches must be an established closure. In practice that
+ * almost never fires for a recovery window, because a hole long enough to be
+ * worth a row usually reaches into an open session at one end or the other,
+ * and reaching into one is enough to keep it an outage. It is asked anyway
+ * rather than hardcoded to `NOT_OBSERVED`, because two windows classified by
+ * two different rules is how the two stores' `trackRecord()` drifted.
  *
  * Returns `null` when there is nothing to claim: no prior activity at all (a
  * first-ever boot has no window behind it, and inventing one would date the
@@ -208,6 +263,20 @@ export function recoverMissedWindow(
   if (!Number.isFinite(lastKnownActivityMs) || lastKnownActivityMs <= 0) return null;
   if (now - lastKnownActivityMs < minGapMs) return null;
 
+  const closure = closureThroughout(lastKnownActivityMs, now);
+  if (closure.closed) {
+    return {
+      id: `${idPrefix}_MARKET_CLOSED_${lastKnownActivityMs}`,
+      kind: 'MARKET_CLOSED',
+      startedAt: lastKnownActivityMs,
+      endedAt: now,
+      reason:
+        `Nothing was recorded between ${new Date(lastKnownActivityMs).toISOString()} ` +
+        `and this process starting, and the market was established shut for the ` +
+        `whole interval: ${closure.basis}. Benign — this does not reduce coverage.`,
+    };
+  }
+
   return {
     id: `${idPrefix}_NOT_OBSERVED_${lastKnownActivityMs}`,
     kind: 'NOT_OBSERVED',
@@ -223,17 +292,109 @@ export function recoverMissedWindow(
   };
 }
 
-/** Summarise gaps for a status line. Pure, so the projection stays testable. */
+/**
+ * Summarise gaps for a status line. Pure, so the projection stays testable.
+ *
+ * **Every member of `GapKind` gets a bucket, and `unclassifiedMs` catches any
+ * that does not.** Before `MARKET_CLOSED` was emittable this function reported
+ * two buckets against a three-member union, which was harmless only because
+ * the third was never constructed. The moment it was, a closure's minutes
+ * would have vanished from the summary while still counting in `gaps` — a
+ * breakdown that does not add up to the total beside it, which is the defect
+ * `scoreBreakdown`'s silent clamp already cost this repo once.
+ *
+ * `totalMs` is computed independently of the buckets rather than as their sum,
+ * so a kind added to the union and forgotten here shows up as a residual
+ * instead of being absorbed.
+ */
 export function summariseCoverage(gaps: readonly CollectionGap[]) {
+  const span = (g: CollectionGap) => Math.max(0, g.endedAt - g.startedAt);
   const total = (kind: GapKind) => gaps
     .filter((g) => g.kind === kind)
-    .reduce((ms, g) => ms + Math.max(0, g.endedAt - g.startedAt), 0);
+    .reduce((ms, g) => ms + span(g), 0);
+
+  const totalMs = gaps.reduce((ms, g) => ms + span(g), 0);
+  // Kept apart for the same reason they are kept apart in the union: one is an
+  // absence of data, one is data, and one is benign and does not reduce
+  // coverage at all.
+  const notObservedMs = total('NOT_OBSERVED');
+  const observedEmptyMs = total('OBSERVED_EMPTY');
+  const marketClosedMs = total('MARKET_CLOSED');
 
   return {
     gaps: gaps.length,
-    // Kept apart in the summary for the same reason they are kept apart in the
-    // union: one is an absence of data and the other is data.
-    notObservedMs: total('NOT_OBSERVED'),
-    observedEmptyMs: total('OBSERVED_EMPTY'),
+    notObservedMs,
+    observedEmptyMs,
+    marketClosedMs,
+    totalMs,
+    /**
+     * Minutes in a gap row whose kind this summary has no bucket for.
+     *
+     * Always zero today. It is published rather than asserted because the
+     * failure it guards against is a `GapKind` member added upstream and not
+     * added here, and a number a reader can see beats a comment asking them to
+     * remember.
+     */
+    unclassifiedMs: totalMs - notObservedMs - observedEmptyMs - marketClosedMs,
   };
+}
+
+/**
+ * Every gap row a process knows about, and the totals over them.
+ *
+ * `summariseCoverage` was exported, tested, and **called by nothing** — the
+ * class of defect this module has now produced four times (`recordGap` with no
+ * writer, `listUngraded` with no caller, `sourceNotes` with no reader). A
+ * summary nobody reads cannot tell an operator that 3% of a span was claimed
+ * when the real figure is 97%, which is the measurement that made
+ * `recoverMissedWindow` necessary.
+ *
+ * It lives here rather than as module state in `ingestion/index.ts` for the
+ * reason `classifyWindow` is pure: the interesting part is the de-duplication,
+ * and a rule that cannot be driven is a rule nothing checks.
+ */
+export class CoverageLedger {
+  /**
+   * Keyed by id rather than appended, because an open gap is re-recorded as it
+   * extends — `recordGap` upserts on id — so appending would count one window
+   * once per tick and report an outage many times its real length. That is the
+   * opposite of the flattering direction, and a wrong number either way is a
+   * wrong number.
+   */
+  private readonly rows = new Map<string, CollectionGap>();
+  private evicted = 0;
+
+  /**
+   * @param max A bound, because this lives for the life of the process.
+   *   Nothing realistic approaches it (the live project carried nine rows
+   *   across a 4,160-minute span), but an unbounded map fed by a 60-second
+   *   timer is the enrichment cache's defect with a different key.
+   */
+  constructor(private readonly max = 2_000) {}
+
+  note(gap: CollectionGap): void {
+    // Delete first so a re-recorded window moves to the end of the insertion
+    // order. Without it an extending gap keeps its original position and is
+    // evicted while still open, which would drop the row most likely to
+    // matter.
+    this.rows.delete(gap.id);
+    this.rows.set(gap.id, gap);
+    while (this.rows.size > this.max) {
+      const oldest = this.rows.keys().next().value;
+      if (oldest === undefined) break;
+      this.rows.delete(oldest);
+      this.evicted += 1;
+    }
+  }
+
+  /**
+   * The totals, with the eviction count beside them.
+   *
+   * `rowsEvicted` non-zero means these are totals over a retained subset and
+   * not over the record — the note `memoryStore.trackRecord()` carries, for
+   * the same reason.
+   */
+  summary() {
+    return { ...summariseCoverage([...this.rows.values()]), rowsEvicted: this.evicted };
+  }
 }

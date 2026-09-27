@@ -27,6 +27,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { recoverMissedWindow, CoverageRecorder } from '../src/persistence/coverage';
+import { InMemorySignalStore } from '../src/persistence/memoryStore';
 
 const T0 = Date.UTC(2026, 8, 16, 10, 4, 0);
 const MIN = 60_000;
@@ -115,4 +116,43 @@ test('the docstring no longer claims a one-tick tail', () => {
   assert.doesNotMatch(src, /under-report the tail by at most one tick, which is the\n \* honest failure/,
     'the refuted claim must not survive the fix that refutes it');
   assert.match(src, /1,978 min|33 h/, 'and the measurement that refuted it is recorded');
+});
+
+test('a recovered window entirely inside a closure is benign, not an outage', () => {
+  // The recovery path asks the calendar on the same terms `classifyWindow`
+  // does, rather than being hardcoded to NOT_OBSERVED. Two windows classified
+  // by two different rules is how the two stores' `trackRecord()` drifted.
+  //
+  // Sat 2026-09-26 01:00 ET through Sun 2026-09-27 19:00 ET: the whole weekend
+  // and nothing either side of it.
+  const gap = recoverMissedWindow(
+    Date.parse('2026-09-26T05:00:00Z'), Date.parse('2026-09-27T23:00:00Z'), 'run2')!;
+  assert.ok(gap);
+  assert.equal(gap.kind, 'MARKET_CLOSED');
+  assert.match(gap.reason, /established shut|does not reduce coverage/);
+  assert.match(gap.id, /MARKET_CLOSED/,
+    'the id carries the kind, so a closure cannot upsert over an outage row ' +
+    'that started at the same instant');
+});
+
+test('a recovered window reaching into an open session stays an outage', () => {
+  // A hole long enough to be worth a row usually touches a session at one end,
+  // and touching one is enough. Friday 16:00 ET to Monday 09:30 ET.
+  const gap = recoverMissedWindow(
+    Date.parse('2026-09-25T20:00:00Z'), Date.parse('2026-09-28T13:30:00Z'), 'run2')!;
+  assert.equal(gap.kind, 'NOT_OBSERVED');
+});
+
+test('a recovered closure still satisfies the store guard', async () => {
+  // `recordGap` refuses a reason under 10 characters. The MARKET_CLOSED branch
+  // writes a different reason from the NOT_OBSERVED one, so it needs its own
+  // pass through the store — the write is fire-and-forget and would fail
+  // silently.
+  const store = new InMemorySignalStore();
+  const gap = recoverMissedWindow(
+    Date.parse('2026-09-26T05:00:00Z'), Date.parse('2026-09-27T23:00:00Z'), 'run2')!;
+  await store.recordGap(gap);
+  const rows = await store.listGaps(0);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]!.kind, 'MARKET_CLOSED');
 });

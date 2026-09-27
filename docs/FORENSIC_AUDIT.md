@@ -17,9 +17,14 @@ status and evidence and are not fixed here.
 
 | Suite | Result |
 |---|---|
-| `backend` (`npm run verify`) | **612 pass / 0 fail**, typecheck clean |
-| `frontend` (`npm run verify`) | **132 pass / 0 fail**, typecheck clean |
-| `quantflow-modules/flow-engine` | **30 pass / 0 fail** (run while fixing F-10; CLAUDE.md says 24, which is stale) |
+| `backend` (`npm run verify`) | **687 pass / 0 fail**, typecheck clean (612 at the start of this session) |
+| `frontend` (`npm run verify`) | **152 pass / 0 fail**, typecheck clean |
+| `quantflow-modules/flow-engine` | **30 pass / 0 fail** (run while fixing F-10) |
+
+Counts are evidence about the run that produced them, not properties of the
+repository — CLAUDE.md's pinned figures were stale in all three places and have
+been removed rather than refreshed. The commands that print them are in
+CLAUDE.md's *Commands* section.
 
 The backend suite was 587 at session start and one test failed:
 `socketHandlers.test.ts` loads `socket.io-client` from `frontend/node_modules`.
@@ -512,10 +517,17 @@ rather than encoding this year's DST rule as arithmetic.
   confidently after its year has passed; a bound that expires loudly does not
   have that failure mode, and §15/§73 require exactly this. 8 tests, 5
   mutations, and the load-bearing assertion is `2027-11-25 → UNKNOWN` rather
-  than `Thanksgiving → HOLIDAY`. **Not yet wired into `expiryInstant`**, which
-  still returns 16:00 ET on a 13:00 half-day, nor into `coverage.ts`, which
-  still declines to emit `MARKET_CLOSED` — both are behaviour changes and get
-  their own reviewed step.
+  than `Thanksgiving → HOLIDAY`. **`coverage.ts` is wired as of 2026-09-27**
+  and now emits `MARKET_CLOSED`, on the narrowest rule that can be established
+  rather than assumed: every calendar date the window touches must be a
+  published holiday or a weekend, `UNKNOWN` is never a closure, and the rule is
+  day-granular so 02:00 on a Tuesday stays an outage. Verified on a live boot —
+  `openGap.kind = MARKET_CLOSED`, basis *"2026-09-26 is a Saturday"*, taken at
+  00:08 **UTC on the 27th**, which is the instant→market-date conversion doing
+  the one thing it exists for. 18 mutations, every one biting exactly the
+  intended test. **`expiryInstant` is still not wired** and returns 16:00 ET on
+  a 13:00 half-day; it is a behaviour change inside the *vendored* engine (two
+  byte-identical copies held by `vendorMirror.test.ts`) and gets its own step.
 
 **A note on the guard, since it is the interesting part.** The first version
 carried a date-shape regex in front of the lookup. The mutation that deleted it
@@ -759,6 +771,6 @@ one-off command rather than in a committed test.
 | F-7 | No entitled options-event source | OPEN, **external blocker** |
 | F-8 | No corrections / cancels / ordering | OPEN |
 | F-9 | `excursion` misnamed | **FIXED**, 3 tests, 3 mutations — renamed in TS and SQL, migration applied to the live database |
-| F-10 | Universal 20:00Z expiry | **PARTLY FIXED**, 6 tests, 3 mutations; AM-settlement and holidays open |
+| F-10 | Universal 20:00Z expiry | **PARTLY FIXED**, 6 tests, 3 mutations; calendar built and wired into `coverage.ts` (14 tests, 18 mutations); AM-settlement and `expiryInstant` half-days open |
 | F-11 | Plaintext `api_keys.key_value`; disclosed credentials | OPEN, **external** |
 | F-16 | Rights lineage stopped at the API boundary | **FIXED**, 10 tests, 6 mutations — wire and CSV carry `datasets` + `rights_display` |

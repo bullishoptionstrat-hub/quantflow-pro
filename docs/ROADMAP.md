@@ -538,9 +538,14 @@ every day is sample.
       constraints and two store implementations, and **nothing had ever called
       `recordGap`**. The table built to stop a flattering hit rate had recorded
       nothing. `persistence/coverage.ts` is the writer, on the grader's existing
-      tick; `/api/health` carries the open gap. `MARKET_CLOSED` is never emitted
-      — that needs a holiday calendar this repo does not have, and mislabelling
-      an outage as a closure is the flattering direction. Also found: the two
+      tick; `/api/health` carries the open gap. ~~`MARKET_CLOSED` is never
+      emitted — that needs a holiday calendar this repo does not have~~
+      **superseded 2026-09-27:** `market/calendar.ts` exists, so the verdict is
+      emitted whenever *every* date a window touches is a published closure;
+      `UNKNOWN` is still never one, which is where the flattering direction
+      actually lives. `/api/health` also carries `coverage.summary` now — the
+      totals per kind, which `summariseCoverage` had been computing for nobody.
+      Also found: the two
       stores disagreed about `recordGap` (Postgres upserts, memory pushed), so
       an extending gap was one row in production and one per tick under test.
       ~~`collection_gaps` exists — surface it.~~

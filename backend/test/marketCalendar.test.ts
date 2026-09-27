@@ -18,6 +18,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   sessionOn, isEstablishedClosure, COVERAGE, SOURCE, READ_AT,
+  marketDateOf, closureThroughout, MARKET_TZ,
 } from '../src/market/calendar';
 
 test('a date past the coverage window is UNKNOWN, never extrapolated', () => {
@@ -101,4 +102,100 @@ test('the calendar does not claim to answer settlement questions', () => {
   assert.ok(!/settlement[A-Za-z]*\s*[:(]/.test(
     src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, ''),
   ), 'and the code exports no settlement answer it cannot support');
+});
+
+// ─── Instants, and spans of them ────────────────────────────────────────────
+
+test('an instant becomes the date it is in New York, not the date it is in UTC', () => {
+  // The whole reason `marketDateOf` exists as its own function rather than
+  // `sessionOn` accepting an epoch. Between 19:00 and midnight ET the UTC date
+  // has already rolled over, so a caller deriving the date from UTC asks about
+  // the wrong session — and gets a confident answer.
+  //
+  // 2026-09-26T03:00:00Z is 23:00 on Friday the 25th in New York.
+  assert.equal(marketDateOf(Date.parse('2026-09-26T03:00:00Z')), '2026-09-25');
+  assert.equal(sessionOn(marketDateOf(Date.parse('2026-09-26T03:00:00Z'))!).kind, 'REGULAR',
+    'Friday night is still Friday, a regular session');
+
+  // And the naive read is the Saturday, which is the error this prevents.
+  assert.equal(new Date('2026-09-26T03:00:00Z').toISOString().slice(0, 10), '2026-09-26');
+});
+
+test('an unreadable instant is null, not today', () => {
+  // The `?? 0` move with a clock instead of a price: a caller handed a broken
+  // timestamp must not be told what day it is in New York, because the answer
+  // would be about a different instant than the one it asked about.
+  assert.equal(marketDateOf(Number.NaN), null);
+  assert.equal(marketDateOf(Number.POSITIVE_INFINITY), null);
+  assert.equal(marketDateOf(8.64e15 * 2), null, 'past the Date range');
+});
+
+test('a span is a closure only when every date in it is one', () => {
+  const on = (iso: string) => Date.parse(iso);
+
+  // A single Saturday.
+  assert.equal(closureThroughout(
+    on('2026-09-26T16:00:00Z'), on('2026-09-26T16:01:00Z')).closed, true);
+
+  // The whole weekend.
+  assert.equal(closureThroughout(
+    on('2026-09-26T05:00:00Z'), on('2026-09-27T23:00:00Z')).closed, true);
+
+  // Friday evening into the weekend: Friday was an open session.
+  const spill = closureThroughout(on('2026-09-25T20:00:00Z'), on('2026-09-27T23:00:00Z'));
+  assert.equal(spill.closed, false);
+  assert.match(spill.basis, /regular session/);
+
+  // Thanksgiving alone is closed; Thanksgiving into the half-day after is not,
+  // because an early close is an open session.
+  assert.equal(closureThroughout(
+    on('2026-11-26T14:00:00Z'), on('2026-11-26T23:00:00Z')).closed, true);
+  assert.equal(closureThroughout(
+    on('2026-11-26T14:00:00Z'), on('2026-11-27T19:00:00Z')).closed, false);
+});
+
+test('a span crossing the DST change still checks every date in it', () => {
+  // 2026-11-01 is the DST end, so that day is 25 hours long in New York. A
+  // fixed-86,400,000ms step over a 25-hour day can walk past a date, and a
+  // date not looked at is a date not checked — which in a rule that needs
+  // EVERY date to be a closure fails in the permissive direction.
+  //
+  // Sat 2026-10-31 through Sun 2026-11-01: both weekend, so closed...
+  assert.equal(closureThroughout(
+    Date.parse('2026-10-31T05:00:00Z'), Date.parse('2026-11-02T04:00:00Z')).closed, true);
+  // ...and one minute further is Monday the 2nd in New York, which is not.
+  const intoMonday = closureThroughout(
+    Date.parse('2026-10-31T05:00:00Z'), Date.parse('2026-11-02T05:01:00Z'));
+  assert.equal(intoMonday.closed, false);
+  assert.match(intoMonday.basis, /2026-11-02/);
+});
+
+test('an absurd span is refused rather than walked', () => {
+  // A gap row whose `startedAt` is the epoch would otherwise walk twenty
+  // thousand days. The walk already stops at the first date that is not a
+  // closure — which outside COVERAGE is the first date it looks at — so this
+  // bound is belt and braces, and it is stated because "no closure runs that
+  // long" is the claim it rests on.
+  const r = closureThroughout(0, Date.parse('2026-09-26T16:00:00Z'));
+  assert.equal(r.closed, false);
+  assert.match(r.basis, /longer than any run of closures/);
+
+  // Reversed and unreadable bounds are refused, not swapped or defaulted.
+  assert.equal(closureThroughout(
+    Date.parse('2026-09-27T00:00:00Z'), Date.parse('2026-09-26T00:00:00Z')).closed, false);
+  assert.equal(closureThroughout(Number.NaN, 0).closed, false);
+});
+
+test('the market timezone has one name, shared with the expiry clock', () => {
+  // `flow-engine/expiry.ts` carries its own `MARKET_TZ` and cannot import
+  // across the vendored boundary. Two files naming the exchange's zone is two
+  // places for it to disagree, so the coupling is asserted rather than trusted
+  // — the same move as `outcomeDecision.test.ts` holding two homes of the
+  // decision-time rule to agreement.
+  assert.equal(MARKET_TZ, 'America/New_York');
+  const expiry = readFileSync(
+    join(__dirname, '..', 'src', 'flow-engine', 'expiry.ts'), 'utf8');
+  const m = expiry.match(/MARKET_TZ\s*=\s*["']([^"']+)["']/);
+  assert.ok(m, 'expiry.ts still declares a market timezone');
+  assert.equal(m![1], MARKET_TZ, 'and it is the same zone this calendar uses');
 });
