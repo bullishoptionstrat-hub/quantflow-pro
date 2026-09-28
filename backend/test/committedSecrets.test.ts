@@ -57,12 +57,32 @@ import { join } from 'node:path';
 
 const REPO = join(__dirname, '..', '..');
 
-/** Every path git is tracking, at the working tree's tip. */
+/**
+ * Every path git is tracking **or is about to track**.
+ *
+ * This was `git ls-files` — tracked files only — and that scope had a hole
+ * exactly the size of a commit. A NEW file is untracked until the commit that
+ * introduces it, so `npm run verify` before committing could not see it, and
+ * the guard only woke up on the next run after the credential-shaped string
+ * was already in history. Measured, not hypothesised: `healthPublicSurface`'s
+ * planted `sk-…` fixture passed the pre-commit verify and failed the first
+ * verify run against the pushed head (713 / 714).
+ *
+ * `--others --exclude-standard` adds untracked files that `.gitignore` does
+ * not exclude — i.e. what `git add -A` would stage — so the guard reads the
+ * tree you are about to commit rather than the one you already did. Ignored
+ * files stay out, which is correct: `.env` is ignored precisely so it is never
+ * committed, and scanning it would make this guard fail on every developer's
+ * machine that holds real keys.
+ */
 function trackedFiles(): string[] {
-  const out = execFileSync('git', ['ls-files', '-z'], {
+  const out = execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], {
     cwd: REPO, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024,
   });
-  return out.split('\0').filter(Boolean);
+  // A file deleted in the working tree but still in the index is listed by
+  // `--cached`; it cannot be read and is not about to be committed.
+  return [...new Set(out.split('\0').filter(Boolean))]
+    .filter((p) => existsSync(join(REPO, p)));
 }
 
 /**

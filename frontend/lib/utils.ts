@@ -33,22 +33,17 @@ export function formatExpiry(expiry: string): string {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
-/**
- * Is it a weekday between 09:30 and 16:00 New York time?
+/*
+ * `isRegularHours()` lived here and is gone.
  *
- * That is all this checks, and it is not the same question as "is the market
- * open" — which is what it was called, and what the sidebar asserted with a
- * green dot. There is no holiday calendar here, so Thanksgiving, Good Friday
- * and every other full closure read as open, and half-days read as open past
- * the 13:00 close. Adding a calendar means maintaining one; naming the
- * function for what it computes costs nothing and stops the UI claiming more.
+ * It was a weekday test and a hardcoded 09:30–16:00 window, and its own comment
+ * said what that cost: Thanksgiving read as open, and a half-day read as open
+ * past its 13:00 close. The published calendar is in the backend, and the
+ * verdict now arrives on `/api/health` — see `lib/marketSession.ts`. It is
+ * deleted rather than left beside the new reader, because two answers to "is the
+ * market open" is how the ticker tape ended up with a 2024 price map in front of
+ * a live feed.
  */
-export function isRegularHours(): boolean {
-  const et = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }))
-  const d = et.getDay()
-  const t = et.getHours() * 60 + et.getMinutes()
-  return d >= 1 && d <= 5 && t >= 570 && t < 960 // 9:30 AM – 4:00 PM ET
-}
 
 export function heatColor(score: number): string {
   if (score >= 75) return '#fbbf24'  // fire

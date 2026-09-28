@@ -146,3 +146,53 @@ test('every declared exception says why it exists', () => {
     assert.ok(e.why.length > 20, `${e.file} exception needs a substantive reason`);
   }
 });
+
+// ─── The vendored copy is typechecked under the LOOSER config ────────────────
+
+test('the module typecheck is stricter, and the backend loop runs it', () => {
+  // Byte-identity is not the whole obligation. The module's tsconfig sets
+  // `noUncheckedIndexedAccess` and the backend's does not, so a file in
+  // `flow-engine/` is checked more strictly in its canonical home than in the
+  // copy that actually ships — and `npm run verify` in `backend/` used to run
+  // only the looser one.
+  //
+  // That is not theoretical. `calendar.ts` moved into the engine carrying
+  // `${seen[seen.length - 1]}`, which the backend's config accepted for four
+  // days and the module's refused on the first run: under the strict flag that
+  // expression is `string | undefined`, so a gap row's reason could have
+  // rendered the literal "undefined". The defect was found by running the
+  // module's typecheck by hand, which is exactly the kind of check nobody runs.
+  const moduleCfg = JSON.parse(
+    readFileSync(join(ROOT, 'quantflow-modules', 'flow-engine', 'tsconfig.json'), 'utf8')
+      .replace(/\/\/.*$/gm, ''),
+  );
+  assert.equal(moduleCfg.compilerOptions?.noUncheckedIndexedAccess, true,
+    'the module keeps the stricter indexed-access contract — turning it off ' +
+    'would silently make the engine no safer than the copy');
+
+  const pkg = JSON.parse(readFileSync(join(ROOT, 'backend', 'package.json'), 'utf8'));
+  const typecheck: string = pkg.scripts?.typecheck ?? '';
+  assert.match(typecheck, /typecheck:engine/,
+    'backend `typecheck` must run the engine\'s own config, or the binding ' +
+    'check is one nobody executes');
+  assert.match(pkg.scripts?.['typecheck:engine'] ?? '',
+    /quantflow-modules\/flow-engine\/tsconfig\.json/,
+    'and it must point at the module\'s tsconfig, not re-check the copy');
+});
+
+test('the calendar is vendored, so it is covered by the mirror above', () => {
+  // Recorded as an explicit claim because the file MOVED into this boundary in
+  // the commit that wired it into `expiryInstant`, and a mirror that walks a
+  // directory would pass just as happily if the move had only happened on one
+  // side.
+  for (const dir of [
+    join(ROOT, 'backend', 'src', 'flow-engine'),
+    join(ROOT, 'quantflow-modules', 'flow-engine', 'src'),
+  ]) {
+    assert.ok(existsSync(join(dir, 'calendar.ts')), `${dir} carries calendar.ts`);
+  }
+  // And `expiry.ts` reads it rather than carrying its own market facts.
+  const expiry = readFileSync(
+    join(ROOT, 'backend', 'src', 'flow-engine', 'expiry.ts'), 'utf8');
+  assert.match(expiry, /from ["']\.\/calendar["']/);
+});

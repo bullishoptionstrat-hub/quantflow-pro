@@ -65,9 +65,30 @@ function fieldsOf(iface: string): Set<string> {
 }
 
 /** Every field the page could read must exist on the recorded response. */
-function assertDeclaredFieldsExist(iface: string, sample: Record<string, unknown>) {
+/**
+ * Every field the interface declares must appear on at least one recorded row.
+ *
+ * **Rows, plural, and that is the fix rather than a convenience.** This took a
+ * single `sample` and every caller passed `data[0]`, so for an interface with
+ * *optional* fields the verdict depended on which row the backend happened to
+ * emit first. `FlowEvent.legs` and `spread_guess` are present only on
+ * MULTI_LEG signals, so the guard was passing on the luck of the simulation's
+ * ordering: re-recording the fixture from a boot whose first signal was
+ * single-leg turned it red, with nothing about the wire having changed.
+ *
+ * A guard that answers differently depending on row order is not checking the
+ * contract, it is sampling it — which is the scope defect this repo keeps
+ * finding, arriving as an index instead of as a directory.
+ */
+function assertDeclaredFieldsExist(
+  iface: string,
+  samples: Record<string, unknown> | Array<Record<string, unknown>>,
+) {
+  const rows = Array.isArray(samples) ? samples : [samples];
+  assert.ok(rows.length > 0, `${iface}: no recorded rows to check against`);
   const declared = fieldsOf(iface);
-  const actual = new Set(Object.keys(sample));
+  const actual = new Set<string>();
+  for (const r of rows) for (const k of Object.keys(r)) actual.add(k);
   const phantom = [...declared].filter((f) => !actual.has(f)).sort();
   assert.deepEqual(
     phantom, [],
@@ -149,8 +170,10 @@ test('FlowEvent matches what /api/flow returns', () => {
   // to protect. The one interface most likely to drift was the one not
   // checked against a recorded payload, which is the same shape as a guard
   // scoped to a directory the offender was not in.
-  const row = (load('flow').data as Array<Record<string, unknown>>)[0]!;
-  assertDeclaredFieldsExist('FlowEvent', row);
+  // Every row, not `data[0]`: `legs` and `spread_guess` ride only on
+  // MULTI_LEG signals, so one row cannot witness the whole contract.
+  const rows = load('flow').data as Array<Record<string, unknown>>;
+  assertDeclaredFieldsExist('FlowEvent', rows);
 });
 
 test('venue evidence is distinguishable from observed executions', () => {
@@ -789,6 +812,8 @@ test('the alerts page distinguishes a dead feed from a quiet one', () => {
 const SIDEBAR = join(FRONTEND, 'components', 'layout', 'Sidebar.tsx');
 const HEATMAP = join(FRONTEND, 'app', 'heat-map', 'page.tsx');
 const UNUSUAL = join(FRONTEND, 'components', 'flow', 'UnusualActivity.tsx');
+const published = readFileSync(
+  join(__dirname, '..', 'src', 'market', 'session.ts'), 'utf8');
 
 test('the socket flag is not read as a claim about the data', () => {
   const code = readFileSync(SIDEBAR, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
@@ -797,13 +822,59 @@ test('the socket flag is not read as a claim about the data', () => {
   assert.match(code, /synthetic/, 'whether a print is constructed is per print');
 });
 
-test('the session indicator claims only the window it checks', () => {
+test('the session indicator reads the calendar rather than a local clock', () => {
+  // This guard used to REQUIRE `isRegularHours` and FORBID `MARKET OPEN`, on the
+  // premise that no holiday calendar existed. The calendar now exists, and the
+  // previous revision of this comment concluded that `MARKET OPEN` had become a
+  // supported claim. **The audit of 2026-09-27 refuted that**: the calendar
+  // establishes the exchange's REGULAR session and nothing wider. The OPRA
+  // window, a product's curb and overnight sessions, and a study's sample are
+  // separate facts, and at 21:00 on a Sunday SPX trades while the label said
+  // CLOSED. So `MARKET OPEN` is forbidden again, for a better reason than
+  // before, and the label must name the authority it has: RTH.
+  //
+  // Re-pointed rather than deleted, the way `finnhubSpot.test.ts` was when its
+  // own prediction came true, and strictly stronger for it: instead of policing
+  // a function name and a string, it asserts that nothing in the browser
+  // computes the answer at all.
   const utils = readFileSync(join(FRONTEND, 'lib', 'utils.ts'), 'utf8');
-  assert.ok(!/export function isMarketOpen/.test(utils),
-    'there is no holiday calendar behind it');
-  assert.match(utils, /export function isRegularHours/, 'name it for what it computes');
-  const code = readFileSync(SIDEBAR, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
-  assert.ok(!/MARKET OPEN|MARKET CLOSED/.test(code), 'the sidebar must not assert it either');
+  assert.ok(!/export function (isMarketOpen|isRegularHours)/.test(utils),
+    'the browser must not compute the session — the backend publishes it');
+
+  const code = readFileSync(SIDEBAR, 'utf8').replace(/\/\*[\s\S]*?\*\/|\{\/\*[\s\S]*?\*\/\}|\/\/[^\n]*/g, '');
+  assert.match(code, /useMarketSession\(\)/, 'the sidebar reads the published verdict');
+  assert.ok(!/getDay\(\)/.test(code), 'and does not decide a weekday itself');
+
+  // And the field it reads is one the backend actually sends. The frontend's
+  // interface is an assertion about a separate process, which is the whole
+  // reason this file exists.
+  const session = readFileSync(join(FRONTEND, 'lib', 'marketSession.ts'), 'utf8');
+  const route = readFileSync(join(__dirname, '..', 'src', 'routes', 'health.ts'), 'utf8');
+  assert.match(route, /session: marketSessionAt/);
+  for (const field of [
+    'authority', 'state', 'date', 'nowMinutesEt', 'openMinutesEt', 'closeMinutesEt',
+    'basis', 'source', 'readAt', 'coverage',
+  ]) {
+    assert.match(session, new RegExp(`\\b${field}\\b`),
+      `the frontend declares ${field}`);
+    assert.match(published, new RegExp(`\\b${field}\\b`),
+      `and src/market/session.ts publishes ${field} — a field the UI reads and ` +
+      'the API does not send is this repo\'s single most repeated defect');
+  }
+  // The label names the authority it has, and never a wider one.
+  const labels = session.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  // A quoted label that begins with CLOSED — not the state names, which are
+  // CLOSED_… identifiers the backend owns.
+  assert.ok(!/MARKET OPEN|['`]CLOSED(?:['`]| ·)/.test(labels),
+    'the verdict is the exchange\'s regular session — it may not be printed as the market, or as closed');
+  assert.match(labels, /RTH OPEN/);
+  // Every state the frontend renders must be one the backend can produce.
+  for (const st of [
+    'OPEN', 'CLOSED_OUTSIDE_HOURS', 'CLOSED_HOLIDAY', 'CLOSED_WEEKEND', 'UNKNOWN',
+  ]) {
+    assert.match(published, new RegExp(`'${st}'`), `backend can emit ${st}`);
+    assert.match(session, new RegExp(`'${st}'`), `frontend handles ${st}`);
+  }
 });
 
 test('the heat map does not describe a window as the whole tape', () => {

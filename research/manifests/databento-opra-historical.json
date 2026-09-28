@@ -1,0 +1,79 @@
+{
+  "schema": "quantflow-dataset-rights-v1",
+  "provider": "Databento",
+  "dataset": "OPRA.PILLAR (historical), candidate schemas: trades, tcbbo, definition",
+  "subscriptionTier": null,
+  "intendedDeploymentMode": "PRIVATE_RESEARCH",
+  "rights": {
+    "fetch": {
+      "status": "UNVERIFIED",
+      "quote": null,
+      "document": null,
+      "readAt": null,
+      "evidence": "UNVERIFIED",
+      "note": "Primary documents not read: the provider's site was refused by this environment's egress policy on 2026-09-27. The operator audit of 2026-09-27 summarises Databento as saying users generally need no live exchange license for data it classifies as historical (24h+ old), with exceptions such as redistribution. That is a summary, not a quotation, and it speaks to exchange licensing, not to the vendor's own terms."
+    },
+    "persistRaw": {
+      "status": "UNVERIFIED",
+      "quote": null,
+      "document": null,
+      "readAt": null,
+      "evidence": "UNVERIFIED",
+      "note": "Primary documents not read: the provider's site was refused by this environment's egress policy on 2026-09-27."
+    },
+    "persistNormalized": {
+      "status": "UNVERIFIED",
+      "quote": null,
+      "document": null,
+      "readAt": null,
+      "evidence": "UNVERIFIED",
+      "note": "Primary documents not read: the provider's site was refused by this environment's egress policy on 2026-09-27."
+    },
+    "researchUse": {
+      "status": "UNVERIFIED",
+      "quote": null,
+      "document": null,
+      "readAt": null,
+      "evidence": "UNVERIFIED",
+      "note": "Primary documents not read: the provider's site was refused by this environment's egress policy on 2026-09-27."
+    },
+    "modelTraining": {
+      "status": "UNVERIFIED",
+      "quote": null,
+      "document": null,
+      "readAt": null,
+      "evidence": "UNVERIFIED",
+      "note": "Primary documents not read: the provider's site was refused by this environment's egress policy on 2026-09-27. Not a use this program intends before H-001-v2 resolves."
+    },
+    "export": {
+      "status": "UNVERIFIED",
+      "quote": null,
+      "document": null,
+      "readAt": null,
+      "evidence": "UNVERIFIED",
+      "note": "Primary documents not read: the provider's site was refused by this environment's egress policy on 2026-09-27."
+    },
+    "redistribution": {
+      "status": "LEGAL_INTERPRETATION_REQUIRED",
+      "quote": null,
+      "document": null,
+      "readAt": null,
+      "evidence": "UNVERIFIED",
+      "note": "Primary documents not read: the provider's site was refused by this environment's egress policy on 2026-09-27. Named by the operator audit as the exception to the historical-data licensing position, so it is flagged for legal reading rather than left merely unknown."
+    },
+    "retention": {
+      "status": "UNVERIFIED",
+      "quote": null,
+      "document": null,
+      "readAt": null,
+      "evidence": "UNVERIFIED",
+      "note": "Primary documents not read: the provider's site was refused by this environment's egress policy on 2026-09-27."
+    }
+  },
+  "sourceDocuments": [
+    "Databento terms of service (not read \u2014 egress refused 2026-09-27)",
+    "Databento OPRA dataset documentation (not read \u2014 egress refused 2026-09-27)",
+    "OPRA fee schedule and Non-Display Use policy (not read \u2014 egress refused 2026-09-27)"
+  ],
+  "verifiedAt": null
+}

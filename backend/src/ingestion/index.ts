@@ -18,12 +18,14 @@ import { describeHttpError } from './httpError';
 import { probeAll, type EntitlementResult } from './entitlement';
 import { resolveMark, markSourceStandings, markRightsClass } from './markSources';
 import {
-  CoverageRecorder, recoverMissedWindow, type CoverageSample,
+  CoverageRecorder, recoverMissedWindow, CoverageLedger,
+  type CoverageSample,
 } from '../persistence/coverage';
 import type { CollectionGap } from '../persistence/types';
 import {
   ingestPrint, drainIdle, resetDaily, onSignal,
   type RawPrint, type WireFlowEvent,
+  unreadableExpiryCounts,
 } from './flowEngineAdapter';
 import {
   initPersistence, describePersistence, SignalGrader,
@@ -430,6 +432,16 @@ export function getIngestionStatus() {
     const existing = notes[source];
     const note = `${count} stream frame(s) could not be parsed`;
     notes[source] = existing ? `${existing}; ${note}` : note;
+  }
+  // A source can be connected, parsing every frame, and have every print
+  // refused at the adapter seam for an expiry nothing could read. That is the
+  // same "arriving and qualified" case, and without it a vendor switching date
+  // format looks identical to a quiet tape.
+  for (const [source, { count, sample }] of Object.entries(unreadableExpiryCounts())) {
+    const note =
+      `${count} print(s) refused: expiry ${JSON.stringify(sample)} is not a ` +
+      `readable calendar date`;
+    notes[source] = notes[source] ? `${notes[source]}; ${note}` : note;
   }
 
   mergeEntitlementNotes(notes, entitlement);
@@ -1605,6 +1617,7 @@ function startSignalHistory(): void {
       const missed = recoverMissedWindow(lastMs, Date.now(), `run${Date.now()}`);
       if (!missed) return;
       lastCoverageGap = missed;
+      noteGap(missed);
       console.warn(
         `[coverage] claiming unobserved window ` +
         `${new Date(missed.startedAt).toISOString()} -> ` +
@@ -1632,6 +1645,7 @@ function startSignalHistory(): void {
       // never be able to take down the process that is collecting.
       void store.recordGap(gap).catch(() => { /* nothing else to do here */ });
       lastCoverageGap = gap;
+      noteGap(gap);
     }
   }, 60_000).unref();
 
@@ -1669,7 +1683,10 @@ async function lastRecordedActivity(store: SignalStore): Promise<number | null> 
     // do anything", and a narrow one would answer "never" after a long sleep —
     // which is the exact under-reporting being fixed.
     const gaps = await store.listGaps(0);
-    for (const g of gaps) note(g.endedAt);
+    // One read, two consumers. The recovery window needs the newest end; the
+    // health summary needs every row. A second query for the same rows is a
+    // second chance for the two to disagree about which rows exist.
+    for (const g of gaps) { note(g.endedAt); noteGap(g); }
   } catch (err) {
     console.warn(
       `[coverage] could not read prior gaps; the missed window may be ` +
@@ -1692,6 +1709,15 @@ async function lastRecordedActivity(store: SignalStore): Promise<number | null> 
 
 let coverage: CoverageRecorder | undefined;
 let lastCoverageGap: CollectionGap | null = null;
+
+/**
+ * The gap rows this process knows about, and the totals over them.
+ *
+ * See `CoverageLedger` — the de-duplication rule lives there so it can be
+ * driven, and this is the one instance of it.
+ */
+const gapLedger = new CoverageLedger();
+const noteGap = (gap: CollectionGap) => gapLedger.note(gap);
 
 /**
  * What the coverage recorder needs to know, read off the live board.
@@ -1787,6 +1813,17 @@ export function getSignalHistoryStatus() {
       ...sampleCoverage(),
       openGap: coverage?.getOpenGap() ?? null,
       lastGap: lastCoverageGap,
+      /**
+       * Totals across every gap row this process knows about — the rows read
+       * at boot plus the ones it has written since.
+       *
+       * The three kinds stay apart here for the same reason they are apart in
+       * the union: one is an absence of data, one is data, and one is benign.
+       * `unclassifiedMs` is a residual that must be zero, and `rowsEvicted`
+       * non-zero means these totals are over a retained subset rather than the
+       * whole record.
+       */
+      summary: gapLedger.summary(),
     },
   };
 }

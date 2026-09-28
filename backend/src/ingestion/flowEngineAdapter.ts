@@ -19,21 +19,46 @@
  */
 import { FlowEngine } from '../flow-engine/engine';
 import { sideBucket } from '../flow-engine/nbbo';
-import { daysToExpiry as engineDaysToExpiry } from '../flow-engine/expiry';
+import {
+  daysToExpiry as engineDaysToExpiry, expiryInstantMs,
+} from '../flow-engine/expiry';
 import type {
   ClassifiedSignal,
   ContractStats,
   InferredSide,
   OptionTradeEvent,
 } from '../flow-engine/types';
+import { classifySource, type RightsClass } from '../provenance/rights';
 
 // ─── Input ──────────────────────────────────────────────────────────────────
 
 /** Provider-agnostic print. Every connector normalizes to this. */
 export interface RawPrint {
   id?: string;
-  /** Epoch ms. Defaults to now. Prints must arrive roughly ascending. */
+  /**
+   * Epoch ms. Defaults to now.
+   *
+   * This said "Prints must arrive roughly ascending", which was an assumption
+   * written as a contract: nothing enforced it and no feed guarantees it.
+   * Historical and fixture events now reach this seam through
+   * `events/reorder.ts`, which releases them in a stated order and reports
+   * anything later than its bound as a LATE_EVENT instead of inserting it.
+   * The LIVE path has no reorder buffer yet, and says so: its only sources
+   * today are the simulation and chain snapshots, which emit in order, and
+   * the first live OPRA source is exactly what would need one (§29).
+   */
   ts?: number;
+  /**
+   * When the print became knowable, carried from an upstream record that
+   * measured it — a Market Event V2's `availableAt`. When absent the adapter
+   * stamps its own wall clock, or nothing for replay.
+   *
+   * A historical record with a provider receipt is not "replay with no
+   * clock": dropping that receipt here would hand its signals a decision
+   * basis of EVENT_TIME_ONLY for data that has a better one, which is the
+   * historical shortcut §22 forbids.
+   */
+  receivedAt?: number;
   symbol: string;                 // underlying, e.g. "SPY"
   expiry: string;                 // ISO date, "2026-06-19"
   strike: number;
@@ -158,7 +183,7 @@ export interface WireFlowEvent {
   iv: number | null;
   delta: number | null;
   open_interest: number | null;
-  days_to_expiry: number;
+  days_to_expiry: number | null;
   /**
    * `UNKNOWN` where the underlying's price is not known.
    *
@@ -200,6 +225,33 @@ export interface WireFlowEvent {
   print_ids: string[];
   /** True when the feeding source was simulated or replayed. */
   synthetic: boolean;
+  /**
+   * Every dataset that contributed a print, and the DISPLAY class in force.
+   *
+   * `SignalRecord` has carried `source` / `datasetId` / `rightsClass` since
+   * the store existed; the wire carried none of them, so §22's taint
+   * propagation held inside the database and stopped at the door — the CSV a
+   * reader downloads knew less about its own provenance than the row nobody
+   * exports. That is F-16.
+   *
+   * **Plural, because a cluster can span sources.** `originOf` already
+   * establishes that and the recorder already refuses to ignore it: checking
+   * only the first print's source would let one permitted print carry
+   * unverified ones into the record.
+   *
+   * **`rights_display`, not `rights_class`.** This is the DISPLAY axis — what
+   * governed these rows reaching a browser — and it is deliberately NOT the
+   * PERSIST decision the recorder makes, which differs for the same dataset:
+   * Finnhub is PERMITTED to display and PROHIBITED to persist. One field
+   * answering two questions is the defect this repo has hit with `synthetic`,
+   * with `connected`, and with `excursion`.
+   *
+   * The class published is the **weakest** across contributing datasets, the
+   * same fail-closed rule the recorder applies when it refuses on any refused
+   * source.
+   */
+  datasets: string[];
+  rights_display: RightsClass | 'UNKNOWN_DATASET';
 }
 
 // ─── Contract symbol / stats bookkeeping ────────────────────────────────────
@@ -363,6 +415,53 @@ function originOf(sig: ClassifiedSignal): SignalOrigin {
 // ─── Ingest ─────────────────────────────────────────────────────────────────
 
 /**
+ * Prints refused at the seam for an expiry nothing could read, per source.
+ *
+ * Counted rather than silently dropped, and this is the half the strike-0 fix
+ * left out: that refusal returns `[]` and tells nobody, so a connector whose
+ * every row is rejected looks exactly like a quiet tape. `sourceNotes` is the
+ * channel for "arriving and qualified", which is what this is.
+ */
+const unreadableExpiries: Record<string, number> = {};
+/** The first malformed value seen per source, so the note can name the shape. */
+const unreadableExpirySample: Record<string, string> = {};
+
+function noteUnreadableExpiry(source: string, expiry: string): void {
+  const n = (unreadableExpiries[source] ?? 0) + 1;
+  unreadableExpiries[source] = n;
+  if (unreadableExpirySample[source] === undefined) {
+    unreadableExpirySample[source] = expiry.slice(0, 32);
+  }
+  // First, then sparsely. A vendor using a different date format produces one
+  // per print, and a log line per print is its own outage — `noteUnparsedFrame`
+  // settled this argument already.
+  if (n === 1 || n % 500 === 0) {
+    console.warn(
+      `[${source}] ${n} print(s) refused: expiry ` +
+      `${JSON.stringify(unreadableExpirySample[source])} is not a readable ` +
+      `calendar date. The contract cannot be identified, so the print is ` +
+      `dropped rather than published with a fabricated symbol.`,
+    );
+  }
+}
+
+/**
+ * Per source: how many prints were refused, and an example of the value.
+ *
+ * Read by `getIngestionStatus()` into `sourceNotes`. Exported rather than
+ * folded into a note string here, because formatting a health note is that
+ * module's job and a second copy of the vocabulary is how `sourceNotes` and
+ * `sourceErrors` would start disagreeing.
+ */
+export function unreadableExpiryCounts(): Record<string, { count: number; sample: string }> {
+  const out: Record<string, { count: number; sample: string }> = {};
+  for (const [source, count] of Object.entries(unreadableExpiries)) {
+    out[source] = { count, sample: unreadableExpirySample[source] ?? '' };
+  }
+  return out;
+}
+
+/**
  * Feed one print. Returns the signals finalized by this print (often none —
  * the engine emits on burst close, not per trade).
  */
@@ -381,13 +480,45 @@ export function ingestPrint(print: RawPrint): WireFlowEvent[] {
   // gets it without knowing about it.
   if (!print.symbol || !print.expiry || !(print.price > 0) || !(print.size > 0)) return [];
   if (!(print.strike > 0)) return [];
+  // `expiry` was the sixth field, and it was checked for TRUTHINESS only —
+  // which is exactly what `strike` was before the line above, and produced the
+  // same class of outcome. Measured through this function, one print at
+  // 2026-09-24 against an October expiry:
+  //
+  //     expiry "2026-10-16" -> occ SPY261016C00550000    dte 22
+  //     expiry "20261016"   -> occ SPY261016C00550000    dte  0
+  //     expiry "10/16/2026" -> occ SPY/16/2026C00550000  dte  0
+  //     expiry "not-a-date" -> occ SPYtadateC00550000    dte  0
+  //     expiry "2026-13-45" -> occ SPY261345C00550000    dte  0
+  //
+  // Two things came out of it. `occSymbol` splits on '-' and slices, so any
+  // string produces a real-looking contract symbol — and that symbol is the
+  // contract's identity for the NBBO book and the stats table, so a malformed
+  // one silently partitions or merges contracts. And the wire's
+  // `days_to_expiry` fell to 0, which does not read as "unknown": it reads as
+  // **0DTE**, the shortest-dated and highest-attention bucket there is.
+  //
+  // The compact-ISO row is the one that decides this. `20261016` is a format a
+  // vendor could plausibly switch to, it yields the CORRECT OCC symbol, and it
+  // publishes every contract as expiring today. Nothing would look wrong.
+  //
+  // The test is `expiryInstantMs` rather than a regex here, because that is the
+  // one home for reading an expiry and its docstring already argues why it
+  // rejects a loose parse. Three of the four chain connectors pass a vendor
+  // string through with a truthiness check only, and none of them has ever run
+  // against a live vendor from this tree — so a format mismatch surfaces here,
+  // counted and named on /api/health, instead of as a tape of 0DTE prints.
+  if (Number.isNaN(expiryInstantMs(print.expiry))) {
+    noteUnreadableExpiry(print.source, print.expiry);
+    return [];
+  }
 
   const ts = print.ts ?? Date.now();
   // Receipt time is stamped here, at the boundary — the earliest moment this
   // process could possibly have known about the print. Distinct from `ts`,
   // which is when it happened at the venue; the gap between them is the feed
   // latency a forward measurement must be charged.
-  const receivedAt = print.replay ? undefined : Date.now();
+  const receivedAt = print.receivedAt ?? (print.replay ? undefined : Date.now());
   lastPrintTs = Math.max(lastPrintTs, ts);
   const symbol = occSymbol(print.symbol, print.expiry, print.right, print.strike);
 
@@ -523,6 +654,70 @@ export const UNUSUAL_SCORE = 75;
 
 // ─── Signal → wire ──────────────────────────────────────────────────────────
 
+/**
+ * Rank of a DISPLAY class, most restrictive first. Used to publish the
+ * **weakest** class across a cluster's datasets rather than the first one.
+ *
+ * A cluster spanning a PERMITTED source and an UNVERIFIED one is not a
+ * permitted cluster — the recorder already reasons this way for PERSIST, and
+ * publishing the strongest class would let one clean print launder the rest.
+ * `UNKNOWN_DATASET` ranks below everything: an unregistered source is the
+ * least established thing on the list, not the most.
+ *
+ * Keyed by the union rather than by `string`, so the lookup is total and
+ * needs no `?? 0`. `defaultedReadings.test.ts` refused the widened version,
+ * correctly: a default here would have been a silent claim about a class
+ * nobody declared — the same defect `nominalHorizonMs` was fixed for.
+ */
+const DISPLAY_RANK: Record<RightsClass | 'UNKNOWN_DATASET', number> = {
+  UNKNOWN_DATASET: 0,
+  PROHIBITED: 1,
+  UNVERIFIED: 2,
+  PERMITTED: 3,
+};
+
+/**
+ * The datasets behind a signal and the weakest DISPLAY class among them.
+ *
+ * Note this asks the **DISPLAY** question. `recorder.ts` asks PERSIST of the
+ * same sources and can get a different answer for the same dataset, which is
+ * exactly why the wire field is named for its axis.
+ */
+export function displayRightsOf(sources: string[]): {
+  datasets: string[];
+  rights_display: RightsClass | 'UNKNOWN_DATASET';
+} {
+  const seen = new Set<string>();
+  let weakest: RightsClass | 'UNKNOWN_DATASET' = 'PERMITTED';
+  let anyResolved = false;
+
+  for (const src of sources) {
+    const d = classifySource(src, 'DISPLAY');
+    const cls = d.rightsClass as RightsClass | 'UNKNOWN_DATASET';
+    if (DISPLAY_RANK[cls] < DISPLAY_RANK[weakest]) weakest = cls;
+
+    // Only a **registered** dataset is named. `classifySource` mints
+    // `source:<name>` as the id for an unregistered source, and publishing
+    // that would put a placeholder in the CSV's Datasets column beside real
+    // registry entries like TRADIER_STREAM, where a reader sorting the column
+    // could not tell which is which. `UNKNOWN_DATASET` on the class already
+    // says the row could not be attributed; the list does not need to invent
+    // a name for the thing it failed to find.
+    //
+    // Found by mutating this function: swapping the class resolution was an
+    // *equivalent* mutation, which is what exposed that the branch it touched
+    // was dead — and the dead branch was hiding this.
+    if (cls !== 'UNKNOWN_DATASET') {
+      seen.add(d.datasetId);
+      anyResolved = true;
+    }
+  }
+
+  // No resolvable source at all is not "permitted by default".
+  if (!anyResolved) return { datasets: [], rights_display: 'UNKNOWN_DATASET' };
+  return { datasets: [...seen].sort(), rights_display: weakest };
+}
+
 function toWireEvent(sig: ClassifiedSignal): WireFlowEvent {
   const dominant = [...sig.legs].sort((a, b) => b.totalPremium - a.totalPremium)[0];
   const leg = dominant ?? sig.legs[0]!;
@@ -532,7 +727,8 @@ function toWireEvent(sig: ClassifiedSignal): WireFlowEvent {
   const spot = stats?.underlyingPrice ?? null;
 
   const origins = sig.printIds.map((id) => printSource.get(id)).filter(Boolean);
-  const { source, synthetic } = originOf(sig);
+  const { source, sources, synthetic } = originOf(sig);
+  const rights = displayRightsOf(sources);
   const iv = origins.find((o) => o?.iv !== undefined)?.iv ?? null;
   const delta = origins.find((o) => o?.delta !== undefined)?.delta ?? null;
 
@@ -602,6 +798,8 @@ function toWireEvent(sig: ClassifiedSignal): WireFlowEvent {
     spread_guess: sig.spreadGuess,
     print_ids: sig.printIds,
     synthetic,
+    datasets: rights.datasets,
+    rights_display: rights.rights_display,
   };
 }
 
@@ -627,9 +825,14 @@ export function sentimentOf(
  * stays here, because a whole number of days is a presentation choice for this
  * wire field and not a property of the contract.
  */
-function daysToExpiry(tsMs: number, expiry: string): number {
+function daysToExpiry(tsMs: number, expiry: string): number | null {
   const dte = engineDaysToExpiry(tsMs, expiry);
-  return Number.isNaN(dte) ? 0 : Math.round(dte);
+  // `null`, never 0. A 0 here does not read as "unknown", it reads as 0DTE —
+  // which is a claim about the contract, and the loudest one on the board.
+  // `ingestPrint` refuses an unreadable expiry at the seam, so this branch is
+  // unreachable today; it is `null` anyway because the previous type could not
+  // express the honest answer, which is the defect `SpotQuote.change` had.
+  return Number.isNaN(dte) ? null : Math.round(dte);
 }
 
 /**

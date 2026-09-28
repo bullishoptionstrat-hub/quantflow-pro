@@ -1,0 +1,133 @@
+{
+  "schema": "quantflow-event-fixture-v1",
+  "case": 11,
+  "name": "sequence gap",
+  "about": "Sequence 1004 arrives after 1001: 1002\u20131003 are missing. 1003 later arrives (a different contract) and fills half the gap; 1002 never does. A signal on the same stream formed while the hole was open is EVIDENCE_UNRESOLVED \u2014 the missing message could have been its evidence or its cancel.",
+  "defaults": {
+    "provider": "fixture",
+    "datasetId": "FIXTURE.OPRA.V1",
+    "sequenceScope": "opra-line-7:2026-09-24",
+    "venue": "C",
+    "rawSessionIdentifier": 0,
+    "instrument": {
+      "underlying": "SPY",
+      "expiry": "2026-10-16",
+      "strike": 550,
+      "right": "C"
+    },
+    "synthetic": true,
+    "replay": true
+  },
+  "records": [
+    {
+      "ref": "T1",
+      "type": "trade",
+      "providerSequence": "1001",
+      "eventTime": "2026-09-24T14:00:00.000Z",
+      "providerReceiveTime": "2026-09-24T14:00:00.004Z",
+      "price": 2.15,
+      "size": 5
+    },
+    {
+      "ref": "T2",
+      "type": "trade",
+      "providerSequence": "1004",
+      "eventTime": "2026-09-24T14:00:01.000Z",
+      "providerReceiveTime": "2026-09-24T14:00:01.004Z",
+      "price": 2.16,
+      "size": 5
+    },
+    {
+      "ref": "T3",
+      "type": "trade",
+      "providerSequence": "1005",
+      "eventTime": "2026-09-24T14:00:02.000Z",
+      "providerReceiveTime": "2026-09-24T14:00:02.004Z",
+      "price": 2.17,
+      "size": 5
+    },
+    {
+      "ref": "T4",
+      "type": "trade",
+      "providerSequence": "1003",
+      "eventTime": "2026-09-24T14:00:00.800Z",
+      "providerReceiveTime": "2026-09-24T14:00:20.000Z",
+      "price": 1.0,
+      "size": 1,
+      "instrument": {
+        "underlying": "SPY",
+        "expiry": "2026-10-16",
+        "strike": 560,
+        "right": "C"
+      }
+    }
+  ],
+  "reorder": {
+    "allowedLatenessMs": 1000
+  },
+  "expect": {
+    "append": {
+      "T1": "APPENDED",
+      "T2": "APPENDED",
+      "T3": "APPENDED",
+      "T4": "APPENDED"
+    },
+    "views": [
+      {
+        "asOf": "FINAL",
+        "trades": {
+          "T1": "ACTIVE",
+          "T2": "ACTIVE",
+          "T3": "ACTIVE",
+          "T4": "ACTIVE"
+        }
+      }
+    ],
+    "emissions": {
+      "T1": "ORDERED",
+      "T2": "ORDERED",
+      "T3": "ORDERED",
+      "T4": "LATE_EVENT"
+    },
+    "diagnostics": [
+      "SEQUENCE_GAP",
+      "SEQUENCE_GAP_FILLED"
+    ],
+    "openGaps": [
+      {
+        "from": "1002",
+        "to": "1002"
+      }
+    ],
+    "gapsOpenAt": {
+      "2026-09-24T14:00:03.000Z": [
+        {
+          "from": "1002",
+          "to": "1003"
+        }
+      ]
+    },
+    "signals": [
+      {
+        "evidence": [
+          "T2",
+          "T3"
+        ],
+        "decidedAt": "2026-09-24T14:00:02.500Z",
+        "view": "2026-09-24T14:00:03.000Z",
+        "status": "EVIDENCE_UNRESOLVED",
+        "finalTapeStudies": "EXCLUDE_UNTIL_RESOLVED"
+      },
+      {
+        "evidence": [
+          "T2",
+          "T3"
+        ],
+        "decidedAt": "2026-09-24T14:00:02.500Z",
+        "view": "FINAL",
+        "status": "EVIDENCE_UNRESOLVED",
+        "finalTapeStudies": "EXCLUDE_UNTIL_RESOLVED"
+      }
+    ]
+  }
+}

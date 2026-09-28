@@ -17,7 +17,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { expiryInstantMs, daysToExpiry } from '../src/flow-engine/expiry';
+import {
+  expiryInstantMs, daysToExpiry, sessionCloseFor,
+} from '../src/flow-engine/expiry';
 
 const nyHour = (ms: number) => Number(
   new Intl.DateTimeFormat('en-US', {
@@ -99,4 +101,93 @@ test('the module copy carries the same rule, with ESM extensions', () => {
   assert.match(src, /export function expiryInstantMs/);
   assert.match(readFileSync(join(mod, 'score.ts'), 'utf8'), /from "\.\/expiry\.js"/,
     'the ESM copy imports with an extension');
+});
+
+// ─── The calendar, wired in (F-10, second half) ──────────────────────────────
+
+test('a published early close is 13:00 ET, not 16:00', () => {
+  // The whole behaviour change, and its whole scope: two dates in 2026, three
+  // hours each. 2026-11-27 (day after Thanksgiving) and 2026-12-24 are the
+  // published half-days.
+  for (const d of ['2026-11-27', '2026-12-24']) {
+    const t = expiryInstantMs(d);
+    assert.ok(!Number.isNaN(t), `${d} still resolves to an instant`);
+    const et = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: false,
+    }).format(new Date(t));
+    assert.equal(et, '13:00', `${d} must close at 13:00 ET`);
+  }
+  // And the adjacent regular sessions are unmoved, so this is a half-day rule
+  // rather than a December-wide shift.
+  for (const d of ['2026-11-25', '2026-12-23']) {
+    const et = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: false,
+    }).format(new Date(expiryInstantMs(d)));
+    assert.equal(et, '16:00', `${d} is a regular session`);
+  }
+});
+
+test('a date the calendar will not answer for is NEVER NaN', () => {
+  // The load-bearing assertion of this whole change. `ingestPrint` gates on
+  // `Number.isNaN(expiryInstantMs(print.expiry))`, so returning NaN for an
+  // unanswered date would turn the calendar's COVERAGE bound into a cliff that
+  // silently drops every print with an expiry past this year's table — which is
+  // every LEAPS, and everything at all once the year rolls over.
+  const beyond = [
+    '2027-01-15', '2027-06-18', '2028-01-21',   // past COVERAGE
+    '2025-12-19',                                // before COVERAGE
+    '2026-11-26',                                // Thanksgiving: a closed day
+    '2026-09-26',                                // a Saturday
+  ];
+  for (const d of beyond) {
+    const t = expiryInstantMs(d);
+    assert.ok(!Number.isNaN(t),
+      `${d} must fall back to the regular close, not refuse — refusing here ` +
+      `drops the print at the ingestPrint seam`);
+    const et = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: false,
+    }).format(new Date(t));
+    assert.equal(et, '16:00', `${d} falls back to the regular close`);
+  }
+});
+
+test('the fallback says it is a fallback', () => {
+  // Tested directly rather than through the instant, because the branch is the
+  // interesting part and an instant cannot distinguish a published 16:00 from
+  // an assumed one.
+  assert.equal(sessionCloseFor('2026-09-24').basis, 'published');
+  assert.equal(sessionCloseFor('2026-11-27').basis, 'published');
+  assert.match(sessionCloseFor('2026-11-27').why, /early close/);
+
+  for (const d of ['2027-01-15', '2026-11-26', '2026-09-26', 'not-a-date']) {
+    const c = sessionCloseFor(d);
+    assert.equal(c.basis, 'fallback', `${d} is not a published close`);
+    assert.equal(c.hour, 16);
+    assert.match(c.why, /assuming the regular/,
+      'and it names the assumption rather than presenting it as an answer');
+  }
+});
+
+test('an unreadable date is still NaN, and that is a different refusal', () => {
+  // The calendar cannot rescue a string that is not a date. `sessionCloseFor`
+  // falls back to 16:00 for it — there is nothing else it could say — and the
+  // round-trip below still rejects it, which is what `ingestPrint` gates on.
+  for (const bad of ['', 'not-a-date', '20261016', '2026-6-19', '2026-13-45']) {
+    assert.ok(Number.isNaN(expiryInstantMs(bad)),
+      `${JSON.stringify(bad)} is not a readable date and must stay NaN`);
+  }
+});
+
+test('DTE follows the half-day, by exactly the three hours', () => {
+  // The measured cost, stated as arithmetic rather than asserted as material.
+  // `daysToExpiry` is the only consumer inside the engine.
+  const from = Date.parse('2026-11-20T15:00:00Z');
+  const half = daysToExpiry(from, '2026-11-27');
+  const regular = (expiryInstantMs('2026-11-25') - from) / 86_400_000;
+  assert.ok(half > 0);
+  // 2026-11-27 at 13:00 ET is 18:00Z; at 16:00 ET it would be 21:00Z.
+  assert.equal(
+    Math.round((Date.parse('2026-11-27T21:00:00Z') - expiryInstantMs('2026-11-27')) / 3_600_000),
+    3, 'the half-day lands three hours earlier than the old assumption');
+  assert.ok(regular > 0);
 });

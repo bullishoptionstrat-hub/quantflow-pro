@@ -17,9 +17,14 @@ status and evidence and are not fixed here.
 
 | Suite | Result |
 |---|---|
-| `backend` (`npm run verify`) | **612 pass / 0 fail**, typecheck clean |
-| `frontend` (`npm run verify`) | **132 pass / 0 fail**, typecheck clean |
-| `quantflow-modules/flow-engine` | **30 pass / 0 fail** (run while fixing F-10; CLAUDE.md says 24, which is stale) |
+| `backend` (`npm run verify`) | **687 pass / 0 fail**, typecheck clean (612 at the start of this session) |
+| `frontend` (`npm run verify`) | **152 pass / 0 fail**, typecheck clean |
+| `quantflow-modules/flow-engine` | **30 pass / 0 fail** (run while fixing F-10) |
+
+Counts are evidence about the run that produced them, not properties of the
+repository — CLAUDE.md's pinned figures were stale in all three places and have
+been removed rather than refreshed. The commands that print them are in
+CLAUDE.md's *Commands* section.
 
 The backend suite was 587 at session start and one test failed:
 `socketHandlers.test.ts` loads `socket.io-client` from `frontend/node_modules`.
@@ -350,7 +355,7 @@ amount of engineering here removes it.
 
 ---
 
-## F-8 — Corrections and cancels are not modelled ❌ OPEN
+## F-8 — Corrections and cancels are not modelled ⚠️ PARTLY FIXED (historical and fixture paths)
 
 `grep` for correction/cancel semantics in `flow-engine/types.ts` and
 `flowEngineAdapter.ts` returns nothing. `RawPrint` has no `eventType`, no
@@ -362,6 +367,32 @@ correctness requirement the moment one does (§21). Related: there is no
 out-of-order handling either; the engine's watermark assumes roughly-ascending
 arrival, which `RawPrint.ts`'s own comment states as a requirement rather than
 enforcing.
+
+### 2026-09-27 — Event Model V2 (`backend/src/events/`, `docs/EVENT_MODEL_V2.md`)
+
+The audit of 2026-09-27 moved this to P0: a research history accumulated before
+cancels can be represented leaves signals in the record that never should have
+existed, and correcting it later destroys the answer to what the live system
+believed before the cancel arrived. What now exists, for **historical and
+fixture events**:
+
+- an immutable V2 envelope with three clocks and `availableAt`, raw codes kept
+  beside their interpretation, and identity that makes re-import idempotent and
+  a changed record a recorded conflict;
+- an append-only log where a cancel is its own event, with `AS_KNOWN_AT(t)` and
+  `FINAL_CORRECTED` derived — never stored, so neither can overwrite the other;
+- cancel resolution that never guesses (unresolved cancels dispute every trade
+  they could have meant);
+- a reorder buffer with an exact, property-tested lateness bound and
+  `LATE_EVENT` instead of insertion;
+- signal revisions with stated research consequences;
+- twenty golden fixtures for the §10 cases, pinned by a manifest; 34 mutations,
+  each failing its intended test.
+
+**Still open:** the live path enters as `RawPrint`, has no reorder buffer and
+persists no V2 events (it has no OPRA source, §29); nothing persists V2 events
+durably; and every code's meaning is UNVERIFIED or SEARCH_ONLY because the
+OPRA specification is unreachable from this environment.
 
 ---
 
@@ -504,9 +535,57 @@ rather than encoding this year's DST rule as arithmetic.
   about a day earlier than this returns. SPXW weeklys are PM-settled and are
   correct. Separating them needs per-product settlement data this tree does
   not carry.
-- **Half-days and holidays.** An early close is 13:00 ET. A holiday calendar
-  is a thing to maintain, and CLAUDE.md records what happened the last time one
-  was assumed instead: a `MARKET OPEN` indicator green on Thanksgiving.
+- **Half-days and holidays.** ~~A holiday calendar is a thing to maintain.~~
+  **Partly closed 2026-09-23:** `flow-engine/calendar.ts` is an
+  effective-dated table with a hard `COVERAGE` bound — a date outside it
+  returns `UNKNOWN`, never an extrapolated verdict. The objection recorded here
+  was never to a calendar but to an *assumed* one that keeps answering
+  confidently after its year has passed; a bound that expires loudly does not
+  have that failure mode, and §15/§73 require exactly this. 8 tests, 5
+  mutations, and the load-bearing assertion is `2027-11-25 → UNKNOWN` rather
+  than `Thanksgiving → HOLIDAY`. **`coverage.ts` is wired as of 2026-09-27**
+  and now emits `MARKET_CLOSED`, on the narrowest rule that can be established
+  rather than assumed: every calendar date the window touches must be a
+  published holiday or a weekend, `UNKNOWN` is never a closure, and the rule is
+  day-granular so 02:00 on a Tuesday stays an outage. Verified on a live boot —
+  `openGap.kind = MARKET_CLOSED`, basis *"2026-09-26 is a Saturday"*, taken at
+  00:08 **UTC on the 27th**, which is the instant→market-date conversion doing
+  the one thing it exists for. 18 mutations, every one biting exactly the
+  intended test.
+
+**Where the calendar lives, and why that is the load-bearing decision.** It
+moved **into** the engine (`quantflow-modules/flow-engine/src/calendar.ts`, with
+the vendored copy at `backend/src/flow-engine/calendar.ts`), because `expiry.ts`
+needs it and that file is vendored. The alternative was threading a close lookup
+through `expiryInstantMs` → `daysToExpiry` → `score.ts`, and an **optional**
+parameter there would be the exact failure `classifyWindow` refuses by name: a
+caller that forgets it silently gets the old answer, and the degradation is
+invisible because every date classifies as it did before. The cost is two edits
+a year instead of one, and `vendorMirror.test.ts` makes a missed second edit
+loud — confirmed, since every mutation that touched only the backend copy also
+tripped it.
+
+**The fallback is what makes this safe, and it is not obvious.** `ingestPrint`
+gates on `Number.isNaN(expiryInstantMs(print.expiry))` (F-17), so returning
+`NaN` for a date the calendar will not answer for would turn `COVERAGE` into a
+**cliff that silently drops every print with a 2027 expiry** — every LEAPS
+today, and everything at all once the year rolls over. So `UNKNOWN`, `HOLIDAY`
+and `WEEKEND` all fall back to the regular close, `sessionCloseFor` reports
+`basis: 'fallback'` with the reason, and a test asserts the six non-answering
+cases are *never* `NaN`. An unreadable *string* is still `NaN` — a different
+refusal, and it stays intact.
+
+**The move found a four-day-old defect, because the engine is typechecked more
+strictly than the copy that ships.** The module's `tsconfig.json` sets
+`noUncheckedIndexedAccess` and the backend's does not, so `calendar.ts` passed
+the backend's typecheck for four days carrying
+`` `every date in ${seen[0]}..${seen[seen.length - 1]}` `` — under the strict
+flag those are `string | undefined`, and a gap row's reason could have rendered
+the literal `"undefined"`. It was found by running the module's typecheck **by
+hand**, which is exactly the check nobody runs, so `backend/npm run typecheck`
+now runs it (`typecheck:engine`) and `vendorMirror.test.ts` fails if either the
+flag or that script is removed. Byte-identity was never the whole obligation:
+the canonical copy is bound by a stricter contract than the vendored one.
 
 **A note on the guard, since it is the interesting part.** The first version
 carried a date-shape regex in front of the lookup. The mutation that deleted it
@@ -514,6 +593,91 @@ failed **no test** — the round-trip check already rejects everything it would
 have. An unreachable guard is a check with nothing to check, so it was removed
 rather than kept for comfort, and the rejection test was widened to prove the
 remaining guard does the work.
+
+---
+
+## F-16 — Rights lineage stopped at the API boundary ✅ FIXED
+
+**Measured 2026-09-23.** `SignalRecord` carries `source`, `datasetId` and
+`rightsClass` on every persisted row. `FlowEvent` — the wire shape behind
+`/api/flow`, the `flow_batch` socket event, and the CSV export in
+`FlowFeed.tsx` — carries **none of the three**. `grep -c` for
+`rights_class|dataset_id|datasetId` returns **0** in both `frontend/lib/types.ts`
+and `flowEngineAdapter.ts`.
+
+So §22's taint propagation holds inside the database and stops at the door.
+The store, which nothing exports from, knows each row's provenance; the CSV a
+reader actually downloads does not.
+
+**Why the gate that exists does not cover this.** Rights are enforced at
+exactly two points: `mayOperateConnector` before a connector starts (DISPLAY)
+and `classifySource(…, 'PERSIST')` in the recorder and the mark registry. §23
+names that pattern specifically — *"Do not place one rights check only at
+connector startup and assume the problem is solved"* — and lists API SERVE,
+WEBSOCKET and CSV EXPORT as separate gates. None exists.
+
+**Scope, stated precisely, because overclaiming here would be the same defect.**
+This is **not** currently leaking prohibited data. The connector gate refuses
+`PROHIBITED` for DISPLAY *before* `start()`, so a prohibited dataset never
+produces a print at all — Yahoo is refused and emits nothing. And today every
+row on the wire is simulation or chain-derived, both of which the wire *does*
+mark, via `synthetic`.
+
+**It is a trap on the path the operator is being asked to fund.** The moment a
+licensed feed is connected — which is exactly what `PROVIDER_DECISION_RECORD.md`
+asks for — a CSV of real vendor prints leaves the building with no dataset
+attribution and no rights class, and §152 is explicit that *"an authenticated
+user is not automatically permitted to export licensed raw market data."* That
+is the same shape as F-2: correct-looking code with a live trap waiting for the
+first real OPRA feed.
+
+### Fixed
+
+`FlowEvent` carries `datasets: string[]` and `rights_display`, populated by
+`displayRightsOf()` from **every** contributing source — plural, because a
+cluster spans sources and the recorder already refuses to ignore that. The CSV
+export gains both columns. Verified on a live boot, not only in tests:
+`datasets: ["SIMULATION"], rights_display: "PERMITTED"`.
+
+**`rights_display`, not `rights_class`.** It is the DISPLAY axis and
+deliberately not the recorder's PERSIST decision, which differs for the same
+dataset — Finnhub is PERMITTED to display and PROHIBITED to persist. One field
+answering two questions is the defect this repo hit with `synthetic`, with
+`connected` and with `excursion`.
+
+The class published is the **weakest** across contributing datasets, the same
+fail-closed rule the recorder applies when it refuses on any refused source: a
+cluster mixing a PERMITTED print with an UNVERIFIED one is not permitted, and
+publishing the strongest class would let one clean print launder the rest.
+
+### Four things the mutation pass found that the fixture could not
+
+1. **`DISPLAY_RANK` as `Record<string, number>` needed a `?? 0`,** which
+   `defaultedReadings.test.ts` refused by name. Keyed by the union instead, the
+   lookup is total and no default is needed — `nominalHorizonMs`'s lesson.
+2. **Weakest-vs-strongest and empty-cluster-defaults-to-PERMITTED both passed
+   every fixture-driven test**, because every row in `flow.json` came from
+   `simulation` alone and no recorded signal mixes datasets or lacks one. The
+   recovery-mutation lesson again: an assertion about a sample that never
+   reaches the branch passes vacuously. `displayRightsOf` is exported and
+   driven directly.
+3. **An unregistered source published `datasets: ["source:unknown"]`** — a
+   placeholder `classifySource` mints, sitting in the CSV's Datasets column
+   beside real registry ids where a reader sorting the column could not tell
+   them apart. Only registered datasets are named now; the class already says
+   the row could not be attributed. **This was in the first draft of the fix**
+   and was exposed by a mutation that turned out to be *equivalent*, which is
+   how the dead branch hiding it came to light.
+4. **The adapter emitting `datasets: []` passed all 75 tests**, because the
+   fixture holds what a past boot produced and cannot witness the adapter
+   ceasing to populate it. Guarded positionally, like the grader's `continue`.
+
+### What this does not close
+
+`/api/flow` and the socket now *carry* the lineage; nothing yet *gates* on it.
+§23's FETCH / PERSIST / API-SERVE / WEBSOCKET / EXPORT / MODEL-TRAINING gates
+are still two of six. Carrying provenance is the precondition for gating on it,
+not the gate.
 
 ---
 
@@ -648,6 +812,291 @@ one-off command rather than in a committed test.
 
 ---
 
+## F-17 — An unreadable expiry was published as 0DTE ✅ FIXED
+
+`ingestPrint` guards the fields that make a contract, and this file already
+records `strike` joining that guard late: it had been checked for *presence*
+and not for `> 0`, so `occSymbol` padded `Math.round(0 * 1000)` into a
+real-looking symbol and the print was classified, scored and published.
+
+`expiry` was the same defect one field over, and was still checked for
+**truthiness only**. Measured through the real adapter, one print stamped
+2026-09-24 against an October expiry:
+
+```
+expiry "2026-10-16" -> occ SPY261016C00550000    dte 22     <- control
+expiry "20261016"   -> occ SPY261016C00550000    dte  0
+expiry "2026-6-19"  -> occ SPY26619C00550000     dte  0
+expiry "10/16/2026" -> occ SPY/16/2026C00550000  dte  0
+expiry "not-a-date" -> occ SPYtadateC00550000    dte  0
+expiry "2026-13-45" -> occ SPY261345C00550000    dte  0
+```
+
+Two separate consequences, and neither is cosmetic. The OCC symbol is the
+contract's **identity** — the key for the NBBO book and the per-contract stats
+table — so a malformed one silently partitions or merges contracts. And the
+wire's `days_to_expiry` fell to `0`, which does not read as *unknown*: it reads
+as **0DTE**, the shortest-dated and loudest bucket on the board.
+
+**The compact-ISO row is what makes this worth a guard rather than a comment.**
+`20261016` is a format a vendor could plausibly switch to, it yields the
+**correct** OCC symbol, and it publishes every contract as expiring today.
+Nothing on any surface would look wrong — the same shape as CoinGecko's
+`$0.00` and Cboe's green `0.00`, arrived at through a date instead of a price.
+
+**Reachability, stated rather than assumed.** Three of the four chain
+connectors pass a vendor string through with a type-or-truthiness check only
+(`marketData` takes `data.expiration?.[i]`, `schwab` takes
+`expirationDate?.split('T')[0]`, `tastytrade` takes `exp['expiration-date']`);
+`yahoo` derives ISO from a unix stamp and cannot produce a malformed one.
+Polygon's path passes `details.expiration_date` straight from vendor JSON.
+**None of those five has ever run against a live vendor from this tree**, so
+this was a live trap on every real data path rather than an observed failure —
+the same standing F-2 had.
+
+**The fix, and the two decisions in it.** The gate asks `expiryInstantMs`
+rather than carrying a regex, because that is the one home for reading an
+expiry and its own docstring already argues why it rejects a loose parse; a
+second date rule here is the duplication this tree keeps closing. And the
+refusal is **counted per source and named on `/api/health`** through
+`sourceNotes` — the "arriving and qualified" channel `polygonQuoteNote` and the
+unparsed-frame counters already use. That second half is what the strike-0 fix
+left out: it returns `[]` and tells nobody, so a connector whose every row is
+rejected looks exactly like a quiet tape.
+
+`days_to_expiry` is `number | null` on both sides of the wire. It is
+unreachable behind the gate today and nullable anyway, because the previous
+type *could not express the honest answer* — the defect `SpotQuote.change` had,
+where a `number` field forced two connectors to write a zero for a reading the
+vendor had not sent.
+
+**Verified by running it**, not only by test: a 40-second keyless boot produced
+72 signals with DTEs from 1 to 61, zero nulls and zero refusals, so the gate
+does not reject the simulation's own ISO dates. 8 tests, 7 mutations, each
+failing exactly the intended test.
+
+**The guard that could not have caught this.** `defaultedReadings.test.ts`
+scans for `?? <number>` and `|| <number>`. The invented zero here was
+`Number.isNaN(dte) ? 0 : Math.round(dte)` — a **ternary**, a third form the
+scanner does not read. The rule that file states is *"an invented number is a
+finding by default, not by list"*, and its implementation is still a list of
+two operators. Widening it to ternaries is not done here: the pattern
+`cond ? 0 : x` is common and mostly innocent, so a scan for it would be noise
+rather than a finding, and a guard nobody can read is rubber-stamped. Recorded
+as a known limit instead. It did, however, catch a `?? 0` written *in this
+change* — the refusal counter — which is registered in the ledger with its
+reason, following the `unparsedFrames` precedent immediately above it.
+
+---
+
+## F-18 — "Is the market open" was answered in the browser, by a clock ✅ FIXED
+
+`frontend/lib/utils.ts` held `isRegularHours()`: a weekday test and a hardcoded
+09:30–16:00 window, computed in the browser with no calendar behind it. The
+sidebar painted its result green on every page. Its own docstring named the cost:
+
+> "There is no holiday calendar here, so Thanksgiving, Good Friday and every
+> other full closure read as open, and half-days read as open past the 13:00
+> close. Adding a calendar means maintaining one."
+
+CLAUDE.md records the function being **renamed rather than fixed** on exactly
+that reasoning. **A calendar is now maintained**, so the justification has
+expired — which is this document's own recurring defect one level up: a claim
+about the code that the code no longer supports.
+
+**The fix is the F-16 shape: the backend knows, so the browser reads.**
+`backend/src/market/session.ts` combines the calendar with a clock and
+`/api/health` publishes the verdict; `frontend/lib/marketSession.ts` is the one
+reader. The table is **not** copied into the frontend — that would be a second
+calendar to keep correct, which is what cost the ticker tape seven tickers and
+the settings page three hand-maintained lists. `isRegularHours()` is **deleted**
+rather than left beside the new reader, and a source scan forbids any local
+weekday check or holiday name in `frontend/`.
+
+**Five states, because there are five facts.** `OPEN`,
+`CLOSED_OUTSIDE_HOURS`, `CLOSED_HOLIDAY`, `CLOSED_WEEKEND` and `UNKNOWN`.
+Holiday and weekend are kept apart so a reader is not sent to a holiday schedule
+to discover it is Saturday. And **`UNKNOWN` is never rendered as closed** — past
+`COVERAGE` the calendar refuses to answer, and converting "cannot say" into
+"closed" is the same flattering move `coverage.ts` refuses by name. The label
+reads `HOURS UNKNOWN` in grey, which is also what a backend that did not answer
+produces, and what a backend older than the field produces.
+
+**The calendar gained the published open**, 09:30, from the same schedules as the
+holiday dates and the 13:00 closes. It is carried as data rather than assumed by
+callers for the reason the close is: an assumed open is what let the green dot
+survive a half-day afternoon.
+
+**Why this is not in `calendar.ts`.** That module is deliberately clock-free —
+`sessionOn` takes a date string so no timezone rule can hide inside a table
+lookup — and a test asserts it never reads `Date.now()`.
+
+**Verification.** 9 backend tests, 8 frontend tests, 12 mutations. Confirmed on
+a live boot: `state: CLOSED_WEEKEND`, basis *"2026-09-27 is a Sunday"*,
+`nowMinutesEt: 400` from 10:40Z, which is EDT working. Stated plainly: a Sunday
+is the one case the old check also got right, so that boot proves the **wiring**
+and the half-day tests prove the **fix**.
+
+**Two mutations are worth recording rather than counting.** Hardcoding the open
+to `09:30` **passed every test** — an *equivalent* mutation, because every
+session in this table opens at 09:30, so the literal and the lookup agree. That
+does not make it harmless: the whole argument for carrying the open as data is
+that an assumption is what failed before, and an argument nothing can check is a
+comment that drifts. A source guard now requires both bounds to be read from the
+session, and rejects `570`/`960` — the deleted function's own literals. The
+second: the frontend scan matched **its own explanatory prose**, because the
+comment recording what `isRegularHours` replaced contains the name. That is the
+F-16 CSV guard's mistake repeated exactly, in the same session; both scans strip
+comments first now.
+
+### 2026-09-27 — the right move, the wrong abstraction
+
+The audit of 2026-09-27 found that F-18 centralised session knowledge
+correctly and then **named the verdict wrongly**: "is the US options market
+open?" has no single answer. The OPRA feed window (07:30–17:00 from
+2026-09-21), a product's own sessions (SPX's curb and overnight global hours),
+a contract's last trading moment and a study's sample are separate facts, and
+at 21:00 on a Sunday SPX trades while the sidebar said CLOSED.
+
+**This refutes a claim recorded here and in `wireContract.test.ts`**: that once
+the calendar existed, `MARKET OPEN` had become "a supported claim". It had not.
+The calendar establishes the exchange's regular session and nothing wider.
+
+Fixed by splitting the authorities (`docs/SESSION_AUTHORITY_MODEL.md`:
+`civil.ts`, the exchange calendar, `feedSessions.ts`, `productSessions.ts`,
+`contractLifecycle.ts`, `researchEligibility.ts`), each tested at a moment where
+it disagrees with another, and by relabelling: `RTH OPEN`, `OUTSIDE RTH`,
+`NO RTH · WEEKEND`, `SESSION UNKNOWN` — never `MARKET OPEN`, never a label that
+begins `CLOSED`. The verdict now carries `authority: 'EXCHANGE_REGULAR_SESSION'`
+on `/api/health`, and the wire guard forbids the wider label again, for a better
+reason than before.
+
+---
+
+## F-19 — `/api/health` is unauthenticated and only one block of it was checked ✅ FIXED
+
+`healthLeak.test.ts` drives `getSignalHistoryStatus()` and asserts the recorder's
+raw error never reaches the wire. That is **one field**. The route also publishes
+`ingestion` (sources, errors, notes, entitlement, rights refusals, mark sources,
+OCC volume, coverage), `enrichment`, `history`, `session`, `uptime` and `memory` —
+and nothing had ever looked at the payload as a whole, on a route this repo's own
+comments call world-readable (`describeHttpError` exists *because* that was
+learned once already, with `sourceErrors`).
+
+**Found from the outside, on a false premise.** A PR-audit bot raised
+`action_required` naming `backend/src/market/session.ts` as a "security-sensitive
+path" — a match on the word *session*. That file reads a calendar and a clock and
+touches no credential, no request input and no network; verified by grep, and the
+premise is wrong. The **adjacent** question was not: a field had just been added
+to an unauthenticated payload and no guard covered the payload. This is the
+guard-scope failure this document has now recorded six times, so the fix is the
+**whole surface** rather than one more named block.
+
+`backend/test/healthPublicSurface.test.ts` drives the **real router** — express on
+port 0, a real `fetch` — rather than re-composing the four status functions,
+because a test that rebuilds the route is a second copy of it and would keep
+passing after the route began publishing something else. It walks every string in
+the response, at any depth, against credential *shapes* rather than a field list:
+a list of fields fails silent, since a field nobody added to it passes, while a
+pattern that is too narrow fails loud. Each pattern is anchored to a real
+credential prefix rather than to the word "key", because the dangerous error here
+is a pattern too broad.
+
+The detector is exercised against a planted payload in the real shapes, since
+with the route clean it has nothing live left to catch and a check with nothing to
+check stops working quietly — the `committedSecrets.test.ts` lesson. And the
+`session` block's key set is pinned, so a new key on that route gets a look.
+
+**3 tests, 3 mutations**, each failing the intended test: a vendor error carrying
+`?apikey=` into `sourceErrors`, an internal hostname added to the session block,
+and the scan reading only the top level.
+
+**What it does not do:** it inspects one live payload from this container, so a
+string that only appears under a failure this boot did not produce is unscanned.
+The shapes are checked wherever they *do* appear, which is why the planted-payload
+test matters more than the live one.
+
+---
+
+## F-20 — The directive's example session conflict was the transitional encoding ✅ FIXED
+
+The directive offered, as the model of a session conflict: *"provider session
+says REGULAR but sale condition says ETH → SESSION_CONFLICT."* The first cut of
+Event Model V2 implemented exactly that.
+
+A search on 2026-09-27 surfaced this from the OPRA Pillar Output Specification
+(SEARCH_ONLY — the document itself is unreachable here, and the search tool
+summarises): *"Participants not yet migrated to this field will continue to use
+Message Type 'v' (Extended Hours Trade) to identify extended hours trades; in
+those cases, the Trading Session Identifier will carry its default value of
+0."* So `0` beside `v` is the **ordinary** encoding of an extended-hours trade
+from a participant that has not migrated. The rule written to satisfy
+INV-SESSION-004 — the transitional encoding stays interpretable — would have
+filed every legacy extended-hours print under a data conflict for as long as
+the migration lasts.
+
+`SessionEncoding` now carries its default value; an identifier at its default
+beside `v` is `EXTENDED` (`LEGACY_SALE_CONDITION`), and `CONFLICT` is reserved
+for an explicit, non-default regular value — which OPRA's own encoding cannot
+produce and a vendor encoding can. Fixtures 15 and 16 exercise both; two
+mutations restoring the old rule each fail them. Commit `d6ad915`.
+
+This is the directive's instruction — *"Do not trust this prompt as the
+authority"* — applied to the directive, and it is the reason every row of the
+OPRA table carries its own status.
+
+## F-21 — Auditing this phase: the import gate's arithmetic was fitted to itself ✅ FIXED
+
+A self-audit of Event Model V2 and the §17 gate, read line by line after the
+phase closed, found five defects. None could have produced a flattering
+result today — the gate cannot pass here and no real record has entered —
+but each would have misled the first real import, and two of them were
+invisible *because* the tests were built from the same assumption as the code.
+
+1. **The provider's count was reconciled against a sum only this code
+   computes.** `received` added trade items, quote items and pair items, and
+   `providerReportedCount` was compared with that total. No vendor reports
+   "trades plus pairs"; the conforming test source reported **9** because
+   5 trades + 4 pairs is 9 — the fixture was fitted to the implementation, so
+   the check could only ever confirm itself. It now reconciles the vendor's
+   count against the **trade stream** alone (`tradeRecords`), and the
+   `HistoricalOptionsSource` contract says so.
+2. **A pair with no pre-trade quote failed `event-counts-reconcile`.** It was
+   counted as received and accounted for nowhere, so a provider that sometimes
+   has no book before a trade — an ordinary state — failed the gate for a
+   bookkeeping reason. A pair without a quote produces nothing to account for,
+   and is reported under `withoutQuote`, as it already was.
+3. **A pair's trade was never checked against the trade stream.** The comment
+   said its trade was "appended again … the duplicate check doing its job";
+   the code appended only the quote. A pair describing a trade the stream never
+   sent — or a different record under the same identity — let
+   `causal-quote-alignment` pass on evidence about a trade the log does not
+   hold. `tradeNotInStream` counts them and fails the check.
+4. **A quote record with a key simply absent read the hole as a price.** The
+   builder stored `r.bid` as delivered; `JSON.parse` yields `undefined` where
+   the type promises `number | null`, and `bookStateOf` tests `=== null`. A bid
+   that was never sent made the book **TWO_SIDED**, and a record with neither
+   side made it **LOCKED**. Measured, then fixed at the builder: `null` is the
+   only spelling of "not sent". The existing test used an explicit `null`, the
+   one form the type allows — which is why it could not see this.
+5. **The rights manifest accepted `2026-02-31` as the date a document was
+   read**, never checked `verifiedAt`, and `importPermitted` did not know which
+   business mode the import would run under — so a manifest read for private
+   research permitted a commercial import. The mode is now a **required**
+   parameter: an optional one would let a caller that forgot it inherit the
+   manifest's own answer for a mode nobody read the terms for.
+
+Two smaller corrections ride with them: a sequence below the first one the
+buffer saw is `SEQUENCE_BEFORE_BASELINE`, not `SEQUENCE_REPEATED` (nothing
+recorded that range, so "repeated" was a claim about unseen messages); and
+`RevisionInputs.openGaps` now states that an as-known view needs
+`gapsOpenAt(view.asOf)`, because passing today's `openGaps()` drops every gap
+filled after the view and reads a signal judged before the fill as FINAL.
+
+Eight mutations, one per fix, each fail at least one test.
+
+---
+
 ## Status summary
 
 | ID | Finding | Status |
@@ -663,7 +1112,13 @@ one-off command rather than in a committed test.
 | F-5 | README advertises deleted ML service | **FIXED** — `readmeClaims.test.ts`, 3 tests (status row was stale) |
 | F-6 | Tier-4 controls absent from this tree | OPEN (documented) |
 | F-7 | No entitled options-event source | OPEN, **external blocker** |
-| F-8 | No corrections / cancels / ordering | OPEN |
+| F-8 | No corrections / cancels / ordering | **PARTLY FIXED** — Event Model V2 for historical and fixture events: 20 golden fixtures, 19 property/edge tests, 34 mutations; **live path and durable V2 storage open** |
 | F-9 | `excursion` misnamed | **FIXED**, 3 tests, 3 mutations — renamed in TS and SQL, migration applied to the live database |
-| F-10 | Universal 20:00Z expiry | **PARTLY FIXED**, 6 tests, 3 mutations; AM-settlement and holidays open |
+| F-10 | Universal 20:00Z expiry | **PARTLY FIXED** — DST, the calendar, `coverage.ts` and `expiryInstant` half-days closed; AM vs PM settlement now in an effective-dated contract lifecycle registry (SPX, SPXW, SPXO, SPY, XSP); **the engine's DTE does not consume it yet** |
 | F-11 | Plaintext `api_keys.key_value`; disclosed credentials | OPEN, **external** |
+| F-16 | Rights lineage stopped at the API boundary | **FIXED**, 10 tests, 6 mutations — wire and CSV carry `datasets` + `rights_display` |
+| F-17 | Unreadable expiry published as 0DTE with a fabricated OCC symbol | **FIXED**, 8 tests, 7 mutations — gated at the seam, counted on `/api/health`, verified on a live boot |
+| F-18 | Session state guessed in the browser from a weekday-and-clock check | **FIXED**, then **re-scoped 2026-09-27**: one verdict split into feed, product, contract and research authorities; labels name RTH, never the market |
+| F-19 | Unauthenticated `/api/health` checked one block, not the payload | **FIXED**, 3 tests, 3 mutations — the real router driven, every string scanned at any depth |
+| F-20 | The directive's example session conflict was the transitional encoding | **FIXED** — default identifier beside `v` is EXTENDED; CONFLICT needs an explicit non-default value; fixtures 15–16, 2 mutations |
+| F-21 | Self-audit of the phase: gate arithmetic fitted to itself, unchecked pair trades, absent quote keys read as prices, manifest dates and mode | **FIXED**, 5 tests, 8 mutations |

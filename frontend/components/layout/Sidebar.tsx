@@ -1,7 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { isRegularHours } from '@/lib/utils'
+import { useMarketSession, describeSession } from '@/lib/marketSession'
 import { useStore } from '@/store/useStore'
 
 const NAV = [
@@ -30,7 +30,12 @@ const GROUP_LABELS: Record<string, string> = {
 export function Sidebar() {
   const pathname = usePathname()
   const { powerAlerts, connected, flowEvents } = useStore()
-  const regularHours = isRegularHours()
+  const { panel: sessionPanel } = useMarketSession()
+  const session = describeSession(
+    sessionPanel.status === 'ok' ? sessionPanel.data : null,
+  )
+  const TONE = { open: '#22c55e', closed: '#ef4444', unknown: '#a1a1aa' } as const
+  const tone = TONE[session.tone]
 
   // How much of what has arrived is constructed rather than observed. Shown
   // only when there is some, so a fully live feed stays quiet.
@@ -77,14 +82,22 @@ export function Sidebar() {
 
       {/* Market status */}
       <div style={{ padding: '8px 16px', marginBottom: 4 }}>
-        {/* `MARKET OPEN` over a weekday-and-clock check, with no holiday
-            calendar behind it — green on Thanksgiving. Named for what it
-            knows: the session window, in New York. */}
+        {/* This was a weekday-and-clock check computed in the browser, with no
+            holiday calendar behind it — green on Thanksgiving, and green all
+            afternoon on a 13:00 half-day. The verdict now comes from the
+            published calendar via `/api/health`, and the three tones are three
+            different facts: open, established closed, and cannot say. A
+            published closure is painted grey-red rather than alarm-red because
+            Sunday is not a fault, and `SESSION UNKNOWN` is never painted as
+            closed — the calendar refusing to answer is the one case where the
+            terminal genuinely does not know. Every label names RTH: the
+            verdict is the exchange's regular session and nothing wider, so it
+            may not be printed as "the market". */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}
-          title="Weekday 09:30–16:00 ET. Market holidays are not checked.">
-          <span style={{ width: 7, height: 7, borderRadius: '50%', background: regularHours ? '#22c55e' : '#ef4444', display: 'inline-block', boxShadow: regularHours ? '0 0 0 2px rgba(34,197,94,0.3)' : 'none' }} />
-          <span style={{ color: regularHours ? '#22c55e' : '#ef4444', fontWeight: 600, fontFamily: "'JetBrains Mono', monospace" }}>
-            {regularHours ? 'REGULAR HOURS' : 'OUTSIDE HOURS'}
+          title={session.detail}>
+          <span style={{ width: 7, height: 7, borderRadius: '50%', background: tone, display: 'inline-block', boxShadow: session.tone === 'open' ? '0 0 0 2px rgba(34,197,94,0.3)' : 'none' }} />
+          <span style={{ color: tone, fontWeight: 600, fontFamily: "'JetBrains Mono', monospace" }}>
+            {session.label}
           </span>
         </div>
 

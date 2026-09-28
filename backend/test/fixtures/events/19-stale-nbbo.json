@@ -1,0 +1,83 @@
+{
+  "schema": "quantflow-event-fixture-v1",
+  "case": 19,
+  "name": "stale NBBO",
+  "about": "The latest prior quote is five seconds old, past the engine's own 2 s staleness bound (imported, not restated). It is reported as STALE with the quote attached, and the side is AMBIGUOUS.",
+  "defaults": {
+    "provider": "fixture",
+    "datasetId": "FIXTURE.OPRA.V1",
+    "sequenceScope": "opra-line-7:2026-09-24",
+    "venue": "C",
+    "rawSessionIdentifier": 0,
+    "instrument": {
+      "underlying": "SPY",
+      "expiry": "2026-10-16",
+      "strike": 550,
+      "right": "C"
+    },
+    "synthetic": true,
+    "replay": true
+  },
+  "records": [
+    {
+      "ref": "Q1",
+      "type": "quote",
+      "providerSequence": "1001",
+      "eventTime": "2026-09-24T13:59:55.000Z",
+      "providerReceiveTime": "2026-09-24T13:59:55.002Z",
+      "bid": 2.1,
+      "ask": 2.2,
+      "bidSize": 50,
+      "askSize": 40
+    },
+    {
+      "ref": "T1",
+      "type": "trade",
+      "providerSequence": "1002",
+      "eventTime": "2026-09-24T14:00:00.000Z",
+      "providerReceiveTime": "2026-09-24T14:00:00.004Z",
+      "price": 2.2,
+      "size": 5
+    }
+  ],
+  "reorder": {
+    "allowedLatenessMs": 1000
+  },
+  "expect": {
+    "append": {
+      "Q1": "APPENDED",
+      "T1": "APPENDED"
+    },
+    "views": [
+      {
+        "asOf": "FINAL",
+        "trades": {
+          "T1": "ACTIVE"
+        },
+        "quotes": [
+          "Q1"
+        ]
+      }
+    ],
+    "causal": [
+      {
+        "trade": "T1",
+        "status": "STALE",
+        "quote": "Q1",
+        "ageMs": 5000,
+        "side": "AMBIGUOUS"
+      }
+    ],
+    "signals": [
+      {
+        "evidence": [
+          "T1"
+        ],
+        "decidedAt": "2026-09-24T14:00:00.500Z",
+        "view": "FINAL",
+        "status": "FINAL",
+        "finalTapeStudies": "INCLUDE"
+      }
+    ]
+  }
+}

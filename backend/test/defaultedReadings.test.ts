@@ -157,6 +157,10 @@ const LEDGER: Record<string, string> = {
   'ingestion/index.ts: unparsedFrames[source] ?? 0':
     'Initialising a counter on first increment. Counting from zero is what a ' +
     'counter does.',
+  'ingestion/flowEngineAdapter.ts: unreadableExpiries[source] ?? 0':
+    'The same counter on the same rule, for prints refused at the seam for an ' +
+    'unreadable expiry. This module owns and increments it, so absent really ' +
+    'does mean none have been refused — it is not a reading a vendor omitted.',
   'ingestion/index.ts: a.ts ?? 0':
     'A sort comparator over seeded prints, giving an undefined timestamp a ' +
     'stable position rather than NaN. Nothing is published from it.',
