@@ -1045,6 +1045,56 @@ This is the directive's instruction — *"Do not trust this prompt as the
 authority"* — applied to the directive, and it is the reason every row of the
 OPRA table carries its own status.
 
+## F-21 — Auditing this phase: the import gate's arithmetic was fitted to itself ✅ FIXED
+
+A self-audit of Event Model V2 and the §17 gate, read line by line after the
+phase closed, found five defects. None could have produced a flattering
+result today — the gate cannot pass here and no real record has entered —
+but each would have misled the first real import, and two of them were
+invisible *because* the tests were built from the same assumption as the code.
+
+1. **The provider's count was reconciled against a sum only this code
+   computes.** `received` added trade items, quote items and pair items, and
+   `providerReportedCount` was compared with that total. No vendor reports
+   "trades plus pairs"; the conforming test source reported **9** because
+   5 trades + 4 pairs is 9 — the fixture was fitted to the implementation, so
+   the check could only ever confirm itself. It now reconciles the vendor's
+   count against the **trade stream** alone (`tradeRecords`), and the
+   `HistoricalOptionsSource` contract says so.
+2. **A pair with no pre-trade quote failed `event-counts-reconcile`.** It was
+   counted as received and accounted for nowhere, so a provider that sometimes
+   has no book before a trade — an ordinary state — failed the gate for a
+   bookkeeping reason. A pair without a quote produces nothing to account for,
+   and is reported under `withoutQuote`, as it already was.
+3. **A pair's trade was never checked against the trade stream.** The comment
+   said its trade was "appended again … the duplicate check doing its job";
+   the code appended only the quote. A pair describing a trade the stream never
+   sent — or a different record under the same identity — let
+   `causal-quote-alignment` pass on evidence about a trade the log does not
+   hold. `tradeNotInStream` counts them and fails the check.
+4. **A quote record with a key simply absent read the hole as a price.** The
+   builder stored `r.bid` as delivered; `JSON.parse` yields `undefined` where
+   the type promises `number | null`, and `bookStateOf` tests `=== null`. A bid
+   that was never sent made the book **TWO_SIDED**, and a record with neither
+   side made it **LOCKED**. Measured, then fixed at the builder: `null` is the
+   only spelling of "not sent". The existing test used an explicit `null`, the
+   one form the type allows — which is why it could not see this.
+5. **The rights manifest accepted `2026-02-31` as the date a document was
+   read**, never checked `verifiedAt`, and `importPermitted` did not know which
+   business mode the import would run under — so a manifest read for private
+   research permitted a commercial import. The mode is now a **required**
+   parameter: an optional one would let a caller that forgot it inherit the
+   manifest's own answer for a mode nobody read the terms for.
+
+Two smaller corrections ride with them: a sequence below the first one the
+buffer saw is `SEQUENCE_BEFORE_BASELINE`, not `SEQUENCE_REPEATED` (nothing
+recorded that range, so "repeated" was a claim about unseen messages); and
+`RevisionInputs.openGaps` now states that an as-known view needs
+`gapsOpenAt(view.asOf)`, because passing today's `openGaps()` drops every gap
+filled after the view and reads a signal judged before the fill as FINAL.
+
+Eight mutations, one per fix, each fail at least one test.
+
 ---
 
 ## Status summary
@@ -1071,3 +1121,4 @@ OPRA table carries its own status.
 | F-18 | Session state guessed in the browser from a weekday-and-clock check | **FIXED**, then **re-scoped 2026-09-27**: one verdict split into feed, product, contract and research authorities; labels name RTH, never the market |
 | F-19 | Unauthenticated `/api/health` checked one block, not the payload | **FIXED**, 3 tests, 3 mutations — the real router driven, every string scanned at any depth |
 | F-20 | The directive's example session conflict was the transitional encoding | **FIXED** — default identifier beside `v` is EXTENDED; CONFLICT needs an explicit non-default value; fixtures 15–16, 2 mutations |
+| F-21 | Self-audit of the phase: gate arithmetic fitted to itself, unchecked pair trades, absent quote keys read as prices, manifest dates and mode | **FIXED**, 5 tests, 8 mutations |

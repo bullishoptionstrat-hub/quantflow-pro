@@ -70,7 +70,8 @@ async function* each<T>(xs: readonly T[]): AsyncIterable<T> { for (const x of xs
 
 interface Spec {
   trades: RawTradeRecord[];
-  pairs?: Array<{ trade: number; quote: RawQuoteRecord | null; relation: TradeQuoteEvidence['quoteRelation'] }>;
+  /** `trade` is an index into `trades`, or a record the trade stream does not carry. */
+  pairs?: Array<{ trade: number | RawTradeRecord; quote: RawQuoteRecord | null; relation: TradeQuoteEvidence['quoteRelation'] }>;
   malformed?: number;
   reportedCount?: number | null;
   semantics?: ProviderSemantics;
@@ -97,7 +98,7 @@ function sourceOf(spec: Spec): HistoricalOptionsSource {
       tradeQuotes: () => each(spec.pairs!.map((p) => ({
         ok: true as const,
         event: {
-          trade: buildTradeEvent(spec.trades[p.trade]!, sem),
+          trade: buildTradeEvent(typeof p.trade === 'number' ? spec.trades[p.trade]! : p.trade, sem),
           quote: p.quote === null ? null : buildQuoteEvent(p.quote, sem),
           quoteRelation: p.relation,
         },
@@ -129,7 +130,9 @@ function conforming(): Spec {
   return {
     trades,
     pairs: [0, 1, 2, 3].map((i) => ({ trade: i, quote: quoteRec(i, T0 + i * 1_000 - 5), relation: 'STRICTLY_BEFORE' as const })),
-    reportedCount: 9,
+    // The provider's count is of TRADE records — five here. It used to be 9,
+    // trades plus pairs, which only matched because the check summed them too.
+    reportedCount: 5,
   };
 }
 
@@ -148,11 +151,11 @@ const PERMISSIVE: DatasetRightsManifest = {
   sourceDocuments: ['https://example.test/hypothetical-terms'], verifiedAt: '2026-09-20',
 };
 
-async function gate(spec: Spec, manifest: DatasetRightsManifest | null = PERMISSIVE) {
+async function gate(spec: Spec, manifest: DatasetRightsManifest | null = PERMISSIVE, mode: 'PRIVATE_RESEARCH' | 'PUBLIC_COMMERCIAL' = 'PRIVATE_RESEARCH') {
   const src = sourceOf(spec);
   const a = await importHistorical(src, REQ, { allowedLatenessMs: 1_000 });
   const b = await importHistorical(src, REQ, { allowedLatenessMs: 1_000 });
-  return { report: a, verdict: smallSampleGate(a, b, manifest, TODAY) };
+  return { report: a, verdict: smallSampleGate(a, b, manifest, TODAY, mode) };
 }
 const statusOf = (checks: GateCheck[]) => Object.fromEntries(checks.map((c) => [c.id, c.status]));
 
@@ -181,7 +184,7 @@ test('manifests: the candidates are well-formed and grant nothing, and no quote 
   for (const name of ['databento-opra-historical.json', 'thetadata-opra-historical.json']) {
     const m: DatasetRightsManifest = JSON.parse(readFileSync(join(__dirname, '..', '..', 'research', 'manifests', name), 'utf8'));
     assert.deepEqual(manifestProblems(m, TODAY), [], name);
-    const verdict = importPermitted(m, TODAY);
+    const verdict = importPermitted(m, TODAY, 'PRIVATE_RESEARCH');
     assert.equal(verdict.allowed, false, `${name}: nothing was read, so nothing is permitted`);
     for (const [axis, f] of Object.entries(m.rights)) {
       assert.equal(f.quote, null, `${name}.${axis}: no primary document was read, so there are no words to quote`);
@@ -199,7 +202,7 @@ test('manifest: a download is not a permission (INV-RIGHTS-001)', () => {
   const problems = manifestProblems(hopeful, TODAY).join('\n');
   assert.match(problems, /persistRaw: PERMITTED needs the words/);
   assert.match(problems, /technical accessibility does not promote a rights classification/);
-  assert.equal(importPermitted(hopeful, TODAY).allowed, false);
+  assert.equal(importPermitted(hopeful, TODAY, 'PRIVATE_RESEARCH').allowed, false);
   assert.match(manifestProblems({ ...PERMISSIVE, rights: { ...PERMISSIVE.rights, fetch: { ...PERMISSIVE.rights.fetch, readAt: '2026-10-01' } } }, TODAY).join(' '),
     /not a real date on or before/, 'a reading that has not happened is not provenance');
 });
@@ -217,10 +220,12 @@ test('gate: each broken property fails exactly its own check', async () => {
   const cases: Array<[string, (s: Spec) => Spec, DatasetRightsManifest | null]> = [
     ['causal-quote-alignment', (s) => ({ ...s, pairs: s.pairs!.map((p, i) => i === 0 ? { ...p, relation: 'AT_OR_BEFORE' as const } : p) }), PERMISSIVE],
     ['provider-sequencing', (s) => ({ ...s, trades: s.trades.map((t, i) => i === 2 ? { ...t, providerSequence: '150' } : t) }), PERMISSIVE],
-    ['duplicate-handling', (s) => ({ ...s, trades: [...s.trades, { ...s.trades[1]!, price: 9 }], reportedCount: 10 }), PERMISSIVE],
+    ['duplicate-handling', (s) => ({ ...s, trades: [...s.trades, { ...s.trades[1]!, price: 9 }], reportedCount: 6 }), PERMISSIVE],
     ['raw-provenance', (s) => ({ ...s, trades: s.trades.map((t, i) => i === 1 ? { ...t, rawRecordRef: undefined } : t) }), PERMISSIVE],
     ['rights-metadata', (s) => s, null],
-    ['event-counts-reconcile', (s) => ({ ...s, reportedCount: 12 }), PERMISSIVE],
+    ['event-counts-reconcile', (s) => ({ ...s, reportedCount: 9 }), PERMISSIVE],
+    // A pair describing a trade the trade stream never sent shows nothing about alignment.
+    ['causal-quote-alignment', (s) => ({ ...s, pairs: [...s.pairs!, { trade: rec(50), quote: quoteRec(4, T0 + 50_000 - 5), relation: 'STRICTLY_BEFORE' as const }] }), PERMISSIVE],
     // A genuine conflict needs an encoding whose regular value is explicit, not a default.
     ['session-semantics', (s) => ({
       ...s, semantics: { ...VERIFIED, session: { ...VERIFIED.session, defaultValue: null } },
@@ -253,8 +258,43 @@ test('gate: an unreadable cancel code is two failures, because it is two problem
     ['session-semantics', 'code-semantics-verified']);
 });
 
+test('gate: a pair with no quote is reported, and is not an accounting failure', async () => {
+  // It used to be counted as received and accounted for nowhere, so a
+  // provider that sometimes has no pre-trade book failed event-counts for it.
+  const spec = conforming();
+  spec.pairs = [...spec.pairs!, { trade: 4, quote: null, relation: 'STRICTLY_BEFORE' }];
+  const { report, verdict } = await gate(spec);
+  assert.equal(report.tradeQuotes!.withoutQuote, 1);
+  assert.deepEqual(verdict.checks.filter((c) => c.status !== 'PASS'), []);
+});
+
+test('gate: a pair whose trade differs from the trade stream\'s record is caught', async () => {
+  // Same identity (provider sequence), different content: the pair's quote
+  // describes a trade that is not the one the log holds.
+  const spec = conforming();
+  spec.pairs = spec.pairs!.map((p, i) => i === 0 ? { ...p, trade: { ...rec(0), size: 999 } } : p);
+  const { report, verdict } = await gate(spec);
+  assert.equal(report.tradeQuotes!.tradeNotInStream, 1);
+  assert.deepEqual(verdict.checks.filter((c) => c.status !== 'PASS').map((c) => c.id), ['causal-quote-alignment']);
+});
+
+test('manifest: dates must exist, and the mode must be the one the terms were read for', async () => {
+  const withDate = (d: string): DatasetRightsManifest =>
+    ({ ...PERMISSIVE, rights: { ...PERMISSIVE.rights, fetch: { ...PERMISSIVE.rights.fetch, readAt: d } } });
+  assert.match(manifestProblems(withDate('2026-02-31'), TODAY).join(' '), /2026-02-31 is not a real date/,
+    'the shape of a date is not a date');
+  assert.deepEqual(manifestProblems(withDate('2026-02-28'), TODAY), []);
+  assert.match(manifestProblems({ ...PERMISSIVE, verifiedAt: 'soon' }, TODAY).join(' '), /verified date soon/);
+  assert.equal(importPermitted(PERMISSIVE, TODAY, 'PRIVATE_RESEARCH').allowed, true);
+  const commercial = importPermitted(PERMISSIVE, TODAY, 'PUBLIC_COMMERCIAL');
+  assert.equal(commercial.allowed, false);
+  assert.match(commercial.why.join(' '), /read for PRIVATE_RESEARCH, and this import runs under PUBLIC_COMMERCIAL/);
+  const { verdict } = await gate(conforming(), PERMISSIVE, 'PUBLIC_COMMERCIAL');
+  assert.deepEqual(verdict.checks.filter((c) => c.status !== 'PASS').map((c) => c.id), ['rights-metadata']);
+});
+
 test('gate: a rejected record is counted, not dropped', async () => {
-  const spec = { ...conforming(), malformed: 2, reportedCount: 11 };
+  const spec = { ...conforming(), malformed: 2, reportedCount: 7 };
   const { report, verdict } = await gate(spec);
   assert.equal(report.rejected.length, 2);
   assert.match(report.rejected[0]!.reason, /strike/);

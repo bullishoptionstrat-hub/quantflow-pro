@@ -105,8 +105,11 @@ export interface HistoricalOptionsSource {
   quotes?(request: HistoricalRequest): AsyncIterable<SourceItem<QuoteEvent>>;
   instrumentDefinitions?(request: HistoricalRequest): AsyncIterable<SourceItem<InstrumentDefinition>>;
   /**
-   * The count the provider itself reported for the request, when it reports
-   * one. The gate reconciles against it; a source that cannot say returns null.
+   * The number of TRADE records (reports and cancels) the provider itself
+   * reported for the request, when it reports one — the trade stream's count,
+   * not a total across quotes or pairs, which are separate requests. The gate
+   * reconciles the trade stream against it; a source that cannot say returns
+   * null.
    */
   providerReportedCount?(request: HistoricalRequest): Promise<number | null>;
 }

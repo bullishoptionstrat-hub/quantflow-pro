@@ -79,7 +79,7 @@ instances in `research/manifests/`) with eight axes: `fetch`, `persistRaw`,
 `retention`. It is separate from `rights.ts`, which answers DISPLAY and PERSIST
 for connectors this service runs; nothing here widens that registry.
 
-Three rules, enforced by `manifestProblems` and tested in
+Four rules, enforced by `manifestProblems` and `importPermitted` and tested in
 `historicalImport.test.ts`:
 
 1. **Unknown is `UNVERIFIED`.** Every axis starts there.
@@ -88,6 +88,10 @@ Three rules, enforced by `manifestProblems` and tested in
    licence, and a quote without a document or date is not evidence.
 3. **A successful download is not a permission** (INV-RIGHTS-001). No field
    can be set by a fetch; `importPermitted` reads only the manifest.
+4. **A manifest speaks for one business mode.** `importPermitted` takes the
+   mode the import runs under as a required argument, and refuses when it is
+   not the manifest's `intendedDeploymentMode`. Read dates and `verifiedAt`
+   must be calendar dates that exist, on or before today.
 
 | candidate | fetch | persist raw | persist normalised | research | training | export | redistribution | retention |
 |---|---|---|---|---|---|---|---|---|

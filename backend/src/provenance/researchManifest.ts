@@ -67,7 +67,17 @@ export interface DatasetRightsManifest {
   verifiedAt: string | null;
 }
 
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+/**
+ * A calendar date that exists, on or before `today`. The shape alone is not
+ * enough: `2026-02-31` matches `\d{4}-\d{2}-\d{2}` and is before any real
+ * today, so a regex waved it through as the date a document was read.
+ */
+function isRealPastDate(d: string, today: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d);
+  if (m === null) return false;
+  const t = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return new Date(t).toISOString().slice(0, 10) === d && d <= today;
+}
 
 /** Everything wrong with a manifest, rather than the first thing. */
 export function manifestProblems(m: DatasetRightsManifest, today: string): string[] {
@@ -82,7 +92,7 @@ export function manifestProblems(m: DatasetRightsManifest, today: string): strin
     if (f.quote !== null && (f.document === null || f.readAt === null)) {
       out.push(`${axis}: a quote with no document or read date is not evidence`);
     }
-    if (f.readAt !== null && (!ISO_DATE.test(f.readAt) || f.readAt > today)) {
+    if (f.readAt !== null && !isRealPastDate(f.readAt, today)) {
       out.push(`${axis}: read date ${f.readAt} is not a real date on or before ${today}`);
     }
     if (f.status === 'PERMITTED') {
@@ -96,15 +106,33 @@ export function manifestProblems(m: DatasetRightsManifest, today: string): strin
   }
   const anyPermitted = RIGHTS_AXES.some((a) => m.rights[a]?.status === 'PERMITTED');
   if (anyPermitted && m.verifiedAt === null) out.push('a manifest granting anything must say when it was verified');
+  if (m.verifiedAt !== null && !isRealPastDate(m.verifiedAt, today)) {
+    out.push(`verified date ${m.verifiedAt} is not a real date on or before ${today}`);
+  }
   return out;
 }
 
 /** The axes an import needs. Training, export and redistribution are separate decisions. */
 const IMPORT_AXES: readonly RightsAxis[] = ['fetch', 'persistRaw', 'persistNormalized', 'researchUse', 'retention'];
 
-export function importPermitted(m: DatasetRightsManifest | null, today: string): { allowed: boolean; why: string[] } {
+/**
+ * `mode` is the business mode the import would run under, and it is required:
+ * a manifest's permissions were read for its `intendedDeploymentMode`, and the
+ * same words can permit private research and refuse a commercial product —
+ * `rights.ts` already classifies Finnhub differently in the two. An optional
+ * parameter would let a caller that forgot it inherit the manifest's own
+ * answer for a mode nobody read the terms for.
+ */
+export function importPermitted(
+  m: DatasetRightsManifest | null,
+  today: string,
+  mode: BusinessMode,
+): { allowed: boolean; why: string[] } {
   if (m === null) return { allowed: false, why: ['no rights manifest for this dataset'] };
   const why = manifestProblems(m, today);
+  if (m.intendedDeploymentMode !== mode) {
+    why.push(`the manifest was read for ${m.intendedDeploymentMode}, and this import runs under ${mode}`);
+  }
   for (const axis of IMPORT_AXES) {
     const f = m.rights[axis];
     if (f !== undefined && f.status !== 'PERMITTED') why.push(`${axis}: ${f.status}`);

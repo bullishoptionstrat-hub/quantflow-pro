@@ -321,13 +321,18 @@ export function buildQuoteEvent(r: RawQuoteRecord, semantics: ProviderSemantics 
   nonNegative(r.ask ?? undefined, 'ask');
   nonNegative(r.bidSize ?? undefined, 'bid size');
   nonNegative(r.askSize ?? undefined, 'ask size');
+  // `null` is the only spelling of "not sent". A record parsed from JSON with
+  // the key simply absent arrives as `undefined`, which the type forbids and the
+  // runtime does not — and `bookStateOf` would then read a missing bid as a
+  // price (`undefined > ask` is false, so a one-sided book came out TWO_SIDED,
+  // and a record with neither side came out LOCKED).
   const draft: Omit<QuoteEvent, 'eventId'> = {
     ...commonOf(r, [], semantics),
     kind: 'QUOTE',
-    bid: r.bid,
-    ask: r.ask,
-    bidSize: r.bidSize,
-    askSize: r.askSize,
+    bid: r.bid ?? null,
+    ask: r.ask ?? null,
+    bidSize: r.bidSize ?? null,
+    askSize: r.askSize ?? null,
   };
   return { ...draft, eventId: eventIdOf(draft as EventDraft) };
 }

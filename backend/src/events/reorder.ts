@@ -62,6 +62,12 @@ export type Diagnostic =
   | { kind: 'SEQUENCE_GAP'; scope: string; from: string; to: string; count: string; detectedAt: number }
   | { kind: 'SEQUENCE_GAP_FILLED'; scope: string; sequence: string; at: number }
   | { kind: 'SEQUENCE_REPEATED'; scope: string; sequence: string; eventId: string; at: number }
+  /**
+   * Below the first sequence this buffer saw in the scope. It may be a repeat
+   * or a message from before the capture began; nothing here recorded that
+   * range, so calling it REPEATED would be a claim about messages never seen.
+   */
+  | { kind: 'SEQUENCE_BEFORE_BASELINE'; scope: string; sequence: string; baseline: string; eventId: string; at: number }
   /** The input was not in arrival order. Processing time does not run backwards. */
   | { kind: 'ARRIVAL_REGRESSION'; eventId: string; availableAt: number; processingTime: number };
 
@@ -117,6 +123,7 @@ interface OpenGap {
 }
 
 interface ScopeState {
+  baseline: bigint;
   highest: bigint;
   highestAvailableAt: number;
   /** Open gaps, inclusive ranges, ascending and disjoint. */
@@ -236,7 +243,7 @@ export class ReorderBuffer {
     const scope = e.sequenceScope;
     const st = this.scopes.get(scope);
     if (st === undefined) {
-      this.scopes.set(scope, { highest: seq, highestAvailableAt: e.availableAt, gaps: [] });
+      this.scopes.set(scope, { baseline: seq, highest: seq, highestAvailableAt: e.availableAt, gaps: [] });
       return;
     }
     if (seq === st.highest + 1n) {
@@ -256,6 +263,13 @@ export class ReorderBuffer {
       });
       st.highest = seq;
       st.highestAvailableAt = e.availableAt;
+      return;
+    }
+    if (seq < st.baseline) {
+      this.diags.push({
+        kind: 'SEQUENCE_BEFORE_BASELINE', scope, sequence: seq.toString(),
+        baseline: st.baseline.toString(), eventId: e.eventId, at: this.processingTime,
+      });
       return;
     }
     const i = st.gaps.findIndex((g) => seq >= g.from && seq <= g.to);

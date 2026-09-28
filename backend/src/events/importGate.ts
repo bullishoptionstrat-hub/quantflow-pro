@@ -29,14 +29,23 @@ import { isAtLeast } from './semantics';
 import type { SourceStatus } from './semantics';
 import { importPermitted } from '../provenance/researchManifest';
 import type { DatasetRightsManifest } from '../provenance/researchManifest';
+import type { BusinessMode } from '../provenance/rights';
+import { rawContentHashOf } from './eventId';
 
 export interface ImportReport {
   provider: string;
   datasetId: string;
   capabilities: SourceCapabilities;
   request: HistoricalRequest;
-  /** Items the source yielded, events and rejections together. */
+  /**
+   * Records that had to become an event or a rejection: every trade and quote
+   * item, and the quote of every pair that carried one. A pair's trade is not
+   * counted again — it is the trade stream's record, checked against it below
+   * — and a pair with no quote produces nothing to account for.
+   */
   received: number;
+  /** Trade records (reports and cancels) the trade stream yielded, rejections included. */
+  tradeRecords: number;
   rejected: Array<{ reason: string; rawRecordRef?: string }>;
   appended: number;
   duplicateIdentical: number;
@@ -49,7 +58,18 @@ export interface ImportReport {
   cancels: { total: number; resolved: number; unresolvedByOutcome: Record<Exclude<CancelOutcome, 'RESOLVED'>, number> };
   sessions: Record<SessionEvidence['normalized'], number>;
   sessionBases: Record<SessionEvidence['basis'], number>;
-  tradeQuotes: { total: number; strictlyBefore: number; otherRelation: number; withoutQuote: number } | null;
+  tradeQuotes: {
+    total: number;
+    strictlyBefore: number;
+    otherRelation: number;
+    withoutQuote: number;
+    /**
+     * Pairs whose trade is not the trade stream's record: absent from it, or
+     * present with different raw content. The pair's quote then describes a
+     * trade the log does not hold, and nothing about alignment is shown.
+     */
+    tradeNotInStream: number;
+  } | null;
   withRawRecordRef: number;
   synthetic: number;
   semanticsStatus: SourceStatus;
@@ -90,8 +110,10 @@ export async function importHistorical(
     if (item.ok) pairs.push(item.event);
     else rejected.push({ reason: item.reason, ...(item.rawRecordRef !== undefined ? { rawRecordRef: item.rawRecordRef } : {}) });
   }
-  // A pair's quote is an event like any other; its trade is already among the
-  // trades, and appending it again is the duplicate check doing its job.
+  // A pair's quote is an event like any other. Its trade must already be the
+  // trade stream's record; that is checked once the log exists, rather than
+  // appended here, where it would be counted as a re-delivery and hide the
+  // case that matters — a pair describing a trade the stream never sent.
   for (const p of pairs) if (p.quote !== null) events.push(p.quote);
 
   // Arrival order is availableAt order; a stable sort keeps the source's order
@@ -116,6 +138,12 @@ export async function importHistorical(
     else duplicateConflict++;
   }
   tally(buffer.flush());
+
+  const tradeNotInStream = pairs.filter((p) => {
+    const stored = log.get(p.trade.eventId);
+    return stored === undefined || rawContentHashOf(stored) !== rawContentHashOf(p.trade);
+  }).length;
+  const rejectedPairs = pairItems.filter((x) => !x.ok).length;
 
   const final = log.finalCorrected();
   const stored = log.events();
@@ -148,7 +176,8 @@ export async function importHistorical(
     datasetId: caps.datasetId,
     capabilities: caps,
     request,
-    received: tradeItems.length + quoteItems.length + pairItems.length,
+    received: tradeItems.length + quoteItems.length + pairs.filter((p) => p.quote !== null).length + rejectedPairs,
+    tradeRecords: tradeItems.length,
     rejected,
     appended,
     duplicateIdentical,
@@ -170,6 +199,7 @@ export async function importHistorical(
       strictlyBefore: pairs.filter((p) => p.quote !== null && p.quoteRelation === 'STRICTLY_BEFORE').length,
       otherRelation: pairs.filter((p) => p.quote !== null && p.quoteRelation !== 'STRICTLY_BEFORE').length,
       withoutQuote: pairs.filter((p) => p.quote === null).length,
+      tradeNotInStream,
     },
     withRawRecordRef: stored.filter((e) => e.rawRecordRef !== undefined).length,
     synthetic: stored.filter((e) => e.synthetic).length,
@@ -201,6 +231,7 @@ export function smallSampleGate(
   second: ImportReport,
   manifest: DatasetRightsManifest | null,
   today: string,
+  mode: BusinessMode,
 ): GateVerdict {
   const checks: GateCheck[] = [];
   const add = (id: string, status: CheckStatus, detail: string) => checks.push({ id, status, detail });
@@ -242,9 +273,10 @@ export function smallSampleGate(
 
   add('causal-quote-alignment',
     r.tradeQuotes === null || r.tradeQuotes.total === 0 ? 'NOT_ASSESSABLE'
-      : r.tradeQuotes.otherRelation > 0 ? 'FAIL' : 'PASS',
+      : r.tradeQuotes.otherRelation > 0 || r.tradeQuotes.tradeNotInStream > 0 ? 'FAIL' : 'PASS',
     r.tradeQuotes === null ? 'the source pairs no trades with quotes'
-      : `${r.tradeQuotes.strictlyBefore} strictly-before, ${r.tradeQuotes.otherRelation} otherwise, ${r.tradeQuotes.withoutQuote} with no quote`);
+      : `${r.tradeQuotes.strictlyBefore} strictly-before, ${r.tradeQuotes.otherRelation} otherwise, ` +
+        `${r.tradeQuotes.withoutQuote} with no quote, ${r.tradeQuotes.tradeNotInStream} describing a trade the trade stream does not hold`);
 
   add('provider-sequencing',
     r.sequenced === 0 ? 'NOT_ASSESSABLE' : r.openGaps.length > 0 ? 'FAIL' : 'PASS',
@@ -258,7 +290,7 @@ export function smallSampleGate(
   add('raw-provenance', r.withRawRecordRef === r.appended && r.appended > 0 ? 'PASS' : 'FAIL',
     `${r.withRawRecordRef} of ${r.appended} events point back to their raw record`);
 
-  const rights = importPermitted(manifest, today);
+  const rights = importPermitted(manifest, today, mode);
   add('rights-metadata', rights.allowed ? 'PASS' : 'FAIL',
     rights.allowed ? 'the manifest grants every axis an import needs' : rights.why.join('; '));
 
@@ -266,12 +298,20 @@ export function smallSampleGate(
     first.fingerprint === second.fingerprint ? 'two imports produced identical events, states and resolutions'
       : 'a second import of the same request produced a different tape');
 
+  // Two reconciliations, of two different things: every record we received is
+  // accounted for inside this import, and the trade stream holds the number of
+  // trade records the provider says the request covers. The provider's count
+  // is compared with the TRADE stream alone — quotes and pairs are other
+  // requests to a vendor, and summing them in made the check fit whatever
+  // this code happened to fetch rather than what the vendor reported.
   const accounted = r.appended + r.duplicateIdentical + r.duplicateConflict + r.rejected.length;
-  const reconciles = accounted === r.received && (r.providerReportedCount === null || r.providerReportedCount === r.received);
+  const internal = accounted === r.received;
+  const external = r.providerReportedCount === null || r.providerReportedCount === r.tradeRecords;
   add('event-counts-reconcile',
-    !reconciles ? 'FAIL' : r.providerReportedCount === null ? 'NOT_ASSESSABLE' : 'PASS',
+    !internal || !external ? 'FAIL' : r.providerReportedCount === null ? 'NOT_ASSESSABLE' : 'PASS',
     `received ${r.received} = appended ${r.appended} + duplicates ${r.duplicateIdentical + r.duplicateConflict} + rejected ${r.rejected.length}` +
-    (r.providerReportedCount === null ? '; the provider reported no count to reconcile against' : `; provider reported ${r.providerReportedCount}`));
+    (r.providerReportedCount === null ? '; the provider reported no count to reconcile against'
+      : `; provider reported ${r.providerReportedCount} trade records, the trade stream yielded ${r.tradeRecords}`));
 
   add('code-semantics-verified', isAtLeast(r.semanticsStatus, 'PRIMARY_VERIFIED') ? 'PASS' : 'FAIL',
     `the tape was read through rules whose weakest standing is ${r.semanticsStatus}`);

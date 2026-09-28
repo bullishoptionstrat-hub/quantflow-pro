@@ -16,7 +16,7 @@ import type { RawQuoteRecord, RawTradeRecord } from '../src/events/build';
 import { EventIdentityError, EventLog, reportingOrder } from '../src/events/eventLog';
 import { ReorderBuffer, canonicalOrder } from '../src/events/reorder';
 import type { Emission } from '../src/events/reorder';
-import { causalQuoteFor } from '../src/events/causalQuote';
+import { bookStateOf, causalQuoteFor } from '../src/events/causalQuote';
 import { LookaheadEvidenceError, RevisionLedger, reviseSignal } from '../src/events/signalRevision';
 import { OPRA_LAST_SALE_CODES, isAtLeast, weakestStatus } from '../src/events/semantics';
 import type { MarketEvent, TradeCancelEvent, TradeReportEvent } from '../src/events/types';
@@ -134,6 +134,19 @@ test('reorder: sequence repeats and arrival regressions are reported, not absorb
   assert.ok(buf.diagnostics().some((d) => d.kind === 'SEQUENCE_REPEATED'));
   assert.ok(buf.diagnostics().some((d) => d.kind === 'ARRIVAL_REGRESSION'));
   assert.throws(() => new ReorderBuffer({ allowedLatenessMs: -1 }), RangeError);
+});
+
+test('reorder: a sequence below the first one seen is not called a repeat', () => {
+  // The buffer saw 10 first. 7 was never observed, so "repeated" would be a
+  // claim about a message nothing here recorded; it may be one from before
+  // the capture began.
+  const buf = new ReorderBuffer({ allowedLatenessMs: 1_000 });
+  buf.push(trade({ providerSequence: '10' }));
+  buf.push(trade({ providerSequence: '7', price: 2 }));
+  const kinds = buf.diagnostics().map((d) => d.kind);
+  assert.ok(kinds.includes('SEQUENCE_BEFORE_BASELINE'));
+  assert.ok(!kinds.includes('SEQUENCE_REPEATED'));
+  assert.ok(!kinds.includes('SEQUENCE_GAP'), 'nothing before the baseline is claimed missing');
 });
 
 // ─── Identity ────────────────────────────────────────────────────────────────
@@ -381,6 +394,18 @@ test('builder: a record that cannot describe a trade is refused with its reason'
   assert.equal(trade({ price: 0 }).price, 0, 'a zero price is data (a cabinet trade), not a defect');
   const q: RawQuoteRecord = { ...base(), bid: null, ask: 2.2, bidSize: null, askSize: 10 };
   assert.equal(buildQuoteEvent(q).bid, null, 'a missing bid stays missing');
+  // The same record as an adapter parsing JSON delivers it: the key is simply
+  // absent. The typed case above could never catch this — the type forbids
+  // `undefined`, JSON.parse does not — and the book read the hole as a price.
+  const absent = JSON.parse(JSON.stringify({ ...base(), ask: 2.2, askSize: 10 })) as RawQuoteRecord;
+  const one = buildQuoteEvent(absent);
+  assert.equal(one.bid, null);
+  assert.equal(one.bidSize, null);
+  assert.equal(bookStateOf(one), 'ONE_SIDED');
+  const none = JSON.parse(JSON.stringify(base())) as RawQuoteRecord;
+  assert.equal(bookStateOf(buildQuoteEvent(none)), 'EMPTY', 'no side at all is an empty book, not a locked one');
+  assert.equal(buildQuoteEvent(absent).eventId, buildQuoteEvent({ ...absent, bid: null, bidSize: null }).eventId,
+    'absent and null are one record');
 });
 
 // ─── Causal quotes and revisions ─────────────────────────────────────────────

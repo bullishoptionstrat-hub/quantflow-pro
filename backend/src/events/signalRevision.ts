@@ -109,7 +109,14 @@ const CONSEQUENCE: Record<RevisionStatus, ResearchConsequence['finalTapeStudies'
 export interface RevisionInputs {
   /** LATE_EVENT emissions from the reorder buffer. */
   lateEvents?: readonly MarketEvent[];
-  /** Unfilled gaps from the reorder buffer. */
+  /**
+   * Gaps unfilled AS OF THE VIEW'S HORIZON — `buffer.gapsOpenAt(view.asOf)`,
+   * or `buffer.openGaps()` for FINAL_CORRECTED. Passing today's `openGaps()`
+   * to an as-known view drops every gap filled after that view, and a signal
+   * judged before the fill arrived then reads as FINAL when it was not: the
+   * flattering direction. Gaps revealed after the horizon are filtered here;
+   * fills cannot be, because a GapWindow does not carry them.
+   */
   openGaps?: readonly GapWindow[];
 }
 
