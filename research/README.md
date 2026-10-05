@@ -46,3 +46,19 @@ ET" is implemented from its own stated reason, "so the M15 exit falls inside the
 underlying's regular session", with §C's one-second latency included, so a
 decision at exactly 15:45:00 (exit 16:00:01) is out. Marks, controls and
 meta-events stay in their own modules.
+
+**2026-10-05.** §C's marks are code: `backend/src/research/h001Marks.ts`
+measures `r = 10,000 × ln(M(t_exit) / M(t_entry))` from a signal's
+`decisionAt` or a control's own availableAt, with the entry quote both stamped
+and known by `t_entry` and no older than 2 s, the exit on the final tape, and
+the latest book taken as the book (one-sided, crossed or disagreeing books
+refuse the mark rather than fall back). §C's latency and horizon now have one
+home, which the eligibility window reads.
+
+**Open, and not decided in code:** §C bounds the entry quote's age and states
+**no bound for the exit**. A feed that goes quiet lets a quote from the entry
+minute stand in for `M(t_exit)`, and the return reads as flat. The age is
+returned on every measurement (`exitAgeMs`) rather than refused, because
+adding a bound is amending a preregistered rule. No data has been accessed for
+H-001-v2, so the hypothesis may still be amended in place (with its hash pin
+updated in the same diff) — that is the operator's decision to make.
