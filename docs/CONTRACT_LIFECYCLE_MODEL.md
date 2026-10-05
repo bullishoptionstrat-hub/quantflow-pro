@@ -73,9 +73,8 @@ answers.
   moved) and changes every SPX monthly's DTE and score. It is a separate,
   behaviour-changing step, and the directive's exit gate asks for the registry,
   not for the rescoring.
-- **Research eligibility** does not yet refuse a print stamped after its
-  contract's last trading moment. It cannot touch H-001-v2's sample, whose
-  decision window closes at 15:45 ET — before the one SPY ambiguity (16:00 or
-  16:15 on expiration day) — and the rule is written into H-001-v2's exclusions
-  anyway, so it is applied whatever the window.
+- **Research eligibility** now refuses a print stamped after its contract's
+  last trading moment: `research/h001Eligibility.ts` applies H-001-v2 §L,
+  including `contractSessionAt`, and a lifecycle nobody can state (a holiday
+  "expiry", a date past coverage) is `UNKNOWN` and kept out of the sample.
 - The UI does not show lifecycle state.

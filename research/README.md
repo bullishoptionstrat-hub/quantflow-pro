@@ -34,3 +34,15 @@ by. A pre-registration written after the first look is not a pre-registration.
 - `SEARCH_LEDGER.csv` — every registered version, superseded ones included.
 - `manifests/` — the rights a research dataset carries, per axis. Both
   candidates are UNVERIFIED on every axis; nothing may be imported against them.
+
+**2026-09-28.** H-001-v2's §L eligibility rules are code:
+`backend/src/research/h001Eligibility.ts`, written from the frozen text before
+any data exists, so an exclusion cannot be tuned to a result. It answers
+`INCLUDED` (with group A or B), `EXCLUDED`, or `UNKNOWN` — a rule that could not
+be established keeps a candidate out and is counted apart from a failure — and
+it reports every failing rule, not the first. One reading is recorded here
+because the hypothesis file is pinned and cannot carry it: §L's "09:30 to 15:45
+ET" is implemented from its own stated reason, "so the M15 exit falls inside the
+underlying's regular session", with §C's one-second latency included, so a
+decision at exactly 15:45:00 (exit 16:00:01) is out. Marks, controls and
+meta-events stay in their own modules.
