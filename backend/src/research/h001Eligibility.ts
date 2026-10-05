@@ -41,15 +41,16 @@ import { sessionOn } from '../flow-engine/calendar';
 import { importPermitted } from '../provenance/researchManifest';
 import type { DatasetRightsManifest } from '../provenance/researchManifest';
 import type { BusinessMode } from '../provenance/rights';
+// §C's latency and horizon have one home, the module that measures with them:
+// a decision window computed from one copy and a return from another would be
+// free to disagree about when the exit is.
+import { H001_ENTRY_LATENCY_MS, H001_HORIZON_MS } from './h001Marks';
+export { H001_ENTRY_LATENCY_MS, H001_HORIZON_MS };
 
 /** §L: the underlying. */
 export const H001_UNDERLYING = 'SPY';
 /** §L: premium ≥ $50,000. */
 export const H001_PREMIUM_FLOOR = 50_000;
-/** §C: t_entry = decisionAt + 1 s. */
-export const H001_ENTRY_LATENCY_MS = 1_000;
-/** §C: t_exit = t_entry + 15 min, the only primary endpoint (§K). */
-export const H001_HORIZON_MS = 15 * 60_000;
 
 export type H001Group = 'A' | 'B';
 export type H001Verdict = 'INCLUDED' | 'EXCLUDED' | 'UNKNOWN';
