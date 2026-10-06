@@ -62,3 +62,23 @@ returned on every measurement (`exitAgeMs`) rather than refused, because
 adding a bound is amending a preregistered rule. No data has been accessed for
 H-001-v2, so the hypothesis may still be amended in place (with its hash pin
 updated in the same diff) — that is the operator's decision to make.
+
+**2026-10-06.** The decision rule is code: `backend/src/research/h001Verdict.ts`
+turns the matched differences into a §F verdict — day-clustered bootstrap
+(10,000 replicates, seed 20260927), the §E precision target, the §G 20%
+unmatched rule, both §D fragility checks, the §F table and the §K conditions.
+Five readings it had to make, each open to challenge before any data is read:
+
+- **R1** "Percentile interval" is computed with type-7 linear interpolation.
+- **R2** When the primary interval excludes zero above but Δ_AB's does not, the
+  verdict is `NOT SUPPORTED` (the §F "otherwise" row), with the unmet condition
+  named.
+- **R3** Without a truth set, every claim-bearing verdict — including
+  `CONTRARY`, `PRACTICALLY NEGLIGIBLE` and `NOT SUPPORTED` — becomes
+  `INCONCLUSIVE`, with the would-be verdict kept as `uncappedVerdict`. A
+  classifier of unknown accuracy can hide an effect as easily as fake one.
+  `DESCRIPTIVE` makes no claim and is not capped.
+- **R4** Leave-one-day-out re-runs the same seeded bootstrap without the day;
+  the weekly bootstrap clusters by Monday-start calendar week.
+- **R5** §D's CR2 cross-check "decides nothing" and is not implemented; a report
+  built on this module must add it or say it is absent.
