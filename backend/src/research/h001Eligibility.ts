@@ -120,8 +120,11 @@ export interface H001Context {
  * fifteen minutes: a decision at exactly 15:45:00 exits at 16:00:01, which the
  * stated reason excludes. Both bounds come off the calendar, never a constant,
  * so a half day is 12:45 without a special case.
+ *
+ * Exported because §G's controls are "measured the same way" and so must
+ * exit inside the same session: one window, not two copies of it.
  */
-function decisionWindow(decisionAt: number): { ok: boolean; unknown?: string; why: string } {
+export function h001DecisionWindow(decisionAt: number): { ok: boolean; unknown?: string; why: string } {
   const date = marketDateOf(decisionAt);
   if (date === null) return { ok: false, unknown: 'the decision time cannot be read in the market timezone', why: '' };
   const s = sessionOn(date);
@@ -182,7 +185,7 @@ export function h001Eligibility(c: H001Candidate, ctx: H001Context): H001Eligibi
     if (e.synthetic) fail('synthetic', `${e.eventId} is synthetic`);
   }
 
-  const w = decisionWindow(c.decisionAt);
+  const w = h001DecisionWindow(c.decisionAt);
   if (w.unknown !== undefined) unknown('decision-window', w.unknown);
   else if (!w.ok) fail('decision-window', w.why);
 
