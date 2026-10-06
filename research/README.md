@@ -82,3 +82,34 @@ Five readings it had to make, each open to challenge before any data is read:
   the weekly bootstrap clusters by Monday-start calendar week.
 - **R5** §D's CR2 cross-check "decides nothing" and is not implemented; a report
   built on this module must add it or say it is absent.
+
+**2026-10-06.** §G's primary control is code: `backend/src/research/h001Controls.ts`
+draws up to five C controls per A meta-event, without replacement, seed
+20260927, from SPY call executions on the final tape that belong to no A or B
+meta-event and match exactly on day, hour, DTE, moneyness and premium — and
+emits the `primary` differences and `unmatchedA` count `h001Verdict.ts` reads.
+Seven readings it had to make, each open to challenge before any data is read:
+
+- **M1** The "60-minute ET bucket" is the ET clock hour of the anchor
+  (10:00–10:59), not a session-anchored hour (09:30–10:29).
+- **M2** DTE is whole calendar days from the anchor's market date to the expiry
+  date, so `{0}` means "expires today".
+- **M3** Every bucket is lower-inclusive — the premium row's "≥$1M" fixes the
+  convention, and one convention is used on every axis.
+- **M4** "The causal SPY midpoint" is the latest SPY quote stamped and known by
+  the anchor, no older than 2 s (§H's rule and bound). None: no key, no match.
+- **M5** An A meta-event is keyed by its first signal (the one §B measures it
+  from): contract, cluster premium, decisionAt. A control is keyed by its own
+  contract, `price × size × 100` and availableAt. The asymmetry — a signal's
+  cluster premium against one execution's premium — is §G's text, not a choice.
+- **M6** "Without replacement" is within one A meta-event's draw; an execution
+  may control several A meta-events. One PRNG stream is consumed in A order
+  (date, start, id) with each pool ordered by event id, so the draw is a
+  function of the data alone.
+- **M7** "Measured the same way" means every §L rule that does not define
+  group A — final tape and ACTIVE, detector-admitted, regular session, contract
+  open, availability basis, not synthetic, the same decision window, both §C
+  marks. Executions failing any are removed **before** the draw.
+
+Not implemented, and a report must say so: the 30-minute realised-volatility
+balance diagnostic (decides nothing) and the D control (secondary).
