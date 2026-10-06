@@ -216,6 +216,29 @@ function deltaAB(
   };
 }
 
+/**
+ * A secondary estimand's estimate and day-clustered 95% interval — Δ_AD, or
+ * any other §K calls secondary. The same bootstrap as the primary (days
+ * resampled, same seed, same replicates), and nothing more: no precision
+ * target, no fragility check, no verdict. §K: a secondary estimand supports no
+ * claim, so this returns numbers and nothing that reads as a decision.
+ */
+export function h001SecondaryInterval(
+  obs: readonly Observation[], opts: { replicates?: number } = {},
+): { estimateBp: number | null; ci95: Interval | null; n: { observations: number; days: number } } {
+  const clusters = clustersOf(obs, (d) => d);
+  const n = { observations: obs.length, days: clusters.size };
+  if (obs.length === 0) return { estimateBp: null, ci95: null, n };
+  const estimateBp = obs.reduce((s, o) => s + o.valueBp, 0) / obs.length;
+  // One day cannot be resampled into anything but itself.
+  if (clusters.size < 2) return { estimateBp, ci95: null, n };
+  // Days in date order, as the primary does, so identical observations give an
+  // identical interval rather than one that depends on input order.
+  const days = [...clusters.keys()].sort().map((k) => clusters.get(k)!);
+  const means = bootstrapMeans(days, opts.replicates ?? H001_BOOTSTRAP_REPLICATES, H001_BOOTSTRAP_SEED);
+  return { estimateBp, ci95: intervalOf(means, 0.95), n };
+}
+
 // ─── The decision ────────────────────────────────────────────────────────────
 
 export interface H001Options {
