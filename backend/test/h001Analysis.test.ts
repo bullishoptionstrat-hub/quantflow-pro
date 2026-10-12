@@ -18,7 +18,7 @@ import { reviseSignal } from '../src/events/signalRevision';
 import type { DatasetRightsManifest, RightsFact } from '../src/provenance/researchManifest';
 import type { UnderlyingQuote } from '../src/research/h001Marks';
 import { h001Return } from '../src/research/h001Marks';
-import { runH001Analysis, H001_ABSENT } from '../src/research/h001Analysis';
+import { runH001Analysis, analyseH001, H001_ABSENT, H001_SENSITIVITY_PREMIUM_FLOOR } from '../src/research/h001Analysis';
 import { h001Cr2Interval } from '../src/research/h001Cr2';
 import type { H001Signal } from '../src/research/h001Analysis';
 
@@ -95,7 +95,7 @@ function assemble(built: Built[], controls: TradeReportEvent[]) {
   return { tape, signals };
 }
 
-function fixture() {
+function fixture(extra: (day: string) => Built[] = () => []) {
   const built: Built[] = [];
   const controls: TradeReportEvent[] = [];
   for (const day of DAYS) {
@@ -113,6 +113,7 @@ function fixture() {
       signal(`${day}-late`, day, 15, 50),
       // X3: marks are the signal's own — this one decides inside the quote outage.
       signal(`${day}-gap`, day, 13, 0),
+      ...extra(day),
     );
     // Six genuine controls in the 10:00 hour with a1's key.
     for (let i = 0; i < 6; i++) controls.push(trade(day, ET(day, 10, 20 + i * 5)));
@@ -203,6 +204,47 @@ test('the CR2 cross-check is computed on the primary differences, and the verdic
   assert.ok(Math.abs(report.cr2.estimateBp! - report.primary.estimateBp!) < 1e-9, 'same estimand as the primary');
   assert.equal(report.cr2.decides, false);
   assert.ok(!report.absent.some((a) => a.item.includes('CR2')), 'computed, so no longer listed absent');
+});
+
+test('§I $100k floor: the pipeline re-run on the candidates that clear it, meta-events re-formed (S1, S2)', () => {
+  assert.equal(H001_SENSITIVITY_PREMIUM_FLOOR, 100_000);
+  // A $70k A signal at 10:02 opens the 10:00 window in the primary, absorbing
+  // a1; under the floor it is gone and a1 opens the window itself.
+  const f = fixture((day) => [signal(`${day}-small`, day, 10, 2, { totalPremium: 70_000 }, { price: 1.75 })]);
+  const args = { tape: f.tape, quotes: QUOTES, ctx: CTX, truthSetAvailable: false, replicates: 400 };
+  const report = runH001Analysis({ ...args, signals: f.signals });
+  const sens = report.sensitivities.premiumFloor;
+  assert.equal(sens.floor, 100_000);
+  assert.equal(sens.belowFloor, 2);
+  assert.deepEqual(report.eligibility.included, { A: 8, B: 2 }, 'the primary keeps them: §L\'s floor is $50k');
+  assert.deepEqual(sens.included, { A: 6, B: 2 });
+  const starts = report.metaEvents.filter((m) => m.group === 'A').map((m) => m.metaEventId);
+  assert.ok(starts.includes('A:2026-03-10-small'), starts.join(' '));
+  assert.ok(!starts.includes('A:2026-03-10-a1'), 'a1 is absorbed in the primary');
+
+  // S2: each half is exactly the core pipeline on its own inputs.
+  const kept = f.signals.filter((s) => s.totalPremium >= 100_000);
+  const direct = analyseH001({ ...args, signals: kept });
+  assert.deepEqual(sens.primary, direct.primary);
+  assert.deepEqual(sens.cr2, direct.cr2);
+  assert.deepEqual(sens.metaEvents, { A: 4, B: 2 });
+  assert.equal(sens.unmatchedA, direct.controls.unmatchedA);
+  assert.equal(sens.decides, false);
+  const { sensitivities, ...rest } = report;
+  void sensitivities;
+  assert.deepEqual(rest, analyseH001({ ...args, signals: f.signals }), 'the primary is computed without reference to any sensitivity');
+  assert.ok(!report.absent.some((a) => a.item.includes('$100k')), 'computed, so no longer listed absent');
+});
+
+test('§I $100k floor on a sample that already clears it: the sensitivity equals the primary', () => {
+  // a3 at exactly $100,000: "≥ $100k" keeps the boundary, as §L's "≥ $50,000" does.
+  const f = fixture();
+  const signals = f.signals.map((s) => (s.signalId.endsWith('-a3') ? { ...s, totalPremium: 100_000 } : s));
+  const report = runH001Analysis({ signals, tape: f.tape, quotes: QUOTES, ctx: CTX, truthSetAvailable: false, replicates: 400 });
+  const sens = report.sensitivities.premiumFloor;
+  assert.equal(sens.belowFloor, 0);
+  assert.deepEqual(sens.primary, report.primary);
+  assert.deepEqual(sens.cr2, report.cr2);
 });
 
 test('the answer is a function of the data, not of the order the signals were listed in', () => {

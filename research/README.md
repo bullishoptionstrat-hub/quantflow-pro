@@ -169,8 +169,9 @@ Five readings it had to make, each open to challenge before any data is read:
   classification".
 
 The report carries `absent`: every diagnostic the frozen text names and this
-code does not compute (§G volatility balance, §I sensitivities, §J as-known
-secondary, §K's H1/D1; §D's CR2 until 2026-10-12). All of them decide nothing, so the verdict is
+code does not compute (§G volatility balance, §I's staleness sensitivities,
+§J as-known secondary, §K's H1/D1; §D's CR2 and §I's $100k floor until
+2026-10-12). All of them decide nothing, so the verdict is
 complete without them; the report is not, and says so.
 
 **2026-10-12.** §D's CR2 cross-check is code: `backend/src/research/h001Cr2.ts`,
@@ -192,4 +193,29 @@ of the general matrix formula. Two readings:
 - **R7** Fewer than two days gives no interval. One cluster has no
   between-day variation to estimate, which is the same floor the bootstrap
   uses.
+
+**2026-10-12.** §I's $100k premium-floor sensitivity is code. The report's
+`sensitivities.premiumFloor` re-runs the whole pipeline on only the candidates
+whose premium is at least $100,000. It reports the counts, the verdict and the
+CR2 interval, and it carries `decides: false`. A test holds that the primary
+part of the report is byte-identical to the pipeline run alone. A sensitivity
+that could move the primary would be a second primary analysis. Two readings:
+
+- **S1** The floor replaces §L's $50k at the candidate step, so meta-events are
+  re-formed. A $70k signal that opened a window no longer opens it; the next
+  qualifying signal does. The $70k signal's prints may then enter the C pool,
+  but they can never match a control slot: every surviving A meta-event's
+  premium bucket is at least $100k, and a print's premium cannot exceed its
+  cluster's.
+- **S2** A sensitivity is the whole pipeline, including the controls, the
+  verdict rule and the §K cap, so its verdict can be compared with the
+  primary's.
+
+**Still absent, and why.** The §I staleness bounds of 1 s and 5 s are §H's: the
+causal-NBBO age used when the engine *classifies* a print, which happens before
+a signal exists. The composer receives signals that are already classified, so
+re-running at 1 s or 5 s needs signal sets formed under those bounds as input.
+That is a question of how the data is supplied, not something the composer can
+compute. §C's entry-mark bound is also 2 s, but it is a different rule; §I's
+section is classification robustness, so it is not read as §C's.
 
