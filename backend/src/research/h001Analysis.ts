@@ -33,6 +33,21 @@
  *   X5  "Not part of any A or B meta-event" (§G) is the evidence of every
  *       signal absorbed into one — not only each meta-event's first signal.
  *
+ * §I's sensitivities are re-runs of this same pipeline on changed inputs,
+ * reported beside the primary and deciding nothing (§I: "reported always,
+ * deciding nothing"). Two more readings, for the $100k premium floor:
+ *
+ *   S1  The floor replaces §L's $50k at the candidate step, so meta-events are
+ *       re-formed from the signals that clear it — a $70k signal that opened
+ *       a window no longer opens it. Its prints stop being "part of any A or
+ *       B meta-event" and so may enter the C pool; they can never match,
+ *       because every surviving A meta-event's premium bucket is ≥ $100k and
+ *       a print's premium cannot exceed its cluster's.
+ *   S2  A sensitivity is the whole pipeline — controls, verdict rule, §K cap —
+ *       so its verdict is comparable with the primary's. It is labelled, it
+ *       carries `decides: false`, and the primary is computed without
+ *       reference to it, which a test holds.
+ *
  * What the report does NOT contain is listed on it, in `absent`, because a
  * report that is silent about a missing diagnostic reads as one that ran it.
  */
@@ -81,7 +96,6 @@ export interface H001MetaEventRow {
 export const H001_ABSENT: ReadonlyArray<{ item: string; section: string; decides: boolean }> = [
   { item: 'trailing 30-minute realised-volatility balance of A versus C (SMD > 0.1 flagged)', section: '§G', decides: false },
   { item: 'sensitivity: staleness bounds of 1 s and 5 s', section: '§I', decides: false },
-  { item: 'sensitivity: a $100k premium floor', section: '§I', decides: false },
   { item: 'sensitivity and §J secondary: the as-known replay with cancelled trades included', section: '§I, §J', decides: false },
   { item: 'exploratory endpoints H1 and D1', section: '§K', decides: false },
 ];
@@ -105,8 +119,27 @@ export interface H001Report {
     /** Δ_AD — secondary, decides nothing (§K). */
     deltaAD: { estimateBp: number | null; ci95: Interval | null; n: { observations: number; days: number } };
   };
+  sensitivities: {
+    premiumFloor: H001Sensitivity & { floor: number; belowFloor: number };
+  };
   absent: typeof H001_ABSENT;
 }
+
+/** §I: one sensitivity re-run, reported beside the primary. */
+export interface H001Sensitivity {
+  included: { A: number; B: number };
+  metaEvents: { A: number; B: number };
+  unmatchedA: number;
+  primary: H001Result;
+  cr2: H001Cr2Result;
+  decides: false;
+}
+
+/** §I: the alternative premium floor. */
+export const H001_SENSITIVITY_PREMIUM_FLOOR = 100_000;
+
+/** The pipeline without its sensitivities — what the primary is, and what each sensitivity re-runs. */
+export type H001Core = Omit<H001Report, 'sensitivities'>;
 
 /** X4: the contract of a single-leg signal. */
 function contractOf(s: H001Signal): { expiry: string; strike: number } {
@@ -117,6 +150,34 @@ function contractOf(s: H001Signal): { expiry: string; strike: number } {
 }
 
 export function runH001Analysis(input: H001AnalysisInput): H001Report {
+  const core = analyseH001(input);
+  // S1: the floor is applied to candidates, before §L and §B.
+  const floor = H001_SENSITIVITY_PREMIUM_FLOOR;
+  const kept = input.signals.filter((s) => Number.isFinite(s.totalPremium) && s.totalPremium >= floor);
+  const p = analyseH001({ ...input, signals: kept });
+  return {
+    ...core,
+    sensitivities: {
+      premiumFloor: { floor, belowFloor: input.signals.length - kept.length, ...sensitivityOf(p) },
+    },
+    absent: core.absent,
+  };
+}
+
+function sensitivityOf(r: H001Core): H001Sensitivity {
+  const count = (g: 'A' | 'B') => r.metaEvents.filter((m) => m.group === g).length;
+  return {
+    included: r.eligibility.included,
+    metaEvents: { A: count('A'), B: count('B') },
+    unmatchedA: r.controls.unmatchedA,
+    primary: r.primary,
+    cr2: r.cr2,
+    decides: false,
+  };
+}
+
+/** The primary pipeline. Exported so a test can hold the primary to it; a study calls `runH001Analysis`. */
+export function analyseH001(input: H001AnalysisInput): H001Core {
   // §L, with X3's marks.
   const rows: H001Eligibility[] = [];
   const included = { A: [] as H001Signal[], B: [] as H001Signal[] };
