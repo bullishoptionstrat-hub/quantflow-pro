@@ -19,6 +19,7 @@ import type { DatasetRightsManifest, RightsFact } from '../src/provenance/resear
 import type { UnderlyingQuote } from '../src/research/h001Marks';
 import { h001Return } from '../src/research/h001Marks';
 import { runH001Analysis, H001_ABSENT } from '../src/research/h001Analysis';
+import { h001Cr2Interval } from '../src/research/h001Cr2';
 import type { H001Signal } from '../src/research/h001Analysis';
 
 // Two EDT weekdays: 14:00Z is 10:00 ET.
@@ -194,6 +195,16 @@ test('Δ_AB is built from the meta-event returns, and Δ_AD from one clock draw 
   assert.ok(report.clock.deltaAD.ci95 !== null);
 });
 
+test('the CR2 cross-check is computed on the primary differences, and the verdict ignores it', () => {
+  const { report } = run();
+  assert.deepEqual(report.cr2, h001Cr2Interval(report.controls.matches
+    .filter((m) => m.status === 'MATCHED').map((m) => ({ date: m.date, valueBp: m.differenceBp! }))));
+  assert.equal(report.cr2.n.observations, report.primary.n.metaEvents);
+  assert.ok(Math.abs(report.cr2.estimateBp! - report.primary.estimateBp!) < 1e-9, 'same estimand as the primary');
+  assert.equal(report.cr2.decides, false);
+  assert.ok(!report.absent.some((a) => a.item.includes('CR2')), 'computed, so no longer listed absent');
+});
+
 test('the answer is a function of the data, not of the order the signals were listed in', () => {
   const f = fixture();
   const args = { tape: f.tape, quotes: QUOTES, ctx: CTX, truthSetAvailable: false, replicates: 400 };
@@ -210,7 +221,7 @@ test('the report lists what it did not compute, and the absent items decide noth
   const { report } = run();
   assert.equal(report.absent, H001_ABSENT);
   const sections = report.absent.map((a) => a.section).join(' ');
-  for (const s of ['§G', '§D', '§I', '§J', '§K']) assert.ok(sections.includes(s), s);
+  for (const s of ['§G', '§I', '§J', '§K']) assert.ok(sections.includes(s), s);
   assert.ok(report.absent.every((a) => !a.decides), 'an absent item that decides would make the verdict incomplete, not merely the report');
 });
 
