@@ -254,6 +254,7 @@ test('§G balance is computed on the matched set the verdict reads, from each un
   // a1 on each day is matched with five controls; a3 is unmatched and out (V4).
   assert.equal(report.balance.n.pairs, 2);
   assert.equal(report.balance.n.controls, 10);
+  assert.ok(report.balance.smd !== null, 'the fixture reaches a real SMD, not the null branch');
   const a1 = report.controls.matches.find((m) => m.metaEventId === 'A:2026-03-10-a1')!;
   assert.equal(a1.anchor, report.metaEvents.find((m) => m.metaEventId === a1.metaEventId)!.startsAt);
   assert.ok(a1.controls.every((c) => c.anchor !== a1.anchor), 'controls are measured from their own instants');
