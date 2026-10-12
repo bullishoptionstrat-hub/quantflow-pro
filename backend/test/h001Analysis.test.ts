@@ -10,6 +10,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { buildTradeEvent } from '../src/events/build';
 import type { RawTradeRecord } from '../src/events/build';
 import type { MarketEvent, TradeReportEvent } from '../src/events/types';
@@ -17,7 +19,7 @@ import { EventLog } from '../src/events/eventLog';
 import { reviseSignal } from '../src/events/signalRevision';
 import type { DatasetRightsManifest, RightsFact } from '../src/provenance/researchManifest';
 import type { UnderlyingQuote } from '../src/research/h001Marks';
-import { h001Return } from '../src/research/h001Marks';
+import { h001Return, quoteBook } from '../src/research/h001Marks';
 import { runH001Analysis, analyseH001, H001_ABSENT, H001_SENSITIVITY_PREMIUM_FLOOR } from '../src/research/h001Analysis';
 import { h001Cr2Interval } from '../src/research/h001Cr2';
 import { h001VolBalance } from '../src/research/h001Balance';
@@ -333,4 +335,30 @@ test('§K: the caller\'s truth-set answer reaches the verdict, in both direction
   const withTruth = at(true);
   assert.equal(withTruth.primary.verdict, 'PRACTICALLY NEGLIGIBLE');
   assert.equal(withTruth.primary.uncappedVerdict, 'PRACTICALLY NEGLIGIBLE');
+});
+
+test('the composer indexes the quotes once per run and takes every mark from that index', () => {
+  // The speed is the index's; a stray `input.quotes` below the book would put
+  // a full scan back into that call path while every answer stayed the same.
+  const src = readFileSync(join(__dirname, '../src/research/h001Analysis.ts'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  const fnOf = (name: string) => {
+    const body = src.slice(src.indexOf(`export function ${name}(`));
+    return body.slice(0, body.indexOf('\n}\n'));
+  };
+  for (const name of ['analyseH001', 'runH001Analysis']) {
+    const fn = fnOf(name);
+    assert.deepEqual(fn.match(/input\.quotes/g), ['input.quotes'], name);
+    assert.match(fn, /const quotes = bookOf\(input\.quotes\)/, name);
+  }
+  // Every core run inside runH001Analysis is handed that one book.
+  const calls = fnOf('runH001Analysis').match(/analyseH001\(\{[^}]*\}\)/g) ?? [];
+  assert.equal(calls.length, 2);
+  for (const c of calls) assert.match(c, /\bquotes\b/, c);
+});
+
+test('the report is the same whether the caller hands in the quotes or a book of them', () => {
+  const f = fixture();
+  const args = { signals: f.signals, tape: f.tape, ctx: CTX, truthSetAvailable: false, replicates: 200 };
+  assert.deepEqual(runH001Analysis({ ...args, quotes: quoteBook(QUOTES) }), runH001Analysis({ ...args, quotes: QUOTES }));
 });

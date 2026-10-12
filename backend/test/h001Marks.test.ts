@@ -10,7 +10,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  h001Return, markAt, H001_ENTRY_LATENCY_MS, H001_ENTRY_MAX_AGE_MS, H001_HORIZON_MS,
+  h001Return, markAt, quoteBook, H001_ENTRY_LATENCY_MS, H001_ENTRY_MAX_AGE_MS, H001_HORIZON_MS,
 } from '../src/research/h001Marks';
 import type { UnderlyingQuote } from '../src/research/h001Marks';
 import * as eligibility from '../src/research/h001Eligibility';
@@ -114,4 +114,72 @@ test('the exit age is reported, because §C does not bound it', () => {
 test('one clock domain: quotes from two providers are refused outright', () => {
   assert.throws(() => h001Return(D, [q(D, 549.99, 550.01), { ...q(T_EXIT, 550, 550.02), provider: 'other' }]), RangeError);
   assert.throws(() => h001Return(Number.NaN, []), RangeError);
+});
+
+// ─── The index is the scan, faster ──────────────────────────────────────────
+
+/** A small deterministic generator, so a failing case can be replayed. */
+function lcg(seed: number) {
+  let x = seed >>> 0;
+  return () => { x = (Math.imul(x, 1664525) + 1013904223) >>> 0; return x / 2 ** 32; };
+}
+
+test('a quote book answers every mark exactly as the scan does, over randomised books', () => {
+  const rules = [
+    { requireAvailableBy: true, maxAgeMs: H001_ENTRY_MAX_AGE_MS },
+    { requireAvailableBy: true, maxAgeMs: null },
+    { requireAvailableBy: false, maxAgeMs: null },
+    { requireAvailableBy: false, maxAgeMs: 500 },
+  ];
+  let compared = 0;
+  const seen = new Set<string>();
+  for (let seed = 1; seed <= 60; seed++) {
+    const r = lcg(seed);
+    const quotes: UnderlyingQuote[] = [];
+    const n = 5 + Math.floor(r() * 60);
+    for (let i = 0; i < n; i++) {
+      // Coarse stamps so ties are common; arrival lags up to 4 s, so late
+      // quotes overtake earlier-stamped ones; some books one-sided or crossed;
+      // some ties disagree; listed in a shuffled order.
+      const eventTime = D + Math.floor(r() * 40) * 250;
+      const lag = r() < 0.2 ? Math.floor(r() * 4_000) : Math.floor(r() * 20);
+      const mid = 550 + Math.floor(r() * 3) * 0.01;
+      const shape = r();
+      const bid = shape < 0.08 ? null : shape < 0.12 ? mid + 0.02 : mid - 0.01;
+      const ask = shape > 0.95 ? null : mid + 0.01;
+      quotes.push({ provider: 'p', eventTime, availableAt: eventTime + lag, bid, ask });
+    }
+    if (seed % 7 === 0) quotes.push({ provider: 'p', eventTime: NaN, availableAt: D, bid: 1, ask: 2 });
+    const book = quoteBook(quotes);
+    for (let k = 0; k < 80; k++) {
+      const at = D - 1_000 + Math.floor(r() * 14_000);
+      for (const rule of rules) {
+        const want = markAt(quotes, at, rule);
+        const got = markAt(book, at, rule);
+        assert.deepEqual(got, want, `seed ${seed}, at ${at - D}, ${JSON.stringify(rule)}`);
+        // Identity, not only shape: the same quote object is the mark.
+        if (want.ok && got.ok) assert.equal(got.quote, want.quote);
+        seen.add(want.ok ? 'OK' : want.refusal);
+        compared++;
+      }
+    }
+  }
+  // The sample reaches every branch, or agreement on it proves less than it says.
+  assert.deepEqual([...seen].sort(), ['AMBIGUOUS', 'NO_MIDPOINT', 'NO_QUOTE', 'OK', 'STALE']);
+  assert.ok(compared > 10_000);
+});
+
+test('a quote book is a copy: mutating the array afterwards does not move its marks', () => {
+  const quotes = [q(D - 500, 549.99, 550.01), q(T_EXIT - 100, 550.54, 550.56)];
+  const book = quoteBook(quotes);
+  const before = h001Return(D, book);
+  quotes.push(q(T_ENTRY - 10, 600, 600.02));
+  quotes.length = 1;
+  assert.deepEqual(h001Return(D, book), before);
+});
+
+test('a quote book keeps the one-feed rule of §C', () => {
+  const quotes = [q(D - 500, 549.99, 550.01), { ...q(T_EXIT - 100, 550.54, 550.56), provider: 'other' }];
+  assert.throws(() => h001Return(D, quoteBook(quotes)), /2 providers/);
+  assert.throws(() => h001Return(D, quotes), /2 providers/);
 });

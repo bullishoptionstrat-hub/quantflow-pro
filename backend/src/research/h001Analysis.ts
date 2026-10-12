@@ -56,8 +56,8 @@ import { groupMetaEvents } from './metaEvents';
 import type { MetaEvent } from './metaEvents';
 import { h001Eligibility } from './h001Eligibility';
 import type { H001Candidate, H001Context, H001Eligibility, H001Rule } from './h001Eligibility';
-import { h001Return, H001_HORIZON_MS } from './h001Marks';
-import type { UnderlyingQuote } from './h001Marks';
+import { h001Return, quoteBook, QuoteBook, H001_HORIZON_MS } from './h001Marks';
+import type { QuoteSource } from './h001Marks';
 import { matchClockControls, matchControls } from './h001Controls';
 import type { AMetaEvent, H001ClockMatching, H001Matching } from './h001Controls';
 import { h001SecondaryInterval, h001Verdict } from './h001Verdict';
@@ -74,8 +74,8 @@ export interface H001AnalysisInput {
   signals: readonly H001Signal[];
   /** The FINAL_CORRECTED view (§J primary) — the control pool is drawn from it. */
   tape: TapeView;
-  /** One provider's SPY NBBO (§C). */
-  quotes: readonly UnderlyingQuote[];
+  /** One provider's SPY NBBO (§C): the array, or a `quoteBook` of it already built. */
+  quotes: QuoteSource;
   ctx: H001Context;
   /** §K: whether classification error has been measured against a truth set. */
   truthSetAvailable: boolean;
@@ -153,11 +153,13 @@ function contractOf(s: H001Signal): { expiry: string; strike: number } {
 }
 
 export function runH001Analysis(input: H001AnalysisInput): H001Report {
-  const core = analyseH001(input);
+  // One index for the primary and every sensitivity: same quotes, sorted once.
+  const quotes = bookOf(input.quotes);
+  const core = analyseH001({ ...input, quotes });
   // S1: the floor is applied to candidates, before §L and §B.
   const floor = H001_SENSITIVITY_PREMIUM_FLOOR;
   const kept = input.signals.filter((s) => Number.isFinite(s.totalPremium) && s.totalPremium >= floor);
-  const p = analyseH001({ ...input, signals: kept });
+  const p = analyseH001({ ...input, quotes, signals: kept });
   return {
     ...core,
     sensitivities: {
@@ -179,8 +181,14 @@ function sensitivityOf(r: H001Core): H001Sensitivity {
   };
 }
 
+function bookOf(q: QuoteSource): QuoteBook {
+  return q instanceof QuoteBook ? q : quoteBook(q);
+}
+
 /** The primary pipeline. Exported so a test can hold the primary to it; a study calls `runH001Analysis`. */
 export function analyseH001(input: H001AnalysisInput): H001Core {
+  // Indexed once: every mark below reads the same book (see h001Marks.ts).
+  const quotes = bookOf(input.quotes);
   // §L, with X3's marks.
   const rows: H001Eligibility[] = [];
   const included = { A: [] as H001Signal[], B: [] as H001Signal[] };
@@ -189,7 +197,7 @@ export function analyseH001(input: H001AnalysisInput): H001Core {
   for (const s of input.signals) {
     if (seen.has(s.signalId)) throw new RangeError(`signal ${s.signalId} is listed twice`);
     seen.add(s.signalId);
-    const r = h001Return(s.decisionAt, input.quotes);
+    const r = h001Return(s.decisionAt, quotes);
     const marks = { entry: r.status !== 'NO_ENTRY_MARK', exit: r.status === 'OK' };
     const e = h001Eligibility({ ...s, marks }, input.ctx);
     rows.push(e);
@@ -212,7 +220,7 @@ export function analyseH001(input: H001AnalysisInput): H001Core {
   const groupReturns = { A: [] as Observation[], B: [] as Observation[] };
   for (const group of ['A', 'B'] as const) {
     for (const m of meta[group]) {
-      const r = h001Return(m.startsAt, input.quotes);
+      const r = h001Return(m.startsAt, quotes);
       // X3: the first signal was admitted with both marks at this very instant.
       if (r.status !== 'OK') throw new RangeError(`meta-event ${m.metaEventId} has no §C return (${r.status})`);
       metaRows.push({ metaEventId: m.metaEventId, group, date: m.date, startsAt: m.startsAt,
@@ -230,8 +238,8 @@ export function analyseH001(input: H001AnalysisInput): H001Core {
     const first = bySignal.get(m.signalIds[0]!)!;
     return { metaEventId: m.metaEventId, startsAt: m.startsAt, ...contractOf(first), premium: first.totalPremium };
   });
-  const c = matchControls({ a, tape: input.tape, excludedEventIds, quotes: input.quotes });
-  const d = matchClockControls({ a, quotes: input.quotes });
+  const c = matchControls({ a, tape: input.tape, excludedEventIds, quotes });
+  const d = matchClockControls({ a, quotes });
 
   const opts = input.replicates === undefined ? {} : { replicates: input.replicates };
   const primary = h001Verdict({
@@ -258,7 +266,7 @@ export function analyseH001(input: H001AnalysisInput): H001Core {
     primary,
     cr2: h001Cr2Interval(c.primary),
     controls: { matches: c.matches, poolSize: c.poolSize, rejected: c.rejected, unmatchedA: c.unmatchedA },
-    balance: h001VolBalance(c.matches, input.quotes),
+    balance: h001VolBalance(c.matches, quotes),
     clock: { ...d, deltaAD: h001SecondaryInterval(d.differences, opts) },
     absent: H001_ABSENT,
   };

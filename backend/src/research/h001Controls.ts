@@ -94,7 +94,7 @@ import { addDays, instantEt, marketDateOf, minutesEt } from '../market/civil';
 import { sessionOn } from '../flow-engine/calendar';
 import { premiumOf } from '../flow-engine/types';
 import { h001Return, markAt, H001_ENTRY_LATENCY_MS, H001_ENTRY_MAX_AGE_MS, H001_HORIZON_MS } from './h001Marks';
-import type { UnderlyingQuote } from './h001Marks';
+import type { QuoteSource } from './h001Marks';
 import { h001DecisionWindow, H001_UNDERLYING } from './h001Eligibility';
 import { H001_BOOTSTRAP_SEED, seededRandom } from './h001Verdict';
 import type { Observation } from './h001Verdict';
@@ -153,7 +153,7 @@ function calendarDays(from: string, to: string): number | null {
 }
 
 /** M4: the causal SPY midpoint at an instant, or null. */
-export function causalSpot(quotes: readonly UnderlyingQuote[], at: number): number | null {
+export function causalSpot(quotes: QuoteSource, at: number): number | null {
   const m = markAt(quotes, at, { requireAvailableBy: true, maxAgeMs: H001_ENTRY_MAX_AGE_MS });
   return m.ok ? m.midpoint : null;
 }
@@ -165,7 +165,7 @@ export interface KeyInput {
   premium: number;
 }
 
-export function matchKeyOf(x: KeyInput, quotes: readonly UnderlyingQuote[]): KeyResult {
+export function matchKeyOf(x: KeyInput, quotes: QuoteSource): KeyResult {
   const date = marketDateOf(x.anchor);
   const minutes = minutesEt(x.anchor);
   if (date === null || minutes === null) return { ok: false, why: 'the anchor cannot be read in the market timezone' };
@@ -208,7 +208,7 @@ export interface PoolRejection {
 export function controlPool(
   tape: TapeView,
   excludedEventIds: ReadonlySet<string>,
-  quotes: readonly UnderlyingQuote[],
+  quotes: QuoteSource,
 ): { pool: Control[]; rejected: PoolRejection[] } {
   // §J: the primary tape is the final one. An as-known view could admit a
   // trade that was later cancelled, and a cancelled trade was not an execution.
@@ -303,7 +303,7 @@ function inStreamOrder(a: readonly AMetaEvent[]): Array<{ a: AMetaEvent; date: s
  * r_A. §L admits a signal only when both marks exist, so an A meta-event
  * without a return is a pipeline defect, not an observation to drop.
  */
-function returnOfA(a: AMetaEvent, quotes: readonly UnderlyingQuote[]): number {
+function returnOfA(a: AMetaEvent, quotes: QuoteSource): number {
   const r = h001Return(a.startsAt, quotes);
   if (r.status !== 'OK') throw new RangeError(`A meta-event ${a.metaEventId} has no §C return (${r.status})`);
   return r.returnBp;
@@ -314,7 +314,7 @@ export function matchControls(input: {
   tape: TapeView;
   /** Evidence of every signal in every A and B meta-event. */
   excludedEventIds: ReadonlySet<string>;
-  quotes: readonly UnderlyingQuote[];
+  quotes: QuoteSource;
 }): H001Matching {
   const { pool, rejected } = controlPool(input.tape, input.excludedEventIds, input.quotes);
   const byKey = new Map<string, Control[]>();
@@ -415,7 +415,7 @@ export interface H001ClockMatching {
 
 export function matchClockControls(input: {
   a: readonly AMetaEvent[];
-  quotes: readonly UnderlyingQuote[];
+  quotes: QuoteSource;
 }): H001ClockMatching {
   // D5: a stream of its own, so adding or removing a C control never moves a D time.
   const rand = seededRandom(H001_BOOTSTRAP_SEED);

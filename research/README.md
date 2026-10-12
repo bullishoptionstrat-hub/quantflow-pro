@@ -114,7 +114,8 @@ Seven readings it had to make, each open to challenge before any data is read:
   marks. Executions failing any are removed **before** the draw.
 
 Not implemented, and a report must say so: the 30-minute realised-volatility
-balance diagnostic (decides nothing).
+balance diagnostic (decides nothing). *Implemented 2026-10-12. See the
+balance entry below (V1–V5).*
 
 **2026-10-06.** §G's D control is code: `matchClockControls` draws five random
 SPY times per A meta-event, same day and same hour, and emits the paired
@@ -248,3 +249,26 @@ window is its own. The readings:
   on the (Σw − 1) divisor. It is flagged when |SMD| > 0.1, because imbalance in
   either direction is imbalance.
 
+
+**2026-10-12.** The quotes are indexed once per run. This changes speed, not
+any reading. `markAt` used to filter the whole quote array on every call. The
+pipeline calls it per signal, per meta-event, per control, per clock draw, and
+31 times per balance window, and the $100k sensitivity runs all of that twice.
+On a synthetic day of 234,000 SPY quotes (ten a second), 6,400 marks took
+114 s with the scan and 0.12 s with `quoteBook` (sort included).
+
+The book sorts a copy by event time, keeping ties in input order, and answers
+by binary search. The array path is kept as the reference. A test compares the
+two over 60 randomised books (ties, late arrivals, one-sided and crossed
+quotes, disagreeing ties, a NaN stamp), about 19,000 marks under four rules.
+It requires them to agree on every result and on which quote object is
+returned, and it asserts that the sample reaches all five outcomes. A guard
+holds that `analyseH001` builds one book and takes every mark from it. Eight
+mutations were run, and each was caught, mostly by the comparison test.
+
+One limit, which costs speed but never correctness. Under the entry rule, a
+mark walks back over every quote stamped by the instant but not yet known by
+it. The speedup therefore assumes quotes become known soon after they are
+stamped. A vendor whose `availableAt` is a bulk-delivery time would bring the
+book back toward the old scan's cost. It is never slower than the scan, and it
+never answers differently.

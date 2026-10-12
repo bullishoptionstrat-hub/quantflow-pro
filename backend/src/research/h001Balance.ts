@@ -40,7 +40,7 @@
  *       "above 0.1", and imbalance in either direction is imbalance.
  */
 import { markAt, H001_ENTRY_LATENCY_MS, H001_ENTRY_MAX_AGE_MS } from './h001Marks';
-import type { UnderlyingQuote } from './h001Marks';
+import type { QuoteSource } from './h001Marks';
 import type { AMatch } from './h001Controls';
 import { marketDateOf, sessionOn } from '../flow-engine/calendar';
 import { instantEt } from '../market/civil';
@@ -55,7 +55,7 @@ export const H001_SMD_FLAG = 0.1;
 export type RvResult = { ok: true; rvBp: number } | { ok: false; why: string };
 
 /** V1–V3: the trailing realised volatility of a unit measured from `anchor`. */
-export function trailingRv(anchor: number, quotes: readonly UnderlyingQuote[]): RvResult {
+export function trailingRv(anchor: number, quotes: QuoteSource): RvResult {
   if (!Number.isFinite(anchor)) throw new RangeError('the anchor must be an instant');
   const end = anchor + H001_ENTRY_LATENCY_MS;
   const start = end - H001_RV_WINDOW_MS;
@@ -105,7 +105,7 @@ export interface H001BalanceResult {
 }
 
 /** V4, V5: the balance of the matched set. */
-export function h001VolBalance(matches: readonly AMatch[], quotes: readonly UnderlyingQuote[]): H001BalanceResult {
+export function h001VolBalance(matches: readonly AMatch[], quotes: QuoteSource): H001BalanceResult {
   const pairs: Array<{ a: number; c: number[] }> = [];
   const n = { pairs: 0, controls: 0, unmeasuredA: 0, noMeasuredControl: 0, unmeasuredControls: 0 };
   for (const m of matches) {
