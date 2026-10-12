@@ -112,4 +112,24 @@ Seven readings it had to make, each open to challenge before any data is read:
   marks. Executions failing any are removed **before** the draw.
 
 Not implemented, and a report must say so: the 30-minute realised-volatility
-balance diagnostic (decides nothing) and the D control (secondary).
+balance diagnostic (decides nothing).
+
+**2026-10-06.** §G's D control is code: `matchClockControls` draws five random
+SPY times per A meta-event, same day and same hour, and emits the paired
+`r_A − r̄_D` that Δ_AD is computed from; `h001SecondaryInterval` reports Δ_AD
+with the primary's own day-clustered bootstrap and decides nothing (§K). Five
+readings, each open to challenge before any data is read:
+
+- **D1** A time is a uniform integer millisecond over the part of the A
+  meta-event's ET clock hour where §L could admit a decision — at or after the
+  open, early enough that the M15 exit reaches the close (09:30–09:59 in the
+  09:00 hour, 15:00–15:44:59 in the 15:00 hour, 12:00–12:44:59 on a 13:00 close).
+- **D2** Times are not kept away from A or B meta-events: §G says "random SPY
+  times".
+- **D3** A time with no §C mark is dropped and counted, never redrawn. If none of
+  an A meta-event's five measure, it has no D comparison and is counted.
+- **D4** Δ_AD is paired like Δ_AC — the mean of `r_A − r̄_D` — rather than a
+  difference of group means like Δ_AB.
+- **D5** D has its own PRNG stream (seed 20260927), consumed in A order, five
+  draws per A meta-event whatever the window, so neither C's draw nor another
+  A meta-event's window moves a D time. Drawn with replacement in milliseconds.

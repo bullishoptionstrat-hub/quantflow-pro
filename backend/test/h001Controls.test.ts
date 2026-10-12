@@ -14,13 +14,15 @@ import type { RawTradeRecord } from '../src/events/build';
 import type { MarketEvent, TradeReportEvent } from '../src/events/types';
 import { EventLog } from '../src/events/eventLog';
 import {
-  causalSpot, controlPool, dteBucket, keyString, matchControls, matchKeyOf, moneynessBucket, premiumBucket,
-  H001_CONTROLS_PER_EVENT,
+  causalSpot, clockWindow, controlPool, dteBucket, keyString, matchClockControls, matchControls, matchKeyOf,
+  moneynessBucket, premiumBucket, H001_CLOCK_CONTROLS_PER_EVENT, H001_CONTROLS_PER_EVENT,
 } from '../src/research/h001Controls';
 import type { AMetaEvent } from '../src/research/h001Controls';
 import { h001Return } from '../src/research/h001Marks';
 import type { UnderlyingQuote } from '../src/research/h001Marks';
-import { h001Verdict } from '../src/research/h001Verdict';
+import { h001SecondaryInterval, h001Verdict, seededRandom } from '../src/research/h001Verdict';
+import { h001DecisionWindow } from '../src/research/h001Eligibility';
+import { marketDateOf, minutesEt } from '../src/market/civil';
 
 // 2026-03-10, a Tuesday in EDT: 14:00Z is 10:00 ET.
 const DAY = '2026-03-10';
@@ -247,4 +249,122 @@ test('the pool comes from the final tape; an as-known view is refused', () => {
 
 test('an A meta-event with no §C return is a pipeline defect, not a dropped observation', () => {
   assert.throws(() => matchControls({ a: [metaA('a1', ET(10, 5))], tape: tapeOf([trade()]), excludedEventIds: new Set(), quotes: [] }), RangeError);
+});
+
+// ─── The D control ───────────────────────────────────────────────────────────
+
+
+test('D1: the window is the part of the ET clock hour where §L could admit a decision', () => {
+  const at = (d: string, h: number, m: number, s = 0, ms = 0) => Date.parse(`${d}T${String(h + 4).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}Z`);
+  assert.deepEqual(clockWindow(DAY, 9), { from: at(DAY, 9, 30), to: at(DAY, 9, 59, 59, 999) }, 'the 09:00 hour opens at 09:30');
+  assert.deepEqual(clockWindow(DAY, 10), { from: at(DAY, 10, 0), to: at(DAY, 10, 59, 59, 999) });
+  assert.deepEqual(clockWindow(DAY, 15), { from: at(DAY, 15, 0), to: at(DAY, 15, 44, 59) }, 'exit +1 s +15 min must reach the 16:00 close');
+  // 2026-11-27 is a published 13:00 close, and EST (UTC−5).
+  const est = (h: number, m: number, s = 0) => Date.parse(`2026-11-27T${String(h + 5).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}Z`);
+  assert.deepEqual(clockWindow('2026-11-27', 12), { from: est(12, 0), to: est(12, 44, 59) });
+  assert.equal(clockWindow('2026-11-27', 13), null, 'after a half day\'s close');
+  assert.equal(clockWindow(DAY, 8), null, 'before the open');
+  assert.equal(clockWindow(DAY, 16), null);
+  assert.equal(clockWindow('2026-11-26', 10), null, 'Thanksgiving');
+  assert.equal(clockWindow('2026-03-14', 10), null, 'a Saturday');
+  assert.equal(clockWindow('2027-03-10', 10), null, 'past the calendar: unknown, not open');
+});
+
+test('D: five times per A meta-event, inside its hour and window, measured the §C way', () => {
+  const a = Array.from({ length: 6 }, (_, i) => metaA(`a${i}`, ET(10 + (i % 3) * 2, 7 + i)));
+  const m = matchClockControls({ a, quotes: QUOTES });
+  assert.equal(m.matches.length, 6);
+  for (const row of m.matches) {
+    assert.equal(row.status, 'MATCHED');
+    assert.equal(row.times.length, H001_CLOCK_CONTROLS_PER_EVENT);
+    const meta = a.find((x) => x.metaEventId === row.metaEventId)!;
+    for (const t of row.times) {
+      assert.equal(marketDateOf(t), DAY);
+      assert.equal(Math.floor(minutesEt(t)! / 60), Math.floor(minutesEt(meta.startsAt)! / 60), 'same 60-minute bucket');
+      assert.ok(h001DecisionWindow(t).ok, 'a time §L would refuse a signal at is never drawn');
+    }
+    assert.equal(new Set(row.times).size, 5);
+    assert.deepEqual(row.measured.map((x) => x.at), row.times);
+    for (const x of row.measured) {
+      const r = h001Return(x.at, QUOTES);
+      assert.equal(r.status === 'OK' && r.returnBp, x.returnBp);
+    }
+    const mean = row.measured.reduce((s, x) => s + x.returnBp, 0) / 5;
+    const rA = h001Return(meta.startsAt, QUOTES);
+    assert.ok(Math.abs(row.differenceBp! - ((rA.status === 'OK' ? rA.returnBp : NaN) - mean)) < 1e-12, 'D4: r_A − r̄_D, paired');
+  }
+  assert.equal(m.unmatched, 0);
+  assert.deepEqual(m.differences, m.matches.map((r) => ({ date: DAY, valueBp: r.differenceBp })));
+  // Deterministic, and independent of the order A arrives in.
+  assert.deepEqual(matchClockControls({ a: [...a].reverse(), quotes: QUOTES }), m);
+  // Uniform over the window, not clustered at its start: the 30 draws spread
+  // across the hour (a stream that ignored the window width would not).
+  const offsets = m.matches.flatMap((r) => r.times.map((t) => (minutesEt(t)! % 60)));
+  assert.ok(Math.min(...offsets) < 15 && Math.max(...offsets) >= 45, JSON.stringify(offsets));
+});
+
+test('D3: a drawn time with no §C mark is counted, never redrawn — and none measurable is unmatched', () => {
+  // A quote gap 10:30–11:00: entry marks there are stale.
+  const gappy = QUOTES.filter((q) => q.eventTime < ET(10, 30) || q.eventTime >= ET(11, 0));
+  const a = Array.from({ length: 8 }, (_, i) => metaA(`a${i}`, ET(10, 1 + i * 2)));
+  const m = matchClockControls({ a, quotes: gappy });
+  let refused = 0;
+  for (const row of m.matches) {
+    assert.equal(row.times.length, 5, 'five drawn, whatever became of them');
+    assert.equal(row.measured.length + row.refused.length, 5);
+    // Exactly the times whose entry quote would be over 2 s old: the last quote
+    // before the gap is 10:29:59, the first after it is known at 11:00:00.005.
+    assert.deepEqual(row.refused.map((x) => x.at), row.times.filter((t) => t > ET(10, 30) && t + 1_000 < ET(11, 0, 0, 5)));
+    refused += row.refused.length;
+    if (row.measured.length > 0) {
+      const mean = row.measured.reduce((s, x) => s + x.returnBp, 0) / row.measured.length;
+      assert.equal(row.controlMeanBp, mean, 'the mean is over what measured, not padded');
+    }
+  }
+  assert.ok(refused > 0, 'the fixture reaches the refusal');
+  // Quotes only around the A meta-event's own marks: no random time measures.
+  const sparse = QUOTES.filter((q) => (q.eventTime >= ET(10, 4, 55) && q.eventTime <= ET(10, 5, 2)) || q.eventTime === ET(10, 20));
+  const lone = matchClockControls({ a: [metaA('a1', ET(10, 5))], quotes: sparse });
+  assert.equal(lone.matches[0]!.status, 'NO_MEASURABLE_TIME');
+  assert.equal(lone.unmatched, 1);
+  assert.deepEqual(lone.differences, []);
+});
+
+test('D5: an A meta-event with no window still consumes its five draws, so it never moves another\'s', () => {
+  const early: UnderlyingQuote[] = [];
+  for (let t = ET(8, 0); t < ET(9, 30); t += 1_000) early.push({ provider: 'p', eventTime: t, availableAt: t + 5, bid: 549.99, ask: 550.01 });
+  const quotes = [...early, ...QUOTES];
+  const b = metaA('b', ET(10, 5));
+  const withNoWindow = matchClockControls({ a: [metaA('x', ET(8, 30)), b], quotes });
+  assert.equal(withNoWindow.matches[0]!.status, 'NO_WINDOW', 'an 08:30 start has no admissible hour');
+  assert.equal(withNoWindow.unmatched, 1);
+  const withWindow = matchClockControls({ a: [metaA('y', ET(9, 45)), b], quotes });
+  assert.deepEqual(withNoWindow.matches[1]!.times, withWindow.matches[1]!.times);
+  // And its stream is its own: the C draw does not move the D times.
+  const alone = matchClockControls({ a: [metaA('x', ET(8, 30)), b], quotes });
+  matchControls({ a: [b], tape: tapeOf([trade()]), excludedEventIds: new Set(), quotes });
+  assert.deepEqual(alone, withNoWindow);
+  // The times are the seeded stream's: the second A meta-event's five are draws 6–10.
+  const rand = seededRandom(20260927);
+  for (let i = 0; i < 5; i++) rand();
+  const w = clockWindow(DAY, 10)!;
+  assert.deepEqual(withNoWindow.matches[1]!.times, Array.from({ length: 5 }, () => w.from + Math.floor(rand() * (w.to - w.from + 1))));
+});
+
+test('Δ_AD is reported with the primary\'s own day-clustered bootstrap, and decides nothing', () => {
+  // Continuous values and unequal days: integer values on equal-sized days put
+  // the bootstrap means on a lattice, where two different resamples can share
+  // a percentile and an ordering defect hides.
+  const obs = Array.from({ length: 47 }, (_, i) => ({ date: `2026-03-${String(2 + ((i * i) % 20)).padStart(2, '0')}`, valueBp: 3 * Math.sin(i * 1.7) + 0.5 }))
+    .filter((o) => !['2026-03-07', '2026-03-08', '2026-03-14', '2026-03-15'].includes(o.date));
+  const s = h001SecondaryInterval(obs, { replicates: 2_000 });
+  const v = h001Verdict({ primary: obs, unmatchedA: 0, groupA: [], groupB: [], truthSetAvailable: true }, { replicates: 2_000 });
+  assert.deepEqual(s.ci95, v.ci95, 'the same bootstrap on the same observations');
+  assert.equal(s.estimateBp, v.estimateBp);
+  assert.deepEqual(h001SecondaryInterval([...obs].reverse(), { replicates: 2_000 }).ci95, s.ci95, 'input order is not data');
+  assert.equal(Object.keys(s).some((k) => /verdict/i.test(k)), false, 'no field that reads as a decision');
+  assert.deepEqual(h001SecondaryInterval([]), { estimateBp: null, ci95: null, n: { observations: 0, days: 0 } });
+  const one = h001SecondaryInterval([{ date: DAY, valueBp: 2 }, { date: DAY, valueBp: 4 }]);
+  assert.equal(one.estimateBp, 3);
+  assert.equal(one.ci95, null, 'one day cannot be resampled');
 });

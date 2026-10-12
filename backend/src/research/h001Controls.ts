@@ -56,18 +56,44 @@
  *       afterwards — which would make the realised count depend on the order
  *       of the draw.
  *
+ * The D control (§G, secondary) is `matchClockControls` below: 5 random SPY
+ * times on the same day, in the same 60-minute bucket — "is the effect a
+ * clock?". Its readings:
+ *
+ *   D1  A random time is a uniform integer millisecond over the part of the A
+ *       meta-event's ET clock hour (M1) in which a decision could be made under
+ *       §L: at or after the regular open, and early enough that the M15 exit
+ *       (+1 s +15 min) falls by the close. A time §L would refuse a signal at
+ *       is not a time a signal could have been compared against.
+ *   D2  Times are not kept away from A or B meta-events: §G says "random SPY
+ *       times", and excluding them would make D a different question.
+ *   D3  A time with no §C mark is dropped and counted, never redrawn — a
+ *       redraw keeps going until the evidence exists. If none of an A
+ *       meta-event's five times measure, it has no D comparison and is counted.
+ *   D4  Δ_AD is paired like Δ_AC: the mean over A meta-events of
+ *       r_A − r̄_D. §G names Δ_AB as a difference of group means and says
+ *       nothing of D's form; D is drawn per A meta-event, as C is.
+ *   D5  Its own PRNG stream, seeded 20260927, consumed in the same A order as
+ *       C's, five draws per A meta-event whatever the window — so one A
+ *       meta-event's window never shifts another's draws. Drawn with
+ *       replacement: two equal milliseconds are a measure-zero event that
+ *       §G does not address, and rejecting one would be a redraw (D3).
+ *
+ * D supports no claim (§K): it is reported, with a day-clustered interval
+ * from `h001SecondaryInterval`, and decides nothing.
+ *
  * Not implemented here, and a report built on it must say so: the trailing
- * 30-minute realised-volatility balance diagnostic (§G, decides nothing) and
- * the D control (§G, secondary).
+ * 30-minute realised-volatility balance diagnostic (§G, decides nothing).
  */
 import type { TradeReportEvent } from '../events/types';
 import type { TapeView } from '../events/eventLog';
 import { detectorAdmission } from '../events/detector';
 import { H001_V2_SESSION_RULE, researchEligibility } from '../market/researchEligibility';
 import { contractSessionAt } from '../market/contractLifecycle';
-import { addDays, marketDateOf, minutesEt } from '../market/civil';
+import { addDays, instantEt, marketDateOf, minutesEt } from '../market/civil';
+import { sessionOn } from '../flow-engine/calendar';
 import { premiumOf } from '../flow-engine/types';
-import { h001Return, markAt, H001_ENTRY_MAX_AGE_MS } from './h001Marks';
+import { h001Return, markAt, H001_ENTRY_LATENCY_MS, H001_ENTRY_MAX_AGE_MS, H001_HORIZON_MS } from './h001Marks';
 import type { UnderlyingQuote } from './h001Marks';
 import { h001DecisionWindow, H001_UNDERLYING } from './h001Eligibility';
 import { H001_BOOTSTRAP_SEED, seededRandom } from './h001Verdict';
@@ -255,6 +281,30 @@ export interface H001Matching {
   rejected: PoolRejection[];
 }
 
+/**
+ * M6: the order a PRNG stream is consumed in — date, start, id — so a draw is
+ * a function of the data and not of the order the caller listed it in.
+ */
+function inStreamOrder(a: readonly AMetaEvent[]): Array<{ a: AMetaEvent; date: string }> {
+  return [...a].map((x) => {
+    const date = marketDateOf(x.startsAt);
+    if (date === null) throw new RangeError(`meta-event ${x.metaEventId} has an unreadable start`);
+    return { a: x, date };
+  }).sort((x, y) => (x.date < y.date ? -1 : x.date > y.date ? 1 : 0)
+    || x.a.startsAt - y.a.startsAt
+    || (x.a.metaEventId < y.a.metaEventId ? -1 : x.a.metaEventId > y.a.metaEventId ? 1 : 0));
+}
+
+/**
+ * r_A. §L admits a signal only when both marks exist, so an A meta-event
+ * without a return is a pipeline defect, not an observation to drop.
+ */
+function returnOfA(a: AMetaEvent, quotes: readonly UnderlyingQuote[]): number {
+  const r = h001Return(a.startsAt, quotes);
+  if (r.status !== 'OK') throw new RangeError(`A meta-event ${a.metaEventId} has no §C return (${r.status})`);
+  return r.returnBp;
+}
+
 export function matchControls(input: {
   a: readonly AMetaEvent[];
   tape: TapeView;
@@ -273,22 +323,11 @@ export function matchControls(input: {
   for (const list of byKey.values()) list.sort((x, y) => (x.eventId < y.eventId ? -1 : x.eventId > y.eventId ? 1 : 0));
 
   const rand = seededRandom(H001_BOOTSTRAP_SEED);
-  const ordered = [...input.a].map((a) => {
-    const date = marketDateOf(a.startsAt);
-    if (date === null) throw new RangeError(`meta-event ${a.metaEventId} has an unreadable start`);
-    return { a, date };
-  }).sort((x, y) => (x.date < y.date ? -1 : x.date > y.date ? 1 : 0)
-    || x.a.startsAt - y.a.startsAt
-    || (x.a.metaEventId < y.a.metaEventId ? -1 : x.a.metaEventId > y.a.metaEventId ? 1 : 0));
-
   const matches: AMatch[] = [];
-  for (const { a, date } of ordered) {
-    const r = h001Return(a.startsAt, input.quotes);
-    // §L admits a signal only when both marks exist, so an A meta-event
-    // without a return is a pipeline defect, not an observation to drop.
-    if (r.status !== 'OK') throw new RangeError(`A meta-event ${a.metaEventId} has no §C return (${r.status})`);
+  for (const { a, date } of inStreamOrder(input.a)) {
+    const r = returnOfA(a, input.quotes);
     const key = matchKeyOf({ anchor: a.startsAt, expiry: a.expiry, strike: a.strike, premium: a.premium }, input.quotes);
-    const base = { metaEventId: a.metaEventId, date, returnBp: r.returnBp };
+    const base = { metaEventId: a.metaEventId, date, returnBp: r };
     if (!key.ok) {
       matches.push({ ...base, status: 'NO_KEY', key: null, why: key.why, controls: [], controlMeanBp: null, differenceBp: null });
       continue;
@@ -309,7 +348,7 @@ export function matchControls(input: {
     const controls = candidates.slice(0, take);
     const mean = controls.reduce((s, c) => s + c.returnBp, 0) / controls.length;
     matches.push({ ...base, status: 'MATCHED', key: key.key, why: null, controls,
-      controlMeanBp: mean, differenceBp: r.returnBp - mean });
+      controlMeanBp: mean, differenceBp: r - mean });
   }
 
   return {
@@ -318,5 +357,97 @@ export function matchControls(input: {
     unmatchedA: matches.filter((m) => m.status !== 'MATCHED').length,
     poolSize: pool.length,
     rejected,
+  };
+}
+
+// ─── The D control ───────────────────────────────────────────────────────────
+
+/** §G: five random SPY times per A meta-event. */
+export const H001_CLOCK_CONTROLS_PER_EVENT = 5;
+
+/**
+ * D1: the instants, inclusive, at which a §L decision could be made inside the
+ * ET clock hour `hourEt` of `date` — or null when there are none, or the
+ * calendar cannot say.
+ */
+export function clockWindow(date: string, hourEt: number): { from: number; to: number } | null {
+  const s = sessionOn(date);
+  if (s.openHour === null || s.openMinute === null || s.closeHour === null || s.closeMinute === null) return null;
+  const open = instantEt(date, s.openHour, s.openMinute);
+  const close = instantEt(date, s.closeHour, s.closeMinute);
+  const hourStart = instantEt(date, hourEt, 0);
+  // The hour's end is the next hour's start; computed as a duration so 23:00
+  // has an end too, and a DST transition cannot move it (none falls in a session).
+  if (open === null || close === null || hourStart === null) return null;
+  const from = Math.max(open, hourStart);
+  const to = Math.min(hourStart + 3_600_000 - 1, close - H001_ENTRY_LATENCY_MS - H001_HORIZON_MS);
+  return from <= to ? { from, to } : null;
+}
+
+export type ClockStatus = 'MATCHED' | 'NO_WINDOW' | 'NO_MEASURABLE_TIME';
+
+export interface ClockMatch {
+  metaEventId: string;
+  date: string;
+  hourEt: number;
+  status: ClockStatus;
+  returnBp: number;
+  /** Every time drawn, measured or not. */
+  times: number[];
+  measured: Array<{ at: number; returnBp: number }>;
+  /** D3: drawn, refused by §C, counted — never redrawn. */
+  refused: Array<{ at: number; status: string }>;
+  controlMeanBp: number | null;
+  differenceBp: number | null;
+}
+
+export interface H001ClockMatching {
+  matches: ClockMatch[];
+  /** D4: one r_A − r̄_D per A meta-event with a D comparison — Δ_AD's observations. */
+  differences: Observation[];
+  /** A meta-events with no D comparison. */
+  unmatched: number;
+}
+
+export function matchClockControls(input: {
+  a: readonly AMetaEvent[];
+  quotes: readonly UnderlyingQuote[];
+}): H001ClockMatching {
+  // D5: a stream of its own, so adding or removing a C control never moves a D time.
+  const rand = seededRandom(H001_BOOTSTRAP_SEED);
+  const matches: ClockMatch[] = [];
+  for (const { a, date } of inStreamOrder(input.a)) {
+    const rA = returnOfA(a, input.quotes);
+    const minutes = minutesEt(a.startsAt)!;
+    const hourEt = Math.floor(minutes / 60);
+    const w = clockWindow(date, hourEt);
+    // D5: five draws are consumed whatever happens next.
+    const u = Array.from({ length: H001_CLOCK_CONTROLS_PER_EVENT }, () => rand());
+    const base = { metaEventId: a.metaEventId, date, hourEt, returnBp: rA };
+    if (w === null) {
+      // Unreachable for an A meta-event §L admitted — its own decision time is
+      // in the window — but the calendar is the authority, not this comment.
+      matches.push({ ...base, status: 'NO_WINDOW', times: [], measured: [], refused: [], controlMeanBp: null, differenceBp: null });
+      continue;
+    }
+    const times = u.map((x) => w.from + Math.floor(x * (w.to - w.from + 1)));
+    const measured: ClockMatch['measured'] = [];
+    const refused: ClockMatch['refused'] = [];
+    for (const at of times) {
+      const r = h001Return(at, input.quotes);
+      if (r.status === 'OK') measured.push({ at, returnBp: r.returnBp });
+      else refused.push({ at, status: r.status });
+    }
+    if (measured.length === 0) {
+      matches.push({ ...base, status: 'NO_MEASURABLE_TIME', times, measured, refused, controlMeanBp: null, differenceBp: null });
+      continue;
+    }
+    const mean = measured.reduce((s, m) => s + m.returnBp, 0) / measured.length;
+    matches.push({ ...base, status: 'MATCHED', times, measured, refused, controlMeanBp: mean, differenceBp: rA - mean });
+  }
+  return {
+    matches,
+    differences: matches.filter((m) => m.status === 'MATCHED').map((m) => ({ date: m.date, valueBp: m.differenceBp! })),
+    unmatched: matches.filter((m) => m.status !== 'MATCHED').length,
   };
 }
