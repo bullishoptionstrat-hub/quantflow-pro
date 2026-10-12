@@ -133,3 +133,40 @@ readings, each open to challenge before any data is read:
 - **D5** D has its own PRNG stream (seed 20260927), consumed in A order, five
   draws per A meta-event whatever the window, so neither C's draw nor another
   A meta-event's window moves a D time. Drawn with replacement in milliseconds.
+
+**D5, sharpened.** "Its own PRNG stream" means D's draws are separate from
+C's, so adding or removing a C control never moves a D time. It does **not**
+mean independent: both are seeded `20260927` (§G names one seed), so D's
+uniforms are the same number sequence C's draw consumes. Each estimate is
+unaffected on its own; what is shared is position in the stream — the k-th
+uniform C consumes is the k-th D consumes. That does not line up per A
+meta-event (C draws nothing for an unmatched one; D always draws five), and C's
+pools are ordered by content-hash event id, which carries no time order, so the
+sharing is harmless. Recorded so it is not read as
+independence; changing it would mean choosing a second seed §G does not name.
+
+**2026-10-12.** The analysis is one function: `backend/src/research/h001Analysis.ts`
+(`runH001Analysis`) takes candidate signals, the FINAL_CORRECTED tape and one
+provider's SPY quotes, and returns the whole report — §L per candidate with
+counts per rule, §B meta-events, §C returns, §G's C and D draws, the §F/§K
+verdict and Δ_AD. Until now each part was tested alone and nothing called them
+together, so there was no single "analysis" for §A's code-freeze hash to name.
+Five readings it had to make, each open to challenge before any data is read:
+
+- **X1** Meta-events are formed per group, A with A and B with B. A meta-event
+  mixing a buy and a sell has no group and could enter neither estimand. An A
+  and a B meta-event may overlap in time.
+- **X2** The meta-event window is §C's 15-minute horizon, read from its one home.
+- **X3** §L's marks are the signal's own, measured from its decisionAt. A
+  meta-event is measured from its first signal, which §L admitted with both.
+- **X4** A single-leg signal's contract is its evidence's one instrument. §L
+  already excludes evidence spanning two contracts; the throw is a backstop.
+- **X5** "Not part of any A or B meta-event" is the evidence of every absorbed
+  signal, not only each meta-event's first. A BUY_LEAN execution in no
+  meta-event **is** eligible as a C control — §G draws from "any side
+  classification".
+
+The report carries `absent`: every diagnostic the frozen text names and this
+code does not compute (§G volatility balance, §D CR2, §I sensitivities, §J
+as-known secondary, §K's H1/D1). All of them decide nothing, so the verdict is
+complete without them; the report is not, and says so.
