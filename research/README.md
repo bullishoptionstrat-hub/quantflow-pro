@@ -138,8 +138,11 @@ readings, each open to challenge before any data is read:
 C's, so adding or removing a C control never moves a D time. It does **not**
 mean independent: both are seeded `20260927` (§G names one seed), so D's
 uniforms are the same number sequence C's draw consumes. Each estimate is
-unaffected on its own; what is coupled is the pairing — the k-th C pick and
-the k-th D time come from the same uniform. Recorded so it is not read as
+unaffected on its own; what is shared is position in the stream — the k-th
+uniform C consumes is the k-th D consumes. That does not line up per A
+meta-event (C draws nothing for an unmatched one; D always draws five), and C's
+pools are ordered by content-hash event id, which carries no time order, so the
+sharing is harmless. Recorded so it is not read as
 independence; changing it would mean choosing a second seed §G does not name.
 
 **2026-10-12.** The analysis is one function: `backend/src/research/h001Analysis.ts`

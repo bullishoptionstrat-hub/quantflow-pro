@@ -214,7 +214,7 @@ test('the report lists what it did not compute, and the absent items decide noth
   assert.ok(report.absent.every((a) => !a.decides), 'an absent item that decides would make the verdict incomplete, not merely the report');
 });
 
-test('pipeline defects throw instead of quietly shrinking the sample', () => {
+test('pipeline defects throw, and a rule §L owns stays §L\'s', () => {
   const f = fixture();
   const args = { tape: f.tape, quotes: QUOTES, ctx: CTX, truthSetAvailable: false, replicates: 50 };
   assert.throws(() => runH001Analysis({ ...args, signals: [...f.signals, f.signals[0]!] }), /listed twice/);
@@ -225,4 +225,44 @@ test('pipeline defects throw instead of quietly shrinking the sample', () => {
   const r = runH001Analysis({ ...args, signals: [{ ...first, evidence: [...first.evidence, other] }] });
   assert.equal(r.eligibility.rows[0]!.verdict, 'EXCLUDED');
   assert.deepEqual(r.eligibility.rows[0]!.findings.map((x) => x.rule), ['single-leg-call']);
+});
+
+/**
+ * One A signal a day and five controls known at the very instant it decided:
+ * every matched difference is exactly zero, so the interval is [0, 0] and the
+ * uncapped verdict is PRACTICALLY NEGLIGIBLE — a claim-bearing verdict, the
+ * only kind §K's truth-set cap changes. Without it, a composer that dropped
+ * the caller's truthSetAvailable for a constant would pass every case above,
+ * because DESCRIPTIVE is never capped.
+ */
+function zeroFixture() {
+  const built: Built[] = [];
+  const controls: TradeReportEvent[] = [];
+  for (const day of DAYS) {
+    const b = signal(`${day}-z`, day, 10, 5);
+    built.push(b);
+    // providerReceiveTime is eventTime + 3, so availableAt is the A signal's decisionAt.
+    for (let i = 0; i < 5; i++) controls.push(trade(day, b.signal.decisionAt - 3));
+  }
+  return assemble(built, controls);
+}
+
+test('§K: the caller\'s truth-set answer reaches the verdict, in both directions', () => {
+  const f = zeroFixture();
+  const at = (truthSetAvailable: boolean) =>
+    runH001Analysis({ signals: f.signals, tape: f.tape, quotes: QUOTES, ctx: CTX, truthSetAvailable, replicates: 200 });
+  const without = at(false);
+  // The premise first: two matched meta-events, every difference exactly zero.
+  assert.equal(without.primary.n.metaEvents, 2);
+  for (const m of without.controls.matches) {
+    assert.equal(m.status, 'MATCHED');
+    assert.equal(m.controls.length, 5);
+    assert.equal(m.differenceBp, 0);
+  }
+  assert.deepEqual(without.primary.ci95, { lo: 0, hi: 0 });
+  assert.equal(without.primary.uncappedVerdict, 'PRACTICALLY NEGLIGIBLE');
+  assert.equal(without.primary.verdict, 'INCONCLUSIVE');
+  const withTruth = at(true);
+  assert.equal(withTruth.primary.verdict, 'PRACTICALLY NEGLIGIBLE');
+  assert.equal(withTruth.primary.uncappedVerdict, 'PRACTICALLY NEGLIGIBLE');
 });
