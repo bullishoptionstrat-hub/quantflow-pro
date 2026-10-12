@@ -36,6 +36,15 @@
  * to refuse it. Inventing a bound here would be changing a preregistered rule
  * in code, so the exit's age is returned on every measurement instead
  * (`exitAgeMs`) and the decision is left to whoever can amend the hypothesis.
+ *
+ * **A day's quotes are indexed once, and the index is held to the scan.**
+ * `markAt` over a plain array filters every quote on every call, and a study
+ * calls it per signal, per meta-event, per control, per clock draw and 31 times
+ * per balance window — on a feed of hundreds of thousands of SPY updates a day.
+ * `quoteBook` sorts a copy by event time once and answers each mark by binary
+ * search. It is not a second rule: the array path is kept as the reference, a
+ * test holds the two to identical answers over randomised books (ties, late
+ * arrivals, one-sided quotes), and either may be passed wherever a mark is taken.
  */
 
 /** §C: t_entry = decisionAt + 1 s. */
@@ -76,6 +85,63 @@ export type H001Return =
   | { status: 'NO_ENTRY_MARK'; entry: Extract<Mark, { ok: false }> }
   | { status: 'NO_EXIT_MARK'; entry: Extract<Mark, { ok: true }>; exit: Extract<Mark, { ok: false }> };
 
+/**
+ * A day's quotes, indexed for repeated marks. Built once by `quoteBook`; the
+ * input array is copied, so a caller mutating it afterwards cannot desync the
+ * index from what it was built over.
+ */
+export class QuoteBook {
+  /** Quotes with a readable event time, stably sorted by it (ties keep input order). */
+  private readonly byEvent: readonly UnderlyingQuote[];
+  /** How many distinct providers the input carried — §C's one-feed rule reads it. */
+  readonly providerCount: number;
+
+  constructor(quotes: readonly UnderlyingQuote[]) {
+    this.providerCount = new Set(quotes.map((q) => q.provider)).size;
+    // A NaN event time is never at-or-before any instant, so the scan never
+    // selects it; dropping it here keeps the sort's comparator total.
+    this.byEvent = quotes.filter((q) => !Number.isNaN(q.eventTime))
+      .map((q, i) => ({ q, i }))
+      .sort((a, b) => a.q.eventTime - b.q.eventTime || a.i - b.i)
+      .map((x) => x.q);
+  }
+
+  /** The number of quotes stamped at or before `at`. */
+  private countThrough(at: number): number {
+    let lo = 0;
+    let hi = this.byEvent.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (this.byEvent[mid]!.eventTime <= at) lo = mid + 1; else hi = mid;
+    }
+    return lo;
+  }
+
+  /** The quotes the scan would call eligible at the latest qualifying instant, in input order. */
+  latestEligible(at: number, requireAvailableBy: boolean): UnderlyingQuote[] {
+    const e = this.byEvent;
+    let i = this.countThrough(at) - 1;
+    if (requireAvailableBy) while (i >= 0 && !(e[i]!.availableAt <= at)) i--;
+    if (i < 0) return [];
+    const latest = e[i]!.eventTime;
+    let start = i;
+    while (start > 0 && e[start - 1]!.eventTime === latest) start--;
+    const out: UnderlyingQuote[] = [];
+    for (let k = start; k < e.length && e[k]!.eventTime === latest; k++) {
+      if (!requireAvailableBy || e[k]!.availableAt <= at) out.push(e[k]!);
+    }
+    return out;
+  }
+}
+
+/** Index a day's quotes once, for a study that takes many marks against them. */
+export function quoteBook(quotes: readonly UnderlyingQuote[]): QuoteBook {
+  return new QuoteBook(quotes);
+}
+
+/** Where a mark can be read from: the plain array (the reference scan) or its index. */
+export type QuoteSource = readonly UnderlyingQuote[] | QuoteBook;
+
 function midpointOf(q: UnderlyingQuote): number | null {
   if (q.bid === null || q.ask === null) return null;
   if (!(Number.isFinite(q.bid) && Number.isFinite(q.ask)) || q.bid <= 0 || q.ask <= 0) return null;
@@ -88,20 +154,29 @@ function midpointOf(q: UnderlyingQuote): number | null {
  * also known by it, optionally no older than a bound.
  */
 export function markAt(
-  quotes: readonly UnderlyingQuote[],
+  quotes: QuoteSource,
   at: number,
   rule: { requireAvailableBy: boolean; maxAgeMs: number | null },
 ): Mark {
-  const eligible = quotes.filter((q) =>
-    q.eventTime <= at && (!rule.requireAvailableBy || q.availableAt <= at));
-  if (eligible.length === 0) {
+  let atLatest: UnderlyingQuote[];
+  if (quotes instanceof QuoteBook) {
+    atLatest = quotes.latestEligible(at, rule.requireAvailableBy);
+  } else {
+    const eligible = quotes.filter((q) =>
+      q.eventTime <= at && (!rule.requireAvailableBy || q.availableAt <= at));
+    atLatest = [];
+    if (eligible.length > 0) {
+      let latest = eligible[0]!.eventTime;
+      for (const q of eligible) if (q.eventTime > latest) latest = q.eventTime;
+      atLatest = eligible.filter((q) => q.eventTime === latest);
+    }
+  }
+  if (atLatest.length === 0) {
     return { ok: false, at, refusal: 'NO_QUOTE', why: rule.requireAvailableBy
       ? 'no quote was both stamped and known by the instant'
       : 'no quote was stamped by the instant' };
   }
-  let latest = eligible[0]!.eventTime;
-  for (const q of eligible) if (q.eventTime > latest) latest = q.eventTime;
-  const atLatest = eligible.filter((q) => q.eventTime === latest);
+  const latest = atLatest[0]!.eventTime;
   const ageMs = at - latest;
   if (rule.maxAgeMs !== null && ageMs > rule.maxAgeMs) {
     return { ok: false, at, refusal: 'STALE', why: `the latest qualifying quote is ${ageMs} ms old; the bound is ${rule.maxAgeMs} ms` };
@@ -121,11 +196,11 @@ export function markAt(
  * own availableAt). Quotes must come from one provider: entry and exit read
  * against two clocks would measure their offset as much as the market.
  */
-export function h001Return(anchor: number, quotes: readonly UnderlyingQuote[]): H001Return {
+export function h001Return(anchor: number, quotes: QuoteSource): H001Return {
   if (!Number.isFinite(anchor)) throw new RangeError('the anchor must be an instant');
-  const providers = new Set(quotes.map((q) => q.provider));
-  if (providers.size > 1) {
-    throw new RangeError(`quotes from ${providers.size} providers; §C measures both marks on one feed`);
+  const providers = quotes instanceof QuoteBook ? quotes.providerCount : new Set(quotes.map((q) => q.provider)).size;
+  if (providers > 1) {
+    throw new RangeError(`quotes from ${providers} providers; §C measures both marks on one feed`);
   }
   const tEntry = anchor + H001_ENTRY_LATENCY_MS;
   const entry = markAt(quotes, tEntry, { requireAvailableBy: true, maxAgeMs: H001_ENTRY_MAX_AGE_MS });

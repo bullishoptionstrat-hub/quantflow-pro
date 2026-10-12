@@ -10,6 +10,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { buildTradeEvent } from '../src/events/build';
 import type { RawTradeRecord } from '../src/events/build';
 import type { MarketEvent, TradeReportEvent } from '../src/events/types';
@@ -333,4 +335,15 @@ test('§K: the caller\'s truth-set answer reaches the verdict, in both direction
   const withTruth = at(true);
   assert.equal(withTruth.primary.verdict, 'PRACTICALLY NEGLIGIBLE');
   assert.equal(withTruth.primary.uncappedVerdict, 'PRACTICALLY NEGLIGIBLE');
+});
+
+test('the composer indexes the quotes once and takes every mark from that index', () => {
+  // The speed is the index's; a stray `input.quotes` below the book would put
+  // a full scan back into that call path while every answer stayed the same.
+  const src = readFileSync(join(__dirname, '../src/research/h001Analysis.ts'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  const body = src.slice(src.indexOf('export function analyseH001('));
+  const fn = body.slice(0, body.indexOf('\n}\n'));
+  assert.deepEqual(fn.match(/input\.quotes/g), ['input.quotes']);
+  assert.match(fn, /const quotes = quoteBook\(input\.quotes\)/);
 });
