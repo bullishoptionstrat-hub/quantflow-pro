@@ -265,3 +265,10 @@ It requires them to agree on every result and on which quote object is
 returned, and it asserts that the sample reaches all five outcomes. A guard
 holds that `analyseH001` builds one book and takes every mark from it. Eight
 mutations were run, and each was caught, mostly by the comparison test.
+
+One limit, which costs speed but never correctness. Under the entry rule, a
+mark walks back over every quote stamped by the instant but not yet known by
+it. The speedup therefore assumes quotes become known soon after they are
+stamped. A vendor whose `availableAt` is a bulk-delivery time would bring the
+book back toward the old scan's cost. It is never slower than the scan, and it
+never answers differently.
