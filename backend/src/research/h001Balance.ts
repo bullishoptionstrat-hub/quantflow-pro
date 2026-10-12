@@ -23,8 +23,12 @@
  *       stale mark repeats a price, which reads as zero return and biases
  *       volatility low — the flattering direction for a balance check.
  *   V3  A unit with any refused mark is unmeasurable: excluded and counted,
- *       never filled. That includes every event in the first 30 minutes of a
- *       session that has no quotes before the open.
+ *       never filled. So is a unit whose window starts before its session's
+ *       published regular open — every event in the first 30 minutes — and
+ *       one whose session the calendar cannot place. That is a rule, not a
+ *       consequence of the quotes: without it, whether pre-market quotes
+ *       entered the window would depend on where a vendor's file began, and
+ *       the same code would report different coverage on two vendors.
  *   V4  The comparison is over matched pairs — the set Δ_AC is computed on. An
  *       A meta-event whose own volatility is unmeasurable, or none of whose
  *       controls is measurable, leaves the comparison with its controls.
@@ -38,6 +42,8 @@
 import { markAt, H001_ENTRY_LATENCY_MS, H001_ENTRY_MAX_AGE_MS } from './h001Marks';
 import type { UnderlyingQuote } from './h001Marks';
 import type { AMatch } from './h001Controls';
+import { marketDateOf, sessionOn } from '../flow-engine/calendar';
+import { instantEt } from '../market/civil';
 
 /** §G: trailing 30 minutes. */
 export const H001_RV_WINDOW_MS = 30 * 60_000;
@@ -52,10 +58,18 @@ export type RvResult = { ok: true; rvBp: number } | { ok: false; why: string };
 export function trailingRv(anchor: number, quotes: readonly UnderlyingQuote[]): RvResult {
   if (!Number.isFinite(anchor)) throw new RangeError('the anchor must be an instant');
   const end = anchor + H001_ENTRY_LATENCY_MS;
+  const start = end - H001_RV_WINDOW_MS;
+  // V3: the window lies inside the regular session, whatever quotes exist.
+  const date = marketDateOf(end);
+  const s = date === null ? null : sessionOn(date);
+  const open = date === null || s === null || s.openHour === null || s.openMinute === null
+    ? null : instantEt(date, s.openHour, s.openMinute);
+  if (open === null) return { ok: false, why: 'the calendar cannot place this session\'s regular open' };
+  if (start < open) return { ok: false, why: `the 30-minute window starts ${Math.ceil((open - start) / 60_000)} min before the regular open` };
   const steps = H001_RV_WINDOW_MS / H001_RV_STEP_MS;
   const mids: number[] = [];
   for (let k = 0; k <= steps; k++) {
-    const at = end - H001_RV_WINDOW_MS + k * H001_RV_STEP_MS;
+    const at = start + k * H001_RV_STEP_MS;
     const m = markAt(quotes, at, { requireAvailableBy: true, maxAgeMs: H001_ENTRY_MAX_AGE_MS });
     if (!m.ok) return { ok: false, why: `grid mark ${k} of ${steps} (${new Date(at).toISOString()}): ${m.refusal} — ${m.why}` };
     mids.push(m.midpoint);

@@ -76,10 +76,25 @@ test('V2, V3: a stale or missing mark makes the unit unmeasurable, never filled'
   const r = trailingRv(anchor, outage);
   assert.equal(r.ok, false);
   assert.match((r as { why: string }).why, /STALE/);
-  // Ten minutes after the open, the window reaches back before the first quote.
-  const early = trailingRv(ET(9, 40), quotes);
+});
+
+test('V3: a window reaching before the regular open is unmeasurable, even with pre-market quotes present', () => {
+  const { quotes } = path();
+  // Pre-market quotes from 08:00, so a window from 09:10 has every mark it asks for.
+  const pre: UnderlyingQuote[] = [];
+  for (let t = ET(8, 0); t < ET(9, 30); t += 1_000) pre.push({ provider: 'p', eventTime: t, availableAt: t, bid: 549.99, ask: 550.01 });
+  const early = trailingRv(ET(9, 40), [...pre, ...quotes]);
   assert.equal(early.ok, false);
-  assert.match((early as { why: string }).why, /NO_QUOTE/);
+  assert.match((early as { why: string }).why, /before the regular open/);
+  // The first measurable instant: t_entry exactly 30 minutes after the open.
+  assert.equal(trailingRv(ET(9, 59, 59), [...pre, ...quotes]).ok, true);
+  assert.equal(trailingRv(ET(9, 59, 58), [...pre, ...quotes]).ok, false);
+  // A Saturday has no session the calendar can open, quotes or not.
+  const sat = Date.parse('2026-03-14T15:00:00.000Z');
+  const satQuotes = [...pre, ...quotes].map((q) => ({ ...q, eventTime: q.eventTime + 4 * 86_400_000, availableAt: q.availableAt + 4 * 86_400_000 }));
+  const r = trailingRv(sat, satQuotes);
+  assert.equal(r.ok, false);
+  assert.match((r as { why: string }).why, /cannot place/);
 });
 
 test('V4, V5: each A weight 1, each of its k controls 1/k — worked by hand', () => {

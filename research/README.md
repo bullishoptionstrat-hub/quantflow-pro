@@ -234,8 +234,12 @@ window is its own. The readings:
   repeats a price, which reads as zero return and biases volatility low, the
   flattering direction for a balance check.
 - **V3** A unit with any refused mark is unmeasurable. It is counted and never
-  filled. This covers every event in a session's first 30 minutes when no
-  quotes exist before the open.
+  filled. So is a unit whose window starts before its session's published
+  regular open, meaning every event in the first 30 minutes, whatever quotes
+  exist. As first written, this depended on whether the vendor's file had
+  pre-market quotes. The same code would then have reported different
+  coverage on two vendors, so it is now a rule, tested with pre-market quotes
+  present.
 - **V4** The comparison is over matched pairs. An A meta-event with no
   measurable window, or with no measurable control, leaves the comparison
   together with its controls. Each A has weight 1 and each of its k controls
