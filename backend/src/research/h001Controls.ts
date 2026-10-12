@@ -82,8 +82,8 @@
  * D supports no claim (§K): it is reported, with a day-clustered interval
  * from `h001SecondaryInterval`, and decides nothing.
  *
- * Not implemented here, and a report built on it must say so: the trailing
- * 30-minute realised-volatility balance diagnostic (§G, decides nothing).
+ * The trailing 30-minute realised-volatility balance diagnostic (§G, decides
+ * nothing) is `h001Balance.ts`, which reads each control's `anchor`.
  */
 import type { TradeReportEvent } from '../events/types';
 import type { TapeView } from '../events/eventLog';
@@ -190,6 +190,8 @@ export function keyString(k: MatchKey): string {
 export interface Control {
   eventId: string;
   key: MatchKey;
+  /** The instant §C measured this control from: its own availableAt. */
+  anchor: number;
   returnBp: number;
 }
 
@@ -237,7 +239,7 @@ export function controlPool(
     if (!key.ok) { no(`no match key: ${key.why}`); continue; }
     const r = h001Return(e.availableAt, quotes);
     if (r.status !== 'OK') { no(`no §C return: ${r.status}`); continue; }
-    pool.push({ eventId: e.eventId, key: key.key, returnBp: r.returnBp });
+    pool.push({ eventId: e.eventId, key: key.key, anchor: e.availableAt, returnBp: r.returnBp });
   }
   return { pool, rejected };
 }
@@ -260,6 +262,8 @@ export type AMatchStatus = 'MATCHED' | 'NO_KEY' | 'NO_MATCH';
 export interface AMatch {
   metaEventId: string;
   date: string;
+  /** The instant §C measured the A meta-event from: its first signal's decisionAt. */
+  anchor: number;
   status: AMatchStatus;
   key: MatchKey | null;
   why: string | null;
@@ -327,7 +331,7 @@ export function matchControls(input: {
   for (const { a, date } of inStreamOrder(input.a)) {
     const r = returnOfA(a, input.quotes);
     const key = matchKeyOf({ anchor: a.startsAt, expiry: a.expiry, strike: a.strike, premium: a.premium }, input.quotes);
-    const base = { metaEventId: a.metaEventId, date, returnBp: r };
+    const base = { metaEventId: a.metaEventId, date, anchor: a.startsAt, returnBp: r };
     if (!key.ok) {
       matches.push({ ...base, status: 'NO_KEY', key: null, why: key.why, controls: [], controlMeanBp: null, differenceBp: null });
       continue;

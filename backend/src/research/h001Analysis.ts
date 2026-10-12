@@ -63,6 +63,8 @@ import type { AMetaEvent, H001ClockMatching, H001Matching } from './h001Controls
 import { h001SecondaryInterval, h001Verdict } from './h001Verdict';
 import { h001Cr2Interval } from './h001Cr2';
 import type { H001Cr2Result } from './h001Cr2';
+import { h001VolBalance } from './h001Balance';
+import type { H001BalanceResult } from './h001Balance';
 import type { H001Result, Interval, Observation } from './h001Verdict';
 
 /** A signal as the study receives it; `marks` is measured here (X3), never supplied. */
@@ -94,7 +96,6 @@ export interface H001MetaEventRow {
 
 /** Diagnostics the frozen text names that this report does not compute. */
 export const H001_ABSENT: ReadonlyArray<{ item: string; section: string; decides: boolean }> = [
-  { item: 'trailing 30-minute realised-volatility balance of A versus C (SMD > 0.1 flagged)', section: '§G', decides: false },
   { item: 'sensitivity: staleness bounds of 1 s and 5 s', section: '§I', decides: false },
   { item: 'sensitivity and §J secondary: the as-known replay with cancelled trades included', section: '§I, §J', decides: false },
   { item: 'exploratory endpoints H1 and D1', section: '§K', decides: false },
@@ -115,6 +116,8 @@ export interface H001Report {
   /** §D's cross-check on the same matched differences as `primary` — decides nothing. */
   cr2: H001Cr2Result;
   controls: Pick<H001Matching, 'matches' | 'poolSize' | 'rejected' | 'unmatchedA'>;
+  /** §G's trailing-volatility balance of the matched set — decides nothing. */
+  balance: H001BalanceResult;
   clock: H001ClockMatching & {
     /** Δ_AD — secondary, decides nothing (§K). */
     deltaAD: { estimateBp: number | null; ci95: Interval | null; n: { observations: number; days: number } };
@@ -255,6 +258,7 @@ export function analyseH001(input: H001AnalysisInput): H001Core {
     primary,
     cr2: h001Cr2Interval(c.primary),
     controls: { matches: c.matches, poolSize: c.poolSize, rejected: c.rejected, unmatchedA: c.unmatchedA },
+    balance: h001VolBalance(c.matches, input.quotes),
     clock: { ...d, deltaAD: h001SecondaryInterval(d.differences, opts) },
     absent: H001_ABSENT,
   };
