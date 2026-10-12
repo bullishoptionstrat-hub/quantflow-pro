@@ -80,8 +80,10 @@ Five readings it had to make, each open to challenge before any data is read:
   `DESCRIPTIVE` makes no claim and is not capped.
 - **R4** Leave-one-day-out re-runs the same seeded bootstrap without the day;
   the weekly bootstrap clusters by Monday-start calendar week.
-- **R5** §D's CR2 cross-check "decides nothing" and is not implemented; a report
-  built on this module must add it or say it is absent.
+- **R5** §D's CR2 cross-check "decides nothing", so the verdict module does not
+  compute it. Since 2026-10-12 it lives in `h001Cr2.ts` and the report carries
+  it beside the verdict (see that entry); a test holds that the verdict never
+  reads it.
 
 **2026-10-06.** §G's primary control is code: `backend/src/research/h001Controls.ts`
 draws up to five C controls per A meta-event, without replacement, seed
@@ -167,6 +169,27 @@ Five readings it had to make, each open to challenge before any data is read:
   classification".
 
 The report carries `absent`: every diagnostic the frozen text names and this
-code does not compute (§G volatility balance, §D CR2, §I sensitivities, §J
-as-known secondary, §K's H1/D1). All of them decide nothing, so the verdict is
+code does not compute (§G volatility balance, §I sensitivities, §J as-known
+secondary, §K's H1/D1; §D's CR2 until 2026-10-12). All of them decide nothing, so the verdict is
 complete without them; the report is not, and says so.
+
+**2026-10-12.** §D's CR2 cross-check is code: `backend/src/research/h001Cr2.ts`,
+and the report carries it as `cr2`, computed on exactly the matched differences
+the verdict reads. It decides nothing, says so on the payload (`decides:
+false`), and the verdict module never imports it. Δ_AC is a pooled mean, so the
+model is intercept-only and CR2 has a closed form, `V = Σ_g S_g² / (N²(1 −
+n_g/N))`. The tests check that form three ways that do not share its
+derivation: with one observation per day it gives s²/N; with equal-sized days
+it gives G/(G−1)·CR0; and on unequal days it matches a brute-force evaluation
+of the general matrix formula. Two readings:
+
+- **R6** The critical value is Student t with Bell–McCaffrey (Satterthwaite)
+  degrees of freedom under a homoskedastic working model. That is the pairing
+  Imbens & Kolesár (2016) recommend for CR2. §D names the estimator and no
+  reference distribution. With equal-sized days the degrees of freedom are
+  exactly G − 1, the usual alternative. They fall below G − 1 as days become
+  unequal, which widens the interval. The report carries the value used.
+- **R7** Fewer than two days gives no interval. One cluster has no
+  between-day variation to estimate, which is the same floor the bootstrap
+  uses.
+

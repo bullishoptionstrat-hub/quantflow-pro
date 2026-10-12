@@ -47,8 +47,9 @@
  *   R4  Leave-one-day-out re-runs the same bootstrap (same seed) without the
  *       day; the weekly bootstrap clusters by Monday-start calendar week of
  *       the market date.
- *   R5  §D's CR2 cross-check "decides nothing" and is not implemented here; a
- *       report built on this module must add it or say it is absent.
+ *   R5  §D's CR2 cross-check "decides nothing", so it is not computed here:
+ *       it lives in `h001Cr2.ts`, and the report sets it beside this result.
+ *       Nothing in this module reads it, which a test holds.
  */
 
 /** §D. */
