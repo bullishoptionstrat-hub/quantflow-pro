@@ -169,8 +169,8 @@ Five readings it had to make, each open to challenge before any data is read:
   classification".
 
 The report carries `absent`: every diagnostic the frozen text names and this
-code does not compute (§G volatility balance, §I's staleness sensitivities,
-§J as-known secondary, §K's H1/D1; §D's CR2 and §I's $100k floor until
+code does not compute (§I's staleness sensitivities, §J as-known secondary,
+§K's H1/D1; §D's CR2, §I's $100k floor and §G's volatility balance until
 2026-10-12). All of them decide nothing, so the verdict is
 complete without them; the report is not, and says so.
 
@@ -218,4 +218,29 @@ re-running at 1 s or 5 s needs signal sets formed under those bounds as input.
 That is a question of how the data is supplied, not something the composer can
 compute. §C's entry-mark bound is also 2 s, but it is a different rule; §I's
 section is classification robustness, so it is not read as §C's.
+
+**2026-10-12.** §G's balance diagnostic is code: `backend/src/research/h001Balance.ts`.
+The report's `balance` field carries the trailing 30-minute realised volatility
+of the matched A meta-events against their C controls. It gives the
+standardized mean difference and flags an SMD above 0.1 in absolute value. It
+decides nothing, and the verdict module never imports it. Controls and A
+matches now carry the instant §C measured them from (`anchor`), so each unit's
+window is its own. The readings:
+
+- **V1** RV is √Σr² over the 30 one-minute log returns of the SPY midpoint, in
+  bp. The grid is 31 marks ending at the unit's §C entry instant.
+- **V2** Each grid mark obeys §C's entry rule: stamped and known by the
+  instant, no older than 2 s, and a two-sided, uncrossed book. A stale mark
+  repeats a price, which reads as zero return and biases volatility low, the
+  flattering direction for a balance check.
+- **V3** A unit with any refused mark is unmeasurable. It is counted and never
+  filled. This covers every event in a session's first 30 minutes when no
+  quotes exist before the open.
+- **V4** The comparison is over matched pairs. An A meta-event with no
+  measurable window, or with no measurable control, leaves the comparison
+  together with its controls. Each A has weight 1 and each of its k controls
+  weight 1/k.
+- **V5** SMD = (mean_A − mean_C) / √((var_A + var_C) / 2), with both variances
+  on the (Σw − 1) divisor. It is flagged when |SMD| > 0.1, because imbalance in
+  either direction is imbalance.
 
