@@ -48,6 +48,32 @@
  *       carries `decides: false`, and the primary is computed without
  *       reference to it, which a test holds.
  *
+ * §J's secondary — "the pure as-known replay, cancelled trades included" — is
+ * the same pipeline run as the as-known study (`H001Study`). Five readings:
+ *
+ *   J1  The candidates are the same, and §L's final-tape rule is the
+ *       primary's alone. The revision record already says what an as-known
+ *       study does with every status (`asKnownStudies: 'INCLUDE'`), so
+ *       INVALIDATED_BY_CORRECTION, REVISED, EVIDENCE_UNRESOLVED and revisions
+ *       read from an as-known view all enter, and every other §L rule applies
+ *       unchanged. §L's "no … cancelled prints" is the detector's refusal of
+ *       a cancel MESSAGE (`detector.ts`), never of a trade cancelled later.
+ *   J2  Its C pool admits executions in every final-tape state — CANCELLED and
+ *       CANCEL_UNRESOLVED included — and keeps every other M7 filter. A live
+ *       system saw a later-cancelled trade as an execution; drawing the
+ *       as-known A against a final-tape C would compare two replays.
+ *   J3  §I's sensitivity "the as-known replay including signals later
+ *       cancelled" and §J's secondary "the pure as-known replay, cancelled
+ *       trades included" are one computation, named in two sections.
+ *   J4  A REVISED signal enters with the content it formed with. Recomputing
+ *       it is the final-tape study's consequence (`RECOMPUTE_BEFORE_USE`);
+ *       the as-known question is what the live system had.
+ *   J5  Everything downstream is S2's: the same quotes, meta-event rule,
+ *       draws, verdict rule and §K cap; labelled, `decides: false`, and the
+ *       primary computed without reference to it. It reports which revision
+ *       statuses it admitted that the primary did not, so a reader can see
+ *       exactly what the two answers differ by.
+ *
  * What the report does NOT contain is listed on it, in `absent`, because a
  * report that is silent about a missing diagnostic reads as one that ran it.
  */
@@ -55,7 +81,8 @@ import type { TapeView } from '../events/eventLog';
 import { groupMetaEvents } from './metaEvents';
 import type { MetaEvent } from './metaEvents';
 import { h001Eligibility } from './h001Eligibility';
-import type { H001Candidate, H001Context, H001Eligibility, H001Rule } from './h001Eligibility';
+import type { H001Candidate, H001Context, H001Eligibility, H001Rule, H001Study } from './h001Eligibility';
+import type { RevisionStatus } from '../events/signalRevision';
 import { h001Return, quoteBook, QuoteBook, H001_HORIZON_MS } from './h001Marks';
 import type { QuoteSource } from './h001Marks';
 import { matchClockControls, matchControls } from './h001Controls';
@@ -97,7 +124,6 @@ export interface H001MetaEventRow {
 /** Diagnostics the frozen text names that this report does not compute. */
 export const H001_ABSENT: ReadonlyArray<{ item: string; section: string; decides: boolean }> = [
   { item: 'sensitivity: staleness bounds of 1 s and 5 s', section: '§I', decides: false },
-  { item: 'sensitivity and §J secondary: the as-known replay with cancelled trades included', section: '§I, §J', decides: false },
   { item: 'exploratory endpoints H1 and D1', section: '§K', decides: false },
 ];
 
@@ -124,6 +150,8 @@ export interface H001Report {
   };
   sensitivities: {
     premiumFloor: H001Sensitivity & { floor: number; belowFloor: number };
+    /** §I's as-known replay, which is also §J's secondary (J3). */
+    asKnown: H001Sensitivity & { admittedOnlyAsKnown: H001AsKnownAdmissions };
   };
   absent: typeof H001_ABSENT;
 }
@@ -133,9 +161,21 @@ export interface H001Sensitivity {
   included: { A: number; B: number };
   metaEvents: { A: number; B: number };
   unmatchedA: number;
+  /** The C pool the re-run drew from: S1 and J2 both change what is in it. */
+  poolSize: number;
   primary: H001Result;
   cr2: H001Cr2Result;
   decides: false;
+}
+
+/**
+ * J5: the signals the as-known study included and the primary did not, by why
+ * the primary left them out — their final-tape status, or `AS_KNOWN_VIEW` for a
+ * revision that was never read from the final tape at all.
+ */
+export interface H001AsKnownAdmissions {
+  count: number;
+  byStatus: Partial<Record<RevisionStatus | 'AS_KNOWN_VIEW', number>>;
 }
 
 /** §I: the alternative premium floor. */
@@ -155,15 +195,18 @@ function contractOf(s: H001Signal): { expiry: string; strike: number } {
 export function runH001Analysis(input: H001AnalysisInput): H001Report {
   // One index for the primary and every sensitivity: same quotes, sorted once.
   const quotes = bookOf(input.quotes);
-  const core = analyseH001({ ...input, quotes });
+  const core = analyseH001({ ...input, quotes }, 'FINAL_TAPE');
   // S1: the floor is applied to candidates, before §L and §B.
   const floor = H001_SENSITIVITY_PREMIUM_FLOOR;
   const kept = input.signals.filter((s) => Number.isFinite(s.totalPremium) && s.totalPremium >= floor);
-  const p = analyseH001({ ...input, quotes, signals: kept });
+  const p = analyseH001({ ...input, quotes, signals: kept }, 'FINAL_TAPE');
+  // J1–J5: the same candidates, tape and quotes, as the as-known study.
+  const k = analyseH001({ ...input, quotes }, 'AS_KNOWN');
   return {
     ...core,
     sensitivities: {
       premiumFloor: { floor, belowFloor: input.signals.length - kept.length, ...sensitivityOf(p) },
+      asKnown: { ...sensitivityOf(k), admittedOnlyAsKnown: admittedOnlyAsKnown(input.signals, core, k) },
     },
     absent: core.absent,
   };
@@ -175,18 +218,42 @@ function sensitivityOf(r: H001Core): H001Sensitivity {
     included: r.eligibility.included,
     metaEvents: { A: count('A'), B: count('B') },
     unmatchedA: r.controls.unmatchedA,
+    poolSize: r.controls.poolSize,
     primary: r.primary,
     cr2: r.cr2,
     decides: false,
   };
 }
 
+/** J5: what the as-known study admitted that the primary did not, and why the primary did not. */
+function admittedOnlyAsKnown(signals: readonly H001Signal[], primary: H001Core, asKnown: H001Core): H001AsKnownAdmissions {
+  const inPrimary = new Set(primary.eligibility.rows.filter((r) => r.verdict === 'INCLUDED').map((r) => r.signalId));
+  const revisionOf = new Map(signals.map((s) => [s.signalId, s.finalRevision]));
+  const tally: H001AsKnownAdmissions['byStatus'] = {};
+  let count = 0;
+  for (const r of asKnown.eligibility.rows) {
+    if (r.verdict !== 'INCLUDED' || inPrimary.has(r.signalId)) continue;
+    const rev = revisionOf.get(r.signalId)!;
+    const why = rev.evaluatedAt !== null ? 'AS_KNOWN_VIEW' : rev.status;
+    tally[why] = (tally[why] ?? 0) + 1;
+    count++;
+  }
+  // Keys in a fixed order, as `byRule` is, so the bytes do not depend on input order.
+  const byStatus: H001AsKnownAdmissions['byStatus'] = {};
+  for (const key of (Object.keys(tally) as Array<keyof typeof tally>).sort()) byStatus[key] = tally[key];
+  return { count, byStatus };
+}
+
 function bookOf(q: QuoteSource): QuoteBook {
   return q instanceof QuoteBook ? q : quoteBook(q);
 }
 
-/** The primary pipeline. Exported so a test can hold the primary to it; a study calls `runH001Analysis`. */
-export function analyseH001(input: H001AnalysisInput): H001Core {
+/**
+ * The pipeline for one §J study. Exported so a test can hold the primary
+ * ('FINAL_TAPE') and the as-known secondary to it; a study calls
+ * `runH001Analysis`, which runs both.
+ */
+export function analyseH001(input: H001AnalysisInput, study: H001Study): H001Core {
   // Indexed once: every mark below reads the same book (see h001Marks.ts).
   const quotes = bookOf(input.quotes);
   // §L, with X3's marks.
@@ -199,7 +266,7 @@ export function analyseH001(input: H001AnalysisInput): H001Core {
     seen.add(s.signalId);
     const r = h001Return(s.decisionAt, quotes);
     const marks = { entry: r.status !== 'NO_ENTRY_MARK', exit: r.status === 'OK' };
-    const e = h001Eligibility({ ...s, marks }, input.ctx);
+    const e = h001Eligibility({ ...s, marks }, input.ctx, study);
     rows.push(e);
     for (const rule of new Set(e.findings.map((f) => f.rule))) {
       const tally = byRule[rule] ?? { fail: 0, unknown: 0 };
@@ -238,7 +305,7 @@ export function analyseH001(input: H001AnalysisInput): H001Core {
     const first = bySignal.get(m.signalIds[0]!)!;
     return { metaEventId: m.metaEventId, startsAt: m.startsAt, ...contractOf(first), premium: first.totalPremium };
   });
-  const c = matchControls({ a, tape: input.tape, excludedEventIds, quotes });
+  const c = matchControls({ a, tape: input.tape, excludedEventIds, quotes, study });
   const d = matchClockControls({ a, quotes });
 
   const opts = input.replicates === undefined ? {} : { replicates: input.replicates };

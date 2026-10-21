@@ -170,9 +170,9 @@ Five readings it had to make, each open to challenge before any data is read:
   classification".
 
 The report carries `absent`: every diagnostic the frozen text names and this
-code does not compute (§I's staleness sensitivities, §J as-known secondary,
-§K's H1/D1; §D's CR2, §I's $100k floor and §G's volatility balance until
-2026-10-12). All of them decide nothing, so the verdict is
+code does not compute (§I's staleness sensitivities, §K's H1/D1; §D's CR2,
+§I's $100k floor and §G's volatility balance until 2026-10-12; §J's as-known
+secondary until 2026-10-21). All of them decide nothing, so the verdict is
 complete without them; the report is not, and says so.
 
 **2026-10-12.** §D's CR2 cross-check is code: `backend/src/research/h001Cr2.ts`,
@@ -272,3 +272,53 @@ it. The speedup therefore assumes quotes become known soon after they are
 stamped. A vendor whose `availableAt` is a bulk-delivery time would bring the
 book back toward the old scan's cost. It is never slower than the scan, and it
 never answers differently.
+
+**2026-10-21.** §J's secondary is code. "The pure as-known replay, cancelled
+trades included" is the same pipeline run as the *as-known study*: the report's
+`sensitivities.asKnown` runs it on the same candidates, tape and quotes, carries
+`decides: false`, and the primary is byte-identical with or without it, as a
+test holds. A required `study` argument (`'FINAL_TAPE' | 'AS_KNOWN'`) now goes
+to §L's eligibility and to the C pool. It is checked, never defaulted, because
+a misspelt study would otherwise reach the permissive branch. Five readings,
+each open to challenge before any data is read:
+
+- **J1** The two studies differ in §L's final-tape rule and in nothing else.
+  The revision record already says what an as-known study does with every
+  status (`consequence.asKnownStudies: 'INCLUDE'`: "every signal that formed is
+  in, whatever happened later"). So INVALIDATED_BY_CORRECTION, REVISED,
+  EVIDENCE_UNRESOLVED and revisions read from an as-known view all enter. Every
+  other §L rule applies unchanged. §L's "no … cancelled prints" is the
+  detector refusing a cancel *message*, never a trade cancelled later. A test
+  pins the premise to `signalRevision.ts`: if an as-known study ever dropped a
+  status there, the secondary would have to follow.
+- **J2** The as-known C pool admits executions in every final-tape state,
+  CANCELLED and CANCEL_UNRESOLVED included, and keeps every other M7 filter.
+  A live system saw a later-cancelled trade as an execution, and an as-known A
+  drawn against a final-tape C would compare two different replays. Executions
+  that are evidence of an A or B meta-event stay out of the pool (X5), in
+  either state.
+- **J3** §I's "as-known replay including signals later cancelled" and §J's
+  "pure as-known replay, cancelled trades included" are read as one
+  computation, named in two sections.
+- **J4** A REVISED signal enters with the content it formed with. Recomputing
+  it is the final-tape study's consequence (`RECOMPUTE_BEFORE_USE`). The
+  as-known question is what the live system had.
+- **J5** Everything downstream is S2's: the same quotes, meta-event rule,
+  draws, verdict rule and §K cap. The block carries `admittedOnlyAsKnown`,
+  which counts the signals it included and the primary did not, by why the
+  primary left them out: their final-tape status, or `AS_KNOWN_VIEW` for a
+  revision never read from the final tape. A reader can see exactly what the
+  two answers differ by. Each sensitivity now also reports the `poolSize` it
+  drew from, because S1 and J2 both change what is in the pool.
+
+The $100k floor stays a sensitivity *of the primary*: it runs as the final-tape
+study. The mutation pass found that nothing held this, because every
+premium-floor fixture had only FINAL revisions, where the two studies agree.
+A test now runs the floor on a fixture that separates them. 22 mutations, each
+caught.
+
+**Still absent after this:** §I's staleness bounds, for the reason above, and
+§K's exploratory H1 and D1. For D1 the repository's grader uses a nominal 24 h.
+That lands on a weekend for a Friday decision, and the exit rule would then
+read Friday's last quote, so D1 needs a reading of its own before it is
+computed.

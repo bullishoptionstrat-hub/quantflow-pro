@@ -74,20 +74,21 @@ function candidate(over: Partial<H001Candidate> = {}, evidenceOver: Partial<RawT
 }
 
 const failing = (c: H001Candidate) =>
-  [...new Set(h001Eligibility(c, CTX).findings.map((f) => `${f.outcome}:${f.rule}`))].sort();
+  [...new Set(h001Eligibility(c, CTX, 'FINAL_TAPE').findings.map((f) => `${f.outcome}:${f.rule}`))].sort();
 
 test('a candidate meeting every §L rule is included, in the group its side names', () => {
-  const a = h001Eligibility(candidate(), CTX);
+  const a = h001Eligibility(candidate(), CTX, 'FINAL_TAPE');
   assert.deepEqual(a.findings, []);
   assert.equal(a.verdict, 'INCLUDED');
   assert.equal(a.group, 'A');
-  const b = h001Eligibility(candidate({ side: 'SELL', legs: [{ right: 'C', side: 'SELL' }] }), CTX);
+  const b = h001Eligibility(candidate({ side: 'SELL', legs: [{ right: 'C', side: 'SELL' }] }), CTX, 'FINAL_TAPE');
   assert.equal(b.verdict, 'INCLUDED');
   assert.equal(b.group, 'B');
 });
 
-test('each rule, broken alone, fails exactly itself', () => {
-  const cases: Array<[H001Rule, H001Candidate]> = [
+/** One candidate per §L rule, each broken alone on a candidate that otherwise passes. */
+function singleRuleCases(): Array<[H001Rule, H001Candidate]> {
+  return [
     ['underlying', candidate({ underlying: 'QQQ' })],
     ['single-leg-call', candidate({ legs: [{ right: 'C', side: 'BUY' }, { right: 'P', side: 'BUY' }] })],
     ['single-leg-call', candidate({ legs: [{ right: 'P', side: 'BUY' }] })],
@@ -106,10 +107,13 @@ test('each rule, broken alone, fails exactly itself', () => {
     ['rights', candidate({ manifest: null })],
     ['marks', candidate({ marks: { entry: true, exit: false } })],
   ];
-  for (const [rule, c] of cases) {
+}
+
+test('each rule, broken alone, fails exactly itself', () => {
+  for (const [rule, c] of singleRuleCases()) {
     assert.deepEqual(failing(c), [`FAIL:${rule}`], `breaking ${rule}`);
-    assert.equal(h001Eligibility(c, CTX).verdict, 'EXCLUDED');
-    assert.equal(h001Eligibility(c, CTX).group, null, 'an excluded candidate is in no group');
+    assert.equal(h001Eligibility(c, CTX, 'FINAL_TAPE').verdict, 'EXCLUDED');
+    assert.equal(h001Eligibility(c, CTX, 'FINAL_TAPE').group, null, 'an excluded candidate is in no group');
   }
   assert.equal(H001_PREMIUM_FLOOR, 50_000, '§L froze the floor at $50,000');
   assert.deepEqual(failing(candidate({ totalPremium: H001_PREMIUM_FLOOR })), [], 'the floor is inclusive');
@@ -143,7 +147,7 @@ test('the decision window is the calendar\'s, with room for the one-second laten
   assert.deepEqual(failing(decidedAt('2026-03-10T13:30:01.000Z')), [], 'the open itself is inside');
   // Before the open the print's own session is unknown by clock inference too,
   // so the window is not the only finding; it must still be one of them.
-  const early = h001Eligibility(decidedAt('2026-03-10T13:29:59.000Z'), CTX);
+  const early = h001Eligibility(decidedAt('2026-03-10T13:29:59.000Z'), CTX, 'FINAL_TAPE');
   assert.equal(early.verdict, 'EXCLUDED');
   assert.ok(early.findings.some((f) => f.rule === 'decision-window' && f.outcome === 'FAIL'));
   // A half day closes at 13:00, so the bound moves to 12:45 with no special case.
@@ -155,8 +159,8 @@ test('what cannot be established is UNKNOWN — out of the sample, and counted a
   // An identifier the reader cannot interpret: the clock is not allowed to overrule it.
   const unreadable = candidate({}, { rawSessionIdentifier: 7 });
   assert.deepEqual(failing(unreadable), ['UNKNOWN:session']);
-  assert.equal(h001Eligibility(unreadable, CTX).verdict, 'UNKNOWN');
-  assert.equal(h001Eligibility(unreadable, CTX).group, null);
+  assert.equal(h001Eligibility(unreadable, CTX, 'FINAL_TAPE').verdict, 'UNKNOWN');
+  assert.equal(h001Eligibility(unreadable, CTX, 'FINAL_TAPE').group, null);
 
   // An as-known revision where §J needs the final tape.
   const asKnown = candidate();
@@ -164,7 +168,7 @@ test('what cannot be established is UNKNOWN — out of the sample, and counted a
   assert.deepEqual(failing({ ...asKnown, finalRevision: r }), ['UNKNOWN:final-tape']);
 
   // Past the calendar's coverage: no session can be read, so none is assumed.
-  const v = h001Eligibility(decidedAt('2027-03-09T15:00:00.000Z', '2027-03-19'), CTX);
+  const v = h001Eligibility(decidedAt('2027-03-09T15:00:00.000Z', '2027-03-19'), CTX, 'FINAL_TAPE');
   assert.equal(v.verdict, 'UNKNOWN');
   assert.ok(v.findings.every((f) => f.outcome === 'UNKNOWN'));
   assert.ok(v.findings.some((f) => f.rule === 'decision-window'));
@@ -175,7 +179,7 @@ test('what cannot be established is UNKNOWN — out of the sample, and counted a
   assert.deepEqual(failing(holidayExpiry), ['UNKNOWN:contract-lifecycle']);
 
   // A definite failure beside an unknown is EXCLUDED: one known reason is enough.
-  assert.equal(h001Eligibility({ ...unreadable, underlying: 'QQQ' }, CTX).verdict, 'EXCLUDED');
+  assert.equal(h001Eligibility({ ...unreadable, underlying: 'QQQ' }, CTX, 'FINAL_TAPE').verdict, 'EXCLUDED');
 });
 
 test('every failing rule is reported, not only the first', () => {
@@ -184,7 +188,7 @@ test('every failing rule is reported, not only the first', () => {
 });
 
 test('the rights rule is the import rule, including the business mode', () => {
-  const v = h001Eligibility(candidate(), { mode: 'PUBLIC_COMMERCIAL', today: TODAY });
+  const v = h001Eligibility(candidate(), { mode: 'PUBLIC_COMMERCIAL', today: TODAY }, 'FINAL_TAPE');
   assert.deepEqual(v.findings.map((f) => f.rule), ['rights']);
   assert.match(v.findings[0]!.why, /read for PRIVATE_RESEARCH/);
 });
@@ -192,4 +196,90 @@ test('the rights rule is the import rule, including the business mode', () => {
 test('a single-leg signal whose evidence spans contracts, or includes a put, is refused', () => {
   const two = [trade(), trade({ providerSequence: '101', instrument: { underlying: 'SPY', expiry: '2026-03-20', strike: 575, right: 'C' } })];
   assert.deepEqual(failing(candidate({ evidence: two, finalRevision: finalRevisionOf(two, T0 + 1_000) })), ['FAIL:single-leg-call']);
+});
+
+// ─── §J's two studies ────────────────────────────────────────────────────────
+
+const POLICY = { finalityHorizonMs: 60_000, clusterGapMs: 500 };
+
+/**
+ * One candidate per revision outcome, each revision derived from a real log
+ * the way the study derives one — the outcomes §J's primary drops and its
+ * secondary keeps.
+ */
+function revisionCases(): Array<{ name: string; c: H001Candidate; primary: string[] }> {
+  const decidedAt = T0 + 1_000;
+  const sig = (evidence: TradeReportEvent[]) => ({
+    signalId: 's1', evidenceEventIds: evidence.map((e) => e.eventId), decidedAt, underlying: 'SPY',
+    firstEventAt: evidence[0]!.eventTime, lastEventAt: evidence[evidence.length - 1]!.eventTime,
+  });
+  const withRevision = (evidence: TradeReportEvent[], finalRevision: SignalRevision) => candidate({ evidence, finalRevision });
+
+  const only = trade();
+  const cancelledLog = new EventLog();
+  cancelledLog.append(only);
+  cancelledLog.append(buildTradeEvent(rec({ providerSequence: '101', rawMessageType: 'CNCL', eventTime: T0 + 500, providerReceiveTime: T0 + 503 })));
+
+  const p1 = trade({ providerEventId: 'p1' });
+  const p2 = trade({ providerSequence: '101', providerEventId: 'p2', eventTime: T0 + 200, providerReceiveTime: T0 + 203 });
+  const partLog = new EventLog();
+  partLog.append(p1);
+  partLog.append(p2);
+  partLog.append(buildTradeEvent(rec({
+    providerSequence: '102', rawMessageType: 'CANC', referencedProviderEventId: 'p1',
+    price: undefined, size: undefined, eventTime: T0 + 600, providerReceiveTime: T0 + 603,
+  })));
+
+  const asKnownLog = new EventLog();
+  asKnownLog.append(only);
+
+  const cases = [
+    { name: 'FINAL', c: candidate(), primary: [] as string[] },
+    { name: 'INVALIDATED_BY_CORRECTION', c: withRevision([only], reviseSignal(sig([only]), cancelledLog.finalCorrected(), POLICY)), primary: ['FAIL:final-tape'] },
+    { name: 'REVISED', c: withRevision([p1, p2], reviseSignal(sig([p1, p2]), partLog.finalCorrected(), POLICY)), primary: ['FAIL:final-tape'] },
+    // Its one print is not in the log the revision read: missing evidence.
+    { name: 'EVIDENCE_UNRESOLVED', c: withRevision([only], reviseSignal(sig([only]), new EventLog().finalCorrected(), POLICY)), primary: ['FAIL:final-tape'] },
+    // Read from an as-known view a millisecond after it formed: inside the finality window.
+    { name: 'PROVISIONAL', c: withRevision([only], reviseSignal(sig([only]), asKnownLog.asKnownAt(decidedAt + 1), POLICY)), primary: ['UNKNOWN:final-tape'] },
+  ];
+  for (const k of cases) assert.equal(k.c.finalRevision.status, k.name, `the ${k.name} fixture builds what it says`);
+  return cases;
+}
+
+const findingsOf = (c: H001Candidate, study: 'FINAL_TAPE' | 'AS_KNOWN') =>
+  [...new Set(h001Eligibility(c, CTX, study).findings.map((f) => `${f.outcome}:${f.rule}`))].sort();
+
+test('§J: the primary drops every non-FINAL revision; the as-known study keeps each one, in its group', () => {
+  for (const { name, c, primary } of revisionCases()) {
+    assert.deepEqual(findingsOf(c, 'FINAL_TAPE'), primary, `${name}, primary`);
+    const k = h001Eligibility(c, CTX, 'AS_KNOWN');
+    assert.deepEqual(k.findings, [], `${name}, as-known`);
+    assert.equal(k.verdict, 'INCLUDED', name);
+    assert.equal(k.group, 'A', name);
+  }
+});
+
+test('J1\'s premise: the revision itself says every status is kept by an as-known study', () => {
+  // The waiver is not this module's opinion. If signalRevision.ts ever let an
+  // as-known study drop a status, this fails and the secondary must follow it.
+  for (const { name, c } of revisionCases()) {
+    assert.equal(c.finalRevision.consequence.asKnownStudies, 'INCLUDE', name);
+    assert.equal(c.finalRevision.consequence.finalTapeStudies === 'INCLUDE', name === 'FINAL', name);
+  }
+});
+
+test('the as-known study changes the final-tape rule and nothing else', () => {
+  const all = [...singleRuleCases().map(([rule, c]) => ({ name: rule, c })), ...revisionCases()];
+  for (const { name, c } of all) {
+    const primary = h001Eligibility(c, CTX, 'FINAL_TAPE').findings;
+    assert.deepEqual(h001Eligibility(c, CTX, 'AS_KNOWN').findings, primary.filter((f) => f.rule !== 'final-tape'), name);
+  }
+  // Every broken rule still excludes in the as-known study: it waives one rule, not the rest.
+  for (const [rule, c] of singleRuleCases()) assert.equal(h001Eligibility(c, CTX, 'AS_KNOWN').verdict, 'EXCLUDED', rule);
+});
+
+test('a study that is neither is refused, not read as either', () => {
+  for (const bad of ['FINAL', 'as-known', undefined]) {
+    assert.throws(() => h001Eligibility(candidate(), CTX, bad as never), RangeError, String(bad));
+  }
 });

@@ -54,7 +54,8 @@
  *       decision window; both §C marks. An execution failing any of these is
  *       removed BEFORE the draw, so a drawn control is never discarded
  *       afterwards — which would make the realised count depend on the order
- *       of the draw.
+ *       of the draw. In §J's as-known study (`study: 'AS_KNOWN'`) the ACTIVE
+ *       requirement is lifted and nothing else is (J2 in h001Analysis.ts).
  *
  * The D control (§G, secondary) is `matchClockControls` below: 5 random SPY
  * times on the same day, in the same 60-minute bucket — "is the effect a
@@ -96,6 +97,7 @@ import { premiumOf } from '../flow-engine/types';
 import { h001Return, markAt, H001_ENTRY_LATENCY_MS, H001_ENTRY_MAX_AGE_MS, H001_HORIZON_MS } from './h001Marks';
 import type { QuoteSource } from './h001Marks';
 import { h001DecisionWindow, H001_UNDERLYING } from './h001Eligibility';
+import type { H001Study } from './h001Eligibility';
 import { H001_BOOTSTRAP_SEED, seededRandom } from './h001Verdict';
 import type { Observation } from './h001Verdict';
 
@@ -203,15 +205,22 @@ export interface PoolRejection {
 /**
  * M7: every execution that could serve as a C control, keyed and measured.
  * `excludedEventIds` is the evidence of every signal in every A and B
- * meta-event — "not part of any A or B meta-event".
+ * meta-event — "not part of any A or B meta-event". `study` is §J's: the
+ * primary draws only what the final tape kept; the as-known study draws every
+ * execution the replay experienced (J2).
  */
 export function controlPool(
   tape: TapeView,
   excludedEventIds: ReadonlySet<string>,
   quotes: QuoteSource,
+  study: H001Study,
 ): { pool: Control[]; rejected: PoolRejection[] } {
-  // §J: the primary tape is the final one. An as-known view could admit a
-  // trade that was later cancelled, and a cancelled trade was not an execution.
+  if (study !== 'FINAL_TAPE' && study !== 'AS_KNOWN') throw new RangeError(`unknown study ${String(study)}`);
+  // Both studies read the FINAL_CORRECTED view: it lists every trade ever
+  // reported, each with the state the corrections left it in — which is what
+  // lets the primary filter on that state and the as-known study ignore it.
+  // An as-known view is a third thing: it hides what had not yet arrived by
+  // one instant, and neither study asks about one instant.
   if (tape.basis !== 'FINAL_CORRECTED') throw new RangeError('controls are drawn from the FINAL_CORRECTED tape (§J)');
   const pool: Control[] = [];
   const rejected: PoolRejection[] = [];
@@ -220,7 +229,9 @@ export function controlPool(
     if (e.instrument.underlying !== H001_UNDERLYING || e.instrument.right !== 'C') continue;
     if (excludedEventIds.has(e.eventId)) continue;
     const no = (why: string) => { rejected.push({ eventId: e.eventId, why }); };
-    if (t.state !== 'ACTIVE') { no(`trade state ${t.state} on the final tape`); continue; }
+    // §J primary: a cancelled trade was not an execution. The as-known replay
+    // saw it as one until the cancel arrived, and so did a live system (J2).
+    if (study === 'FINAL_TAPE' && t.state !== 'ACTIVE') { no(`trade state ${t.state} on the final tape`); continue; }
     const a = detectorAdmission({ kind: 'ORDERED', event: e, finalizedAt: e.availableAt, orderBasis: 'EVENT_TIME' });
     if (!a.admit) { no(`not admitted: ${a.reason}`); continue; }
     if (researchEligibility(e.sessionEvidence, e.eventTime, H001_V2_SESSION_RULE).eligibility !== 'INCLUDED') {
@@ -315,8 +326,10 @@ export function matchControls(input: {
   /** Evidence of every signal in every A and B meta-event. */
   excludedEventIds: ReadonlySet<string>;
   quotes: QuoteSource;
+  /** §J: which study's pool to draw from. */
+  study: H001Study;
 }): H001Matching {
-  const { pool, rejected } = controlPool(input.tape, input.excludedEventIds, input.quotes);
+  const { pool, rejected } = controlPool(input.tape, input.excludedEventIds, input.quotes, input.study);
   const byKey = new Map<string, Control[]>();
   for (const c of pool) {
     const k = keyString(c.key);
