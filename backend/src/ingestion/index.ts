@@ -168,7 +168,8 @@ export interface GEXLevel {
 
 // ─── In-memory stores ───────────────────────────────────────────────────────
 
-const MAX_FLOW_EVENTS = 500;
+/** Exported so `/api/flow/overnight` can say when the window outran it. */
+export const MAX_FLOW_EVENTS = 500;
 const MAX_DP_PRINTS = 200;
 
 let flowEvents: FlowEvent[] = [];
@@ -375,6 +376,20 @@ export function getGEXLevels(symbol: string): GEXLevel[] {
 /** The same aggregation restricted to contracts expiring today, if any. */
 export function getZeroDteLevels(symbol: string) {
   return getCboeSnapshot(symbol)?.zeroDte ?? null;
+}
+
+/** The volatility reading of the last Cboe chain for a symbol (ROADMAP 5.4), or null. */
+export function getVolReading(symbol: string) {
+  const snap = getCboeSnapshot(symbol);
+  if (!snap) return null;
+  return {
+    spot: snap.spot,
+    iv30: snap.iv30,
+    tradeDate: snap.tradeDate,
+    asOf: snap.asOf,
+    delayedMinutes: snap.delayedMinutes,
+    termStructure: snap.termStructure,
+  };
 }
 
 export function getFlowStats() {

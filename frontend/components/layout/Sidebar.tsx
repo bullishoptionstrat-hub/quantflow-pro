@@ -7,6 +7,7 @@ import { useStore } from '@/store/useStore'
 const NAV = [
   // No static `LIVE` badge: it sat two lines under the connection dot and
   // contradicted it whenever the socket was down.
+  { href: '/morning',       icon: '☀', label: 'Morning',        badge: 'NEW',  group: 'flow' },
   { href: '/flow',          icon: '⚡', label: 'Live Flow',      badge: null,   group: 'flow' },
   { href: '/dark-pool',     icon: '🌑', label: 'Dark Pool',      badge: null,   group: 'flow' },
   { href: '/power-alerts',  icon: '🔥', label: 'Power Alerts',   badge: null,   group: 'flow' },

@@ -1,7 +1,20 @@
 import { Router, Request, Response } from 'express';
-import { getRecentFlow, getFlowStats, getUnusualActivity, FlowEvent } from '../ingestion/index';
+import { getRecentFlow, getFlowStats, getUnusualActivity, FlowEvent, MAX_FLOW_EVENTS } from '../ingestion/index';
+import { overnightWindowAt, selectWindow } from '../market/overnight';
 
 const router = Router();
+
+// GET /api/flow/overnight — the buffered flow between the exchange's last
+// published regular close and its next open (ROADMAP 5.2). The window is
+// derived from the session calendar here rather than guessed in the browser,
+// and the response says how much of it this process actually saw: the buffer
+// holds 500 events and starts empty at boot, so on Render's free tier the
+// honest answer is usually "part of it".
+router.get('/overnight', (_req: Request, res: Response) => {
+  const now = Date.now();
+  const startedAt = now - process.uptime() * 1000;
+  res.json(selectWindow(overnightWindowAt(now), getRecentFlow(), MAX_FLOW_EVENTS, startedAt));
+});
 
 // GET /api/flow/unusual — real (delayed) unusual options activity from CBOE
 // chains, ranked by notional. Distinct from /api/flow, which is the live tape:

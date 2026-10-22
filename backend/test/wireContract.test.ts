@@ -220,6 +220,53 @@ test('AMBIGUOUS side never carries a direction', () => {
   }
 });
 
+// ─── Overnight (ROADMAP 5.2) ────────────────────────────────────────────────
+
+test('OvernightFlowResponse matches what /api/flow/overnight returns', () => {
+  // The route was new when the morning view was written, so its frontend
+  // tests were built around a hand-made envelope. This is the recording that
+  // was missing: a capture of the real route, held to the declared shape.
+  const body = load('overnight');
+  assertDeclaredFieldsExist('OvernightFlowResponse', body);
+  assertDeclaredFieldsExist('OvernightWindow', body.window);
+  assert.equal(body.window.authority, 'EXCHANGE_REGULAR_SESSION');
+  assert.ok(['ESTABLISHED', 'UNKNOWN'].includes(body.window.state));
+  assert.equal(body.count, body.data.length, 'count is the rows, not a separate claim');
+  assert.equal(body.synthetic, body.data.filter((r: any) => r.synthetic === true).length);
+  // The rows are FlowEvents, so the same contract the feed holds applies here.
+  if (body.data.length > 0) assertDeclaredFieldsExist('FlowEvent', body.data);
+  assert.equal(typeof body.coverage.complete, 'boolean');
+  assert.ok(body.coverage.basis.length > 20, 'coverage states its basis');
+  // Any row selected must lie inside the window it was selected by.
+  if (body.window.state === 'ESTABLISHED') {
+    const from = Date.parse(body.window.from), to = Date.parse(body.window.to);
+    for (const r of body.data) {
+      const t = Date.parse(r.created_at);
+      assert.ok(t >= from && t <= to, `${r.id} at ${r.created_at} is outside [${body.window.from}, ${body.window.to}]`);
+    }
+  }
+});
+
+// ─── Volatility (ROADMAP 5.4) ───────────────────────────────────────────────
+
+test('VolResponse matches what /api/gex/vol returns', () => {
+  const body = load('vol');
+  assertDeclaredFieldsExist('VolResponse', body);
+  assert.equal(body.ivRank, null);
+  assert.equal(body.ivPercentile, null);
+  assert.ok(body.ivRankUnavailable.length > 20, 'the refusal carries its reason');
+  assert.ok(body.realData && body.termStructure, 'the fixture was captured on a box where Cboe answered');
+  assertDeclaredFieldsExist('TermPoint', body.termStructure.points);
+  assert.equal(body.termStructure.ivUnits, 'FRACTION');
+  assert.equal(body.termStructure.iv30Units, 'PERCENT');
+  for (const p of body.termStructure.points) {
+    // A one-sided ATM is skew, not level: callIv and putIv are both set or neither.
+    assert.equal(p.callIv === null, p.putIv === null, `${p.expiry}: one side only`);
+    assert.equal(p.atmIv === null, p.callIv === null, `${p.expiry}: mean without both sides`);
+    assert.ok(p.ivMissing <= p.contracts);
+  }
+});
+
 // ─── Health ─────────────────────────────────────────────────────────────────
 
 test('the settings page reads fields /api/health actually sends', () => {
@@ -274,8 +321,10 @@ test('speech and notifications are still wired for real signals', () => {
   // The fix is what was being fed to them, not the alerting itself. Removing
   // these would be a different and unasked-for change.
   const hook = code(join(FRONTEND, 'hooks', 'useFlowFeed.ts'));
-  assert.ok(/speakAlert\(event\)/.test(hook), 'real signals should still be speakable');
-  assert.ok(/pushNotification\(event\)/.test(hook), 'and still notifiable');
+  // ROADMAP 5.3: each now takes the rule that matched, and returns a record of
+  // what it did for the alert row.
+  assert.ok(/speakAlert\(event, say\)/.test(hook), 'real signals should still be speakable');
+  assert.ok(/pushNotification\(event, push\)/.test(hook), 'and still notifiable');
 });
 
 test('pages built from the store handle an empty store', () => {
@@ -767,7 +816,12 @@ test('no alert type is offered that nothing produces', () => {
 
 test('an alert knows whether its print was constructed, and so do the channels', () => {
   const hook = readFileSync(FLOW_HOOK, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
-  assert.match(hook, /synthetic: event\.synthetic/, 'the alert must carry it');
+  // The alert row is built in `lib/alertRules.ts` since ROADMAP 5.3; the hook
+  // must still build it from there rather than by hand.
+  const rules = readFileSync(join(FRONTEND, 'lib', 'alertRules.ts'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  assert.match(rules, /synthetic: event\.synthetic/, 'the alert must carry it');
+  assert.match(hook, /alertFor\(event\)/, 'and the hook must build the alert there');
   // The repo's own note on the deleted seed generator: neither of these reads
   // `synthetic`, so a flag on the data cannot qualify what they announce.
   //
@@ -1051,7 +1105,12 @@ test('the unusual threshold has exactly one home', () => {
   // looking like an independent condition.
   const adapter = readFileSync(ADAPTER, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
   assert.match(adapter, /export const UNUSUAL_SCORE = 75/, 'the threshold is named here');
-  assert.match(adapter, /sig\.score >= UNUSUAL_SCORE/, 'and used through its name');
+  // ROADMAP 5.3: the decision moved into `unusualTriggerOf`, which returns the
+  // fired rule as data, and `is_unusual` is derived from its result.
+  assert.match(adapter, /if \(!\(score >= UNUSUAL_SCORE\)\) return null/, 'and used through its name');
+  assert.match(adapter, /const trigger = unusualTriggerOf\(sig\.score\)/, 'from the signal\'s own score');
+  assert.match(adapter, /is_unusual: trigger !== null/, 'and the flag cannot disagree with the stated rule');
+  assert.ok(!/is_unusual: sig\.score/.test(adapter), 'no second decision beside the trigger');
 
   const filter = readFileSync(join(FRONTEND, 'lib', 'flowFilter.ts'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');

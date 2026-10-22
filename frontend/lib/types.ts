@@ -48,6 +48,12 @@ export interface FlowEvent {
    * Read this field; the threshold lives in `flowEngineAdapter.ts`.
    */
   is_unusual: boolean
+  /**
+   * The rule that made `is_unusual` true, as data, or `null` when nothing
+   * fired (ROADMAP 5.3). The backend derives `is_unusual` from this, so the
+   * two cannot disagree. Render `text`; never restate the threshold here.
+   */
+  alert_trigger: AlertTrigger | null
   exchange_count: number
   /**
    * Every venue the contributing records named, and whether the size at each
@@ -149,6 +155,37 @@ export interface DarkPoolResponse {
   disclaimer: string
 }
 
+/**
+ * `FlowEvent.alert_trigger` — a fired rule reporting itself. Mirrors
+ * `AlertTrigger` in `backend/src/ingestion/flowEngineAdapter.ts`.
+ */
+export interface AlertTrigger {
+  rule: 'UNUSUAL_SCORE'
+  field: 'heat_score'
+  op: '>='
+  threshold: number
+  value: number
+  text: string
+}
+
+/**
+ * One out-of-band channel the alert reached, or tried to (ROADMAP 5.3).
+ *
+ * Speech and the desktop notification are rules of their own — heat above a
+ * frontend threshold — and they fired with nothing recording that they had.
+ * An entry exists only when the channel's rule matched; `delivered` says
+ * whether it actually went out, and `reason` says why not (voice off, no
+ * permission, no API), because "the rule matched and nothing happened" is a
+ * different fact from "the rule did not match".
+ */
+export interface AlertChannelFiring {
+  channel: 'SPEECH' | 'DESKTOP'
+  /** The channel's rule, with the value that met it. */
+  rule: string
+  delivered: boolean
+  reason?: string
+}
+
 export interface PowerAlert {
   id: string
   underlying: string
@@ -185,6 +222,14 @@ export interface PowerAlert {
    * the resolution `ml_score` got: an opaque number is the thing to avoid.
    */
   score_breakdown?: Record<string, number>
+  /**
+   * The rule that raised this alert, as the backend stated it. `null` when the
+   * signal came from a backend older than `alert_trigger` — rendered as "rule
+   * not published", never filled in from a threshold restated here.
+   */
+  trigger?: AlertTrigger | null
+  /** Every out-of-band channel whose rule matched, delivered or not. */
+  channels?: AlertChannelFiring[]
 }
 
 /**
@@ -259,6 +304,57 @@ export interface GEXResponse {
   unavailableReason?: string | null
   realtime: boolean
   delayedMinutes: number | null
+}
+
+/** One expiry on the ATM IV curve. Mirrors `TermPoint` in `backend/src/ingestion/termStructure.ts`. */
+export interface TermPoint {
+  expiry: string
+  dte: number | null
+  atmStrike: number | null
+  /** (atmStrike - spot) / spot, as a fraction. */
+  distancePct: number | null
+  callIv: number | null
+  putIv: number | null
+  atmIv: number | null
+  ivMissing: number
+  contracts: number
+}
+
+/**
+ * `GET /api/gex/vol` — ROADMAP 5.4.
+ *
+ * `ivRank` and `ivPercentile` are always `null`, with `ivRankUnavailable`
+ * saying why: they need a year of stored history, and the only chain here
+ * (`CBOE_CDN_DELAYED_CHAIN`) is UNVERIFIED for PERSIST. They are declared so
+ * the refusal is part of the contract rather than an absence a later reader
+ * fills in with a guess.
+ *
+ * IV values are passed through as Cboe publishes them. The per-contract
+ * `iv` is a fraction (0.1443 is 14.43%) and `iv30` is already a percentage
+ * (14.023); both were read off a captured SPY chain
+ * (`backend/test/fixtures/vol.json`) and `termStructure.test.ts` holds the
+ * factor of 100 between them to that fixture. The panel multiplies the
+ * fraction by 100 once, at render, and shows `%` on both.
+ */
+export interface VolResponse {
+  symbol: string
+  realData: boolean
+  unavailableReason: string | null
+  source: 'cboe' | null
+  spot: number | null
+  iv30: number | null
+  tradeDate: string | null
+  asOf: string | null
+  delayedMinutes: number | null
+  termStructure: {
+    points: TermPoint[]
+    ivUnits: 'FRACTION'
+    iv30Units: 'PERCENT'
+    basis: string
+  } | null
+  ivRank: null
+  ivPercentile: null
+  ivRankUnavailable: string
 }
 
 export interface FlowFilters {
@@ -501,4 +597,65 @@ export interface BacktestResponse {
   notes: string[]
   storeKind: 'memory' | 'supabase'
   disclaimer: string
+}
+
+/**
+ * `GET /api/track-record` — the deployment's whole measured record, through
+ * the same tally `/api/backtest` uses. Rows are `BacktestRow`s: the backend
+ * publishes one `TrackRecordRow` type for both routes.
+ *
+ * `counts.real` is the line that matters. On this deployment it is 0 — no
+ * licensed feed, so every recorded signal is synthetic — and the morning view
+ * says that in words rather than letting an empty table imply it.
+ */
+export interface TrackRecordResponse {
+  generatedAt: string
+  rows: BacktestRow[]
+  excluded: {
+    synthetic: number
+    eventTimeOnlyBasis: number
+    rightsRefused: number
+  }
+  minSample: number
+  notes: string[]
+  counts: { total: number; synthetic: number; real: number }
+  storeKind: 'memory' | 'supabase'
+  disclaimer: string
+}
+
+/**
+ * `GET /api/flow/overnight` — buffered flow between the exchange's last
+ * published regular close and its next open (ROADMAP 5.2).
+ *
+ * The window is the backend's, derived from the session calendar
+ * (`backend/src/market/overnight.ts`). The browser never computes one: a
+ * "since yesterday at 16:00" here would be wrong on every Monday, after every
+ * holiday and after every half day.
+ */
+export interface OvernightWindow {
+  authority: 'EXCHANGE_REGULAR_SESSION'
+  /** `UNKNOWN` when the calendar would not answer for a date the walk touched. */
+  state: 'ESTABLISHED' | 'UNKNOWN'
+  from: string | null
+  to: string | null
+  /** True when `to` is today's published open rather than "now". */
+  closedBySessionOpen: boolean
+  basis: string
+}
+
+export interface OvernightFlowResponse {
+  window: OvernightWindow
+  data: FlowEvent[]
+  count: number
+  /** Rows with `synthetic: true` — not observed prints. */
+  synthetic: number
+  coverage: {
+    buffered: number
+    cap: number
+    oldestBufferedAt: string | null
+    processStartedAt: string
+    /** False whenever any of the window could have been missed. */
+    complete: boolean
+    basis: string
+  }
 }

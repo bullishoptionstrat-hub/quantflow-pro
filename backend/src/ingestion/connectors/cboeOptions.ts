@@ -21,6 +21,7 @@
  */
 import axios from 'axios';
 import { numeric } from '../optionalNumber';
+import { termStructureOf, ivOrNull, type IvPoint, type TermStructure } from '../termStructure';
 
 export interface CboeGexLevel {
   strike: number;
@@ -130,6 +131,11 @@ export interface CboeSnapshot {
    * date. `null` when the chain carries none — see `CboeZeroDte`.
    */
   zeroDte: CboeZeroDte | null;
+  /**
+   * ATM implied volatility per expiry, from Cboe's own per-contract `iv`
+   * (ROADMAP 5.4). See `ingestion/termStructure.ts` for every rule in it.
+   */
+  termStructure: TermStructure;
   /** The chain's own trading date, from the vendor's clock rather than ours. */
   tradeDate: string | null;
   unusual: CboeUnusualContract[];
@@ -236,6 +242,9 @@ export async function fetchCboeChain(symbol: string): Promise<CboeSnapshot | nul
   const zeroDteByStrike = new Map<number, CboeGexLevel>();
   let zeroDteContracts = 0;
   const unusual: CboeUnusualContract[] = [];
+  // Every parsed contract, open interest or not: a quoted IV on a contract
+  // nobody holds yet is still a point on the curve.
+  const ivPoints: IvPoint[] = [];
 
   /** Accumulate one contract into one strike bucket. */
   const accumulate = (
@@ -270,6 +279,10 @@ export async function fetchCboeChain(symbol: string): Promise<CboeSnapshot | nul
   for (const r of rows) {
     const parsed = parseOsi(String(r.option ?? ''));
     if (!parsed) continue;
+    ivPoints.push({
+      expiry: parsed.expiry, strike: parsed.strike, right: parsed.right,
+      iv: ivOrNull(numeric(r.iv)),
+    });
 
     // Read once, honestly, then narrowed per path. The GEX aggregation below
     // needs a number it can multiply and gates on `oi > 0 && gamma !== 0`, so
@@ -342,6 +355,7 @@ export async function fetchCboeChain(symbol: string): Promise<CboeSnapshot | nul
         contractCount: zeroDteContracts,
       }
       : null,
+    termStructure: termStructureOf(ivPoints, spot, tradeDate),
     tradeDate,
     unusual: unusual.slice(0, 40),
     contractCount: rows.length,

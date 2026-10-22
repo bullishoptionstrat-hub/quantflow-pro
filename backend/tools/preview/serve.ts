@@ -46,8 +46,8 @@ const PORT = Number(arg('--port', '3360'));
 /** Capture name → the route it answers. Mirrors `capture.ts`. */
 const ROUTE_FOR: Record<string, string> = {
   health: '/api/health', flow: '/api/flow', flowstats: '/api/flow/stats',
-  unusual: '/api/flow/unusual', darkpool: '/api/darkpool', gex: '/api/gex',
-  gexsym: '/api/gex/symbols', macro: '/api/macro', vix: '/api/macro/vix',
+  unusual: '/api/flow/unusual', overnight: '/api/flow/overnight', darkpool: '/api/darkpool', gex: '/api/gex',
+  gexsym: '/api/gex/symbols', vol: '/api/gex/vol', macro: '/api/macro', vix: '/api/macro/vix',
   crypto: '/api/macro/crypto', quotes: '/api/macro/quotes', track: '/api/track-record',
 };
 

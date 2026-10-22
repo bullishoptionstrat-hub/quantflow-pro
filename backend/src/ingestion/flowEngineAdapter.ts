@@ -154,6 +154,13 @@ export interface WireFlowEvent {
   sentiment: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
   /** `heat_score >= UNUSUAL_SCORE`. The threshold lives here and nowhere else. */
   is_unusual: boolean;
+  /**
+   * The rule that made this signal `is_unusual`, stated on the signal, or
+   * `null` when nothing fired. Always present as a key. ROADMAP 5.3: whatever
+   * fires, the rule that fired it goes on the row. `is_unusual` is derived
+   * from this, so the flag and the stated rule cannot disagree.
+   */
+  alert_trigger: AlertTrigger | null;
   exchange_count: number;
   /**
    * Every venue the contributing records named, and whether the size at each
@@ -652,6 +659,42 @@ export function resetDaily(): void {
  */
 export const UNUSUAL_SCORE = 75;
 
+/**
+ * A fired rule, as data. ROADMAP 5.3.
+ *
+ * Ledger line 98 records the power-alerts page describing a trigger the code
+ * did not implement and crediting a model that did not exist. The page's
+ * sentence was fixed, but a sentence on a page is still a claim *about* the
+ * rule, written somewhere other than where the rule runs. This is the rule
+ * reporting itself: name, field, operator, threshold, and the value that
+ * crossed it, on the signal it fired for. The frontend renders it rather than
+ * describing it, so the description cannot drift from the decision.
+ */
+export interface AlertTrigger {
+  rule: 'UNUSUAL_SCORE';
+  field: 'heat_score';
+  op: '>=';
+  threshold: number;
+  /** The value that met the threshold. */
+  value: number;
+  /** One readable line, built from the fields above and nothing else. */
+  text: string;
+}
+
+/** The trigger that fires for a score, or null. The only place `is_unusual` is decided. */
+export function unusualTriggerOf(score: number): AlertTrigger | null {
+  // `!(a >= b)` rather than `a < b`, so a NaN score fires nothing.
+  if (!(score >= UNUSUAL_SCORE)) return null;
+  return {
+    rule: 'UNUSUAL_SCORE',
+    field: 'heat_score',
+    op: '>=',
+    threshold: UNUSUAL_SCORE,
+    value: score,
+    text: `heat_score ${score} >= ${UNUSUAL_SCORE} (UNUSUAL_SCORE)`,
+  };
+}
+
 // ─── Signal → wire ──────────────────────────────────────────────────────────
 
 /**
@@ -729,6 +772,7 @@ function toWireEvent(sig: ClassifiedSignal): WireFlowEvent {
   const origins = sig.printIds.map((id) => printSource.get(id)).filter(Boolean);
   const { source, sources, synthetic } = originOf(sig);
   const rights = displayRightsOf(sources);
+  const trigger = unusualTriggerOf(sig.score);
   const iv = origins.find((o) => o?.iv !== undefined)?.iv ?? null;
   const delta = origins.find((o) => o?.delta !== undefined)?.delta ?? null;
 
@@ -759,7 +803,8 @@ function toWireEvent(sig: ClassifiedSignal): WireFlowEvent {
     total_premium: Math.round(sig.totalPremium),
     heat_score: sig.score,
     sentiment: sentimentOf(sig.side, leg.contract.right),
-    is_unusual: sig.score >= UNUSUAL_SCORE,
+    is_unusual: trigger !== null,
+    alert_trigger: trigger,
     exchange_count: exchanges.size,
     /**
      * Every venue named by the contributing records, and whether the size at
