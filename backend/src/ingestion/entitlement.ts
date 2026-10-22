@@ -115,7 +115,7 @@ const PROBES: Readonly<Record<string, EntitlementProbe>> = {
       url: `https://api.polygon.io/v3/trades/options?limit=1&apiKey=${
         encodeURIComponent(env.POLYGON_API_KEY ?? '')}`,
     }),
-    classify: (status) => {
+    classify: (status, body) => {
       if (status === null) return 'unreachable';
       if (status === 200) return 'entitled';
       // Measured against api.polygon.io on 2026-09-13, all three by hand:
@@ -124,7 +124,7 @@ const PROBES: Readonly<Record<string, EntitlementProbe>> = {
       //   401 → {"status":"ERROR","error":"Unknown API Key"}          (bad key)
       //   401 → {"status":"ERROR","error":"API Key was not provided"} (no key)
       // So at this vendor the split is clean and it is not inferred.
-      if (status === 403) return 'refused';
+      if (status === 403) return vendorAnswered(body) ? 'refused' : 'unknown';
       if (status === 401) return 'rejected';
       // 429 is a rate limit, which is not an answer about the plan. Anything
       // else is a shape we have not seen; neither becomes a verdict.
@@ -156,7 +156,7 @@ const PROBES: Readonly<Record<string, EntitlementProbe>> = {
         Accept: 'application/json',
       },
     }),
-    classify: (status) => {
+    classify: (status, body) => {
       if (status === null) return 'unreachable';
       if (status === 200) return 'entitled';
       // Tradier's documented convention, quoted in `probeTradierToken`:
@@ -164,7 +164,7 @@ const PROBES: Readonly<Record<string, EntitlementProbe>> = {
       // mapping is READ, not measured — no production token has been held
       // here to check it against. If it turns out to be wrong, it is wrong in
       // the direction of naming the wrong remedy, not of inventing a pass.
-      if (status === 403) return 'refused';
+      if (status === 403) return vendorAnswered(body) ? 'refused' : 'unknown';
       if (status === 401) return 'rejected';
       return 'unknown';
     },
@@ -216,7 +216,7 @@ const PROBES: Readonly<Record<string, EntitlementProbe>> = {
         return 'unknown';
       }
       if (status === 200) return 'entitled';
-      if (status === 403) return 'refused';
+      if (status === 403) return vendorAnswered(body) ? 'refused' : 'unknown';
       if (status === 401) return 'rejected';
       return 'unknown';
     },
@@ -382,6 +382,24 @@ export async function probeEntitlement(
     // contain the URL, and the URL can contain the key.
     return { source, state: 'unreachable', detail: describeHttpError(err) };
   }
+}
+
+/**
+ * Whether a 403 is the vendor's API speaking: a structured (JSON) body.
+ *
+ * A 403 is the one status something *between* us and the vendor also sends.
+ * Measured 2026-10-22 from a session behind an egress allowlist: the probe of
+ * api.tradier.com got HTTP 403 with the proxy's plain-text body "request
+ * blocked: no rule or allowlist entry allows host", the CONNECT was never
+ * made, and the doctor reported Tradier as `refused` — "your plan does not
+ * cover this", to an operator whose request had not left the building. Every
+ * vendor here answers in JSON, so a 403 without a JSON body is not a verdict
+ * on the plan; it is `unknown`, which never blocks. If a vendor turns out to
+ * send its own refusals as plain text, that misses a real refusal in the
+ * non-blocking direction, which is the right way round for a guess.
+ */
+function vendorAnswered(body: unknown): boolean {
+  return body !== null && typeof body === 'object';
 }
 
 /**
