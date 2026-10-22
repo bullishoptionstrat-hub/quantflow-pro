@@ -23,6 +23,7 @@ import { h001Return, quoteBook } from '../src/research/h001Marks';
 import { runH001Analysis, analyseH001, H001_ABSENT, H001_SENSITIVITY_PREMIUM_FLOOR } from '../src/research/h001Analysis';
 import { h001Cr2Interval } from '../src/research/h001Cr2';
 import { h001VolBalance } from '../src/research/h001Balance';
+import { h001Exploratory } from '../src/research/h001Exploratory';
 import type { H001Signal } from '../src/research/h001Analysis';
 
 // Two EDT weekdays: 14:00Z is 10:00 ET.
@@ -283,11 +284,12 @@ test('the report lists what it did not compute, and the absent items decide noth
   const { report } = run();
   assert.equal(report.absent, H001_ABSENT);
   const sections = report.absent.map((a) => a.section).join(' ');
-  // §I's staleness bounds and §K's H1/D1 are still not computed.
-  for (const s of ['§I', '§K']) assert.ok(sections.includes(s), s);
-  // §J's secondary is computed (as `sensitivities.asKnown`), so it is no longer listed.
-  assert.ok(!sections.includes('§J'), sections);
-  assert.ok(!report.absent.some((a) => /as-known/i.test(a.item)), 'computed, so no longer listed absent');
+  // §I's staleness bounds are still not computed.
+  assert.ok(sections.includes('§I'), sections);
+  // §J's secondary (`sensitivities.asKnown`) and §K's H1/D1 (`exploratory`) are
+  // computed, so neither is listed.
+  for (const s of ['§J', '§K']) assert.ok(!sections.includes(s), `${s} in ${sections}`);
+  assert.ok(!report.absent.some((a) => /as-known|H1|D1/i.test(a.item)), 'computed, so no longer listed absent');
   assert.ok(report.absent.every((a) => !a.decides), 'an absent item that decides would make the verdict incomplete, not merely the report');
 });
 
@@ -505,4 +507,21 @@ test('§I $100k floor is a sensitivity of the primary: it runs as the final-tape
   assert.deepEqual(floor.included, report.eligibility.included);
   assert.deepEqual(floor.primary, report.primary);
   assert.notDeepEqual(floor.included, report.sensitivities.asKnown.included, 'the fixture separates the two studies');
+});
+
+test('§K: H1 and D1 are measured on the primary\'s own matched units, and decide nothing', () => {
+  const { report } = run();
+  for (const h of ['H1', 'D1'] as const) {
+    assert.deepEqual(report.exploratory[h], h001Exploratory(report.controls.matches, QUOTES, h, { replicates: 400 }), h);
+    assert.equal(report.exploratory[h].considered, report.primary.n.metaEvents, `${h}: the primary's matched A meta-events`);
+    assert.equal(report.exploratory[h].decides, false);
+  }
+  // Both days' 10:05 meta-events measure at H1.
+  assert.equal(report.exploratory.H1.differences.length, 2);
+  // At D1, Tuesday's exits are Wednesday's; Wednesday's would be Thursday's,
+  // and the fixture has no Thursday quotes — so Wednesday's close cannot stand in (K3).
+  assert.equal(report.exploratory.D1.differences.length, 1);
+  assert.deepEqual(report.exploratory.D1.refused.aMetaEvents, { OUTSIDE_SESSION: 0, NO_MARK: 0, EXIT_FROM_EARLIER_SESSION: 1 });
+  // The primary's verdict never reads them: it is the verdict of the matched M15 differences alone.
+  assert.equal(report.primary.n.metaEvents, report.cr2.n.observations);
 });

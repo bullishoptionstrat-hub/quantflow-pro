@@ -197,7 +197,18 @@ export function markAt(
  * against two clocks would measure their offset as much as the market.
  */
 export function h001Return(anchor: number, quotes: QuoteSource): H001Return {
+  return h001ReturnOver(anchor, quotes, H001_HORIZON_MS);
+}
+
+/**
+ * §C's measurement over another horizon — §K's exploratory H1 and D1
+ * (`h001Exploratory.ts`). One function measures every horizon, so the entry
+ * rule, the exit rule and the one-feed check cannot drift into two copies;
+ * `h001Return` is this at M15, the only primary endpoint.
+ */
+export function h001ReturnOver(anchor: number, quotes: QuoteSource, horizonMs: number): H001Return {
   if (!Number.isFinite(anchor)) throw new RangeError('the anchor must be an instant');
+  if (!(Number.isFinite(horizonMs) && horizonMs > 0)) throw new RangeError('the horizon must be a positive duration');
   const providers = quotes instanceof QuoteBook ? quotes.providerCount : new Set(quotes.map((q) => q.provider)).size;
   if (providers > 1) {
     throw new RangeError(`quotes from ${providers} providers; §C measures both marks on one feed`);
@@ -205,7 +216,7 @@ export function h001Return(anchor: number, quotes: QuoteSource): H001Return {
   const tEntry = anchor + H001_ENTRY_LATENCY_MS;
   const entry = markAt(quotes, tEntry, { requireAvailableBy: true, maxAgeMs: H001_ENTRY_MAX_AGE_MS });
   if (!entry.ok) return { status: 'NO_ENTRY_MARK', entry };
-  const tExit = tEntry + H001_HORIZON_MS;
+  const tExit = tEntry + horizonMs;
   const exit = markAt(quotes, tExit, { requireAvailableBy: false, maxAgeMs: null });
   if (!exit.ok) return { status: 'NO_EXIT_MARK', entry, exit };
   return {
