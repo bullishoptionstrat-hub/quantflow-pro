@@ -54,10 +54,24 @@ test('403 and 401 are kept apart, because the remedy is different', () => {
   // Collapsing these is how an operator spends an afternoon rotating a
   // credential that was always correct. Measured at Polygon on 2026-09-13:
   // 403 carries NOT_AUTHORIZED, 401 carries "Unknown API Key".
-  assert.equal(classifyProbeStatus('polygon', 403), 'refused');
+  const notAuthorized = { status: 'NOT_AUTHORIZED', message: 'You are not entitled to this data.' };
+  assert.equal(classifyProbeStatus('polygon', 403, notAuthorized), 'refused');
   assert.equal(classifyProbeStatus('polygon', 401), 'rejected');
-  assert.equal(classifyProbeStatus('tradier', 403), 'refused');
+  assert.equal(classifyProbeStatus('tradier', 403, { fault: { faultstring: 'not entitled' } }), 'refused');
   assert.equal(classifyProbeStatus('tradier', 401), 'rejected');
+});
+
+test('a 403 that is not the vendor speaking is unknown, never refused', () => {
+  // Measured 2026-10-22: behind an egress allowlist, the probe of
+  // api.tradier.com got the proxy's plain-text 403 and the doctor told the
+  // operator their plan did not cover the endpoint. The request never left.
+  const proxy = 'request blocked: no rule or allowlist entry allows host "api.tradier.com"';
+  for (const source of ['polygon', 'tradier', 'twelvedata']) {
+    assert.equal(classifyProbeStatus(source, 403, proxy), 'unknown', `${source}: plain-text 403`);
+    assert.equal(classifyProbeStatus(source, 403, ''), 'unknown', `${source}: empty 403`);
+    assert.equal(classifyProbeStatus(source, 403, null), 'unknown', `${source}: no body`);
+    assert.equal(classifyProbeStatus(source, 403, { error: 'Forbidden' }), 'refused', `${source}: the vendor's JSON`);
+  }
 });
 
 test('a status whose meaning is not established at that vendor is unknown', () => {
