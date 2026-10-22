@@ -288,7 +288,7 @@ function Results({ result }: { result: BacktestResponse }) {
             <thead>
               <tr>
                 <th>KIND</th><th>HORIZON</th><th>HIT RATE</th><th>GRADED</th>
-                <th>UNGRADED</th><th>MED. EXCURSION</th><th>MEASURED OVER</th>
+                <th>UNGRADED</th><th>MED. RETURN AT HORIZON</th><th>MEASURED OVER</th>
               </tr>
             </thead>
             <tbody>

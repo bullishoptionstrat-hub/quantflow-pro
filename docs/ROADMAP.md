@@ -741,14 +741,62 @@ Only after there is something to show. Ordered by "will you open it every day":
       hand-edited store opens empty rather than white-screening — a malformed row
       is dropped, not trusted. Same-name re-save replaces rather than
       duplicating, so the habit does not become a pile of near-identical rows.
-- [ ] **5.2** A morning view: overnight flow, today's GEX profile, gamma flip,
-      the track record to date. One screen, opened once a day.
-- [ ] **5.3** Alerting that names its own trigger. Ledger line 98 records the
+- [x] **5.2 — A morning view.** *Written 2026-10-13 without a shell; verified
+      2026-10-22: `npm run verify` green in both packages (backend 902/902,
+      frontend 193/193), backend live-booted in demo mode, `/api/flow/overnight`
+      captured into `backend/test/fixtures/overnight.json` and held to
+      `OvernightFlowResponse` by `wireContract.test.ts`. See the CLAUDE.md note.*
+      `/morning` puts the overnight flow, a GEX summary for SPY/SPX/QQQ, the
+      gamma flip and the track record on one screen. "Overnight" is the
+      exchange's last published regular close to its next open, derived in
+      `backend/src/market/overnight.ts` from the session calendar and served
+      at `/api/flow/overnight` with a coverage block. The 500-signal buffer
+      and a process that started mid-window both make the window
+      `PARTIAL`, and an unanswerable calendar date makes it `UNKNOWN`. The
+      flip renders the backend's refusal and its reason. **The caveat that
+      decides what it is worth:** `/api/track-record` reports `real: 0`, so
+      every panel on this screen today is showing either a delayed chain or
+      non-observed prints, and it says so. *The original description:* A
+      morning view: overnight flow, today's GEX profile, gamma flip, the
+      track record to date. One screen, opened once a day.
+- [x] **5.3 — Alerting that names its own trigger.** *Written 2026-10-13
+      without a shell; verified 2026-10-22. The predicted first-run failure
+      happened (`FlowEvent` declared `alert_trigger`, the recorded `flow.json`
+      predated it) and was closed by re-capturing, not editing; the new
+      recording carries one heat-75 signal with a non-null trigger, so the
+      wire-pairing test exercises both branches on real output.* The backend publishes `alert_trigger` on every signal:
+      the rule, field, operator, threshold and the value that crossed it, or
+      `null`. `is_unusual` is derived from it, so the two cannot disagree.
+      Every alert row shows that rule plus each out-of-band channel whose own
+      rule matched (speech > 80, desktop > 85), and whether it was delivered
+      or why not. Speech and the desktop notification now fire only through
+      an alert, so nothing reaches a speaker or the desktop without a row
+      naming the rule that sent it. *The original description:* Alerting that
+      names its own trigger. Ledger line 98 records the
       power-alerts page describing a trigger the code did not implement and
       crediting a model that did not exist. Whatever fires, the rule that
       fired it goes on the row.
-- [ ] **5.4** IV rank / percentile / term structure — needs greeks in the
-      chain, so it lands naturally after Phase 3.
+- [x] **5.4 — IV term structure; IV rank and percentile refused.** *Written
+      2026-10-13 without a shell; verified 2026-10-22, and the open units
+      question below is closed: a live SPY chain (trade date 2026-10-21,
+      captured to `backend/test/fixtures/vol.json`) shows the per-contract
+      `iv` as a fraction (0.1443 at 30 DTE) beside an `iv30` of 14.023, so
+      the payload now says `ivUnits: 'FRACTION'`, `iv30Units: 'PERCENT'`,
+      `termStructure.test.ts` holds the factor of 100 to the fixture, and the
+      panel renders both as percentages.* Term structure ships: per expiry, the
+      strike nearest spot that carries both a call and a put IV, from Cboe's
+      own per-contract `iv`, at `GET /api/gex/vol` and under the GEX chart.
+      **IV rank and percentile are `null` with the reason on the payload, and
+      that is the result, not a deferral.** Both need a trailing year of
+      stored IV, and `CBOE_CDN_DELAYED_CHAIN` is `UNVERIFIED` for PERSIST, so
+      the registry refuses the history they need. An in-memory one dies with
+      every restart. They become possible when a PERSIST-permitted chain
+      exists (1.3, Tradier) *and* a year has passed. **Was open, now settled
+      (see the italics above):** Cboe's per-contract IV is a fraction and its
+      `iv30` a percentage; the values are still passed through unconverted and
+      the panel multiplies the fraction by 100 once, at render. *The original
+      description:* IV rank / percentile / term structure — needs greeks in
+      the chain, so it lands naturally after Phase 3.
 
 ---
 

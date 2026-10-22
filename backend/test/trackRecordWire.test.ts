@@ -108,6 +108,31 @@ test('every row field the backtest table renders is one the frontend declares', 
     `the table reads row fields the frontend type does not declare: ${undeclared.join(', ')}`);
 });
 
+test('every row field the morning view renders is one the frontend declares', () => {
+  // ROADMAP 5.2 renders the same rows a second time. The check above reads
+  // Backtest.tsx alone, so a second consumer would be outside its scope — the
+  // guard-scope failure this repo keeps finding — unless it is named here.
+  const frontend = fields(FRONTEND_TYPES, 'BacktestRow');
+  const src = readFileSync(join(ROOT, 'frontend', 'components', 'morning', 'MorningView.tsx'), 'utf8');
+  const body = /export function TrackRecordPanel[\s\S]*?\n\}/.exec(src);
+  assert.ok(body, 'TrackRecordPanel is still a function by that name');
+  const read = new Set([...body[0].matchAll(/\br\.([A-Za-z_][A-Za-z0-9_]*)/g)].map((m) => m[1]!));
+  assert.ok(read.size > 2, `found only ${read.size} row reads — has the binding changed shape?`);
+  const undeclared = [...read].filter((f) => !frontend.has(f));
+  assert.deepEqual(undeclared, [],
+    `the morning view reads row fields the frontend type does not declare: ${undeclared.join(', ')}`);
+});
+
+test('the track-record envelope the morning view declares is what the route sends', () => {
+  // `TrackRecordResponse` is new with 5.2. Its keys must all be in the recorded
+  // capture of `/api/track-record`; one the route does not send renders empty.
+  const decl = fields(FRONTEND_TYPES, 'TrackRecordResponse');
+  const body = JSON.parse(readFileSync(join(__dirname, 'fixtures', 'track.json'), 'utf8'));
+  const missing = [...decl].filter((k) => !(k in body));
+  assert.deepEqual(missing, [],
+    `TrackRecordResponse declares keys the captured route never sent: ${missing.join(', ')}`);
+});
+
 test('no wire field on this path is called an excursion', () => {
   // F-9's rule, held at the boundary rather than only in the backend: an
   // excursion is a property of a path, and this system observes two endpoints.

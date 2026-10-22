@@ -2,6 +2,7 @@
 import { useStore } from '@/store/useStore'
 import { formatTime, heatColor } from '@/lib/utils'
 import { HeatBadge } from '@/components/ui/HeatBadge'
+import { channelText, PUSH_ABOVE, SPEAK_ABOVE, triggerText } from '@/lib/alertRules'
 import type { OrderType } from '@/lib/types'
 
 /**
@@ -46,6 +47,15 @@ const alertColor = (t: OrderType) => ALERT_TYPE_COLORS[t] || DEFAULT_ALERT_COLOR
  */
 const TRIGGER = 'Raised when the engine scores a signal 75 or above — its unusual threshold, on any order type.'
 
+/**
+ * The out-of-band channels' rules, read from where they run (ROADMAP 5.3)
+ * rather than written out again. The 75 above is the backend's
+ * `UNUSUAL_SCORE`, and `wireContract.test.ts` holds this sentence to it; every
+ * row also carries the rule as the backend stated it, so the row is the
+ * authority and this line is the summary.
+ */
+const CHANNELS = `Spoken aloud above heat ${SPEAK_ABOVE} when voice is on; pushed to the desktop above ${PUSH_ABOVE}. Each alert shows the rule that raised it and every channel it reached.`
+
 export default function PowerAlertsPage() {
   const { powerAlerts, voiceEnabled, setVoiceEnabled, connected } = useStore()
   // Named for what it counts. `synthetic` covers a generated print *and* a
@@ -65,6 +75,7 @@ export default function PowerAlertsPage() {
         <div>
           <h1 style={{ fontSize: 18, fontWeight: 700, color: '#fafafa', marginBottom: 4 }}>🔥 Power Alerts</h1>
           <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>{TRIGGER}</p>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{CHANNELS}</p>
           <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
             Heat is <span style={{ fontFamily: "'JetBrains Mono', monospace" }}>flow-engine/score.ts</span> — a deterministic score, not a model, and not a forecast.
           </p>
@@ -135,6 +146,18 @@ export default function PowerAlertsPage() {
                   </div>
                   <div style={{ fontSize: 13, color: '#fafafa', fontFamily: "'JetBrains Mono', monospace" }}>
                     {alert.message}
+                  </div>
+                  {/* ROADMAP 5.3: the rule that fired, on the row it fired
+                      for — as the backend stated it, not as this page
+                      describes it — and every channel whose own rule matched,
+                      including the ones that did not deliver. */}
+                  <div data-testid="alert-rule" style={{ marginTop: 6, fontSize: 10, color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace", lineHeight: 1.6 }}>
+                    <div><span style={{ fontWeight: 700 }}>RULE</span> {triggerText(alert)}</div>
+                    {(alert.channels ?? []).map((c) => (
+                      <div key={c.channel} style={{ color: c.delivered ? 'var(--text-muted)' : '#fde68a' }}>
+                        {channelText(c)}
+                      </div>
+                    ))}
                   </div>
                   {/*
                     A "ML CONFIDENCE: N%" line rendered here, gated on

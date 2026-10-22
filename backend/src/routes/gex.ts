@@ -1,7 +1,8 @@
 import { Router, Request, Response } from 'express';
 import {
-  getGEXLevels, getRealGexSymbols, getZeroDteLevels, GEXLevel,
+  getGEXLevels, getRealGexSymbols, getZeroDteLevels, getVolReading, GEXLevel,
 } from '../ingestion/index';
+import { IV_RANK_UNAVAILABLE } from '../ingestion/termStructure';
 
 const router = Router();
 
@@ -123,6 +124,33 @@ router.get('/', (req: Request, res: Response) => {
         `for it: a fabricated gamma profile is indistinguishable from a real one.`,
     realtime: false,
     delayedMinutes: isReal ? 15 : null,
+  });
+});
+
+// GET /api/gex/vol — ATM IV term structure from the same chain (ROADMAP 5.4),
+// with IV rank and percentile refused and the reason on the payload. Same
+// mount and tier as `/api/gex`: it reads a cached snapshot and costs nothing.
+router.get('/vol', (req: Request, res: Response) => {
+  const symbol = ((req.query.symbol as string) || 'SPY').toUpperCase();
+  const v = getVolReading(symbol);
+  const hasCurve = v !== null && v.termStructure.points.some((p) => p.atmIv !== null);
+  res.json({
+    symbol,
+    realData: hasCurve,
+    unavailableReason: v === null
+      ? `No Cboe chain has been received for ${symbol}.`
+      : hasCurve ? null : `The ${symbol} chain carried no expiry with both a call and a put IV.`,
+    source: v ? 'cboe' : null,
+    spot: v?.spot ?? null,
+    iv30: v?.iv30 ?? null,
+    tradeDate: v?.tradeDate ?? null,
+    asOf: v?.asOf ?? null,
+    delayedMinutes: v?.delayedMinutes ?? null,
+    termStructure: v?.termStructure ?? null,
+    // Refused, not deferred. See `ingestion/termStructure.ts`.
+    ivRank: null,
+    ivPercentile: null,
+    ivRankUnavailable: IV_RANK_UNAVAILABLE,
   });
 });
 

@@ -1,5 +1,6 @@
 'use client'
 import { useStore } from '@/store/useStore'
+import { triggerText } from '@/lib/alertRules'
 
 export function PowerAlertBanner() {
   const { powerAlerts, voiceEnabled, setVoiceEnabled } = useStore()
@@ -14,7 +15,9 @@ export function PowerAlertBanner() {
       </span>
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', gap: 24, maskImage: 'linear-gradient(90deg,transparent,black 20px,black calc(100% - 20px),transparent)' }}>
         {recent.slice(0, 6).map(a => (
-          <span key={a.id} style={{ whiteSpace: 'nowrap', fontSize: 11, fontFamily: "'JetBrains Mono', monospace", color: '#fafafa', opacity: a.synthetic ? 0.75 : 1 }}>
+          // The rule rides on the hover: a scrolling strip has no room for it
+          // inline, and the row on the alerts page carries it in full (5.3).
+          <span key={a.id} title={`Rule: ${triggerText(a)}`} style={{ whiteSpace: 'nowrap', fontSize: 11, fontFamily: "'JetBrains Mono', monospace", color: '#fafafa', opacity: a.synthetic ? 0.75 : 1 }}>
             {/* A scrolling banner across the top of the terminal is the least
                 inspectable surface there is; a constructed print has to carry
                 its marker here too.
