@@ -127,3 +127,49 @@ test('the sign convention on the wire is the one the basis states', () => {
   assert.ok(s.points[0]!.riskReversal! > 0);
   assert.match(SKEW_BASIS, /put IV minus call IV/);
 });
+
+// ─── Through the real connector ─────────────────────────────────────────────
+
+function load(rows: unknown[], top: Record<string, unknown> = {}) {
+  const resolved = require.resolve('../src/ingestion/connectors/cboeOptions');
+  delete require.cache[resolved];
+  const axios = require('axios');
+  const realGet = axios.default?.get ?? axios.get;
+  const get = async () => ({ data: { data: { current_price: 100, iv30: 20, options: rows, ...top } } });
+  if (axios.default) axios.default.get = get; else axios.get = get;
+  const mod = require('../src/ingestion/connectors/cboeOptions');
+  return {
+    ...mod,
+    restore() {
+      if (axios.default) axios.default.get = realGet; else axios.get = realGet;
+      delete require.cache[resolved];
+    },
+  };
+}
+const osi = (right: 'C' | 'P', yymmdd: string, strike: number) =>
+  `SPY${yymmdd}${right}${String(strike * 1000).padStart(8, '0')}`;
+
+test('the connector selects the legs from the vendor\'s delta, open interest or not', async () => {
+  const cboe = load([
+    // No open interest anywhere: excluded from GEX and DEX, still rows a
+    // skew can be read from.
+    { option: osi('P', '261120', 90),  open_interest: 0, gamma: 0, iv: 0.30, delta: -0.12, volume: 0 },
+    { option: osi('P', '261120', 95),  open_interest: 0, gamma: 0, iv: 0.26, delta: -0.27, volume: 0 },
+    { option: osi('C', '261120', 105), open_interest: 0, gamma: 0, iv: 0.18, delta: 0.24,  volume: 0 },
+    { option: osi('C', '261120', 110), open_interest: 0, gamma: 0, iv: 0.17, delta: 0.09,  volume: 0 },
+    // A row the vendor sent no delta for: counted, not selected.
+    { option: osi('C', '261120', 100), open_interest: 0, gamma: 0, iv: 0.20, volume: 0 },
+  ], { last_trade_time: '2026-10-21T16:00:00' });
+  try {
+    const snap = await cboe.fetchCboeChain('SPY');
+    assert.equal(snap.skew.targetDelta, 0.25);
+    const [pt] = snap.skew.points;
+    assert.equal(pt.expiry, '2026-11-20');
+    assert.equal(pt.dte, 30);
+    assert.deepEqual(pt.put, { strike: 95, delta: -0.27, iv: 0.26 });
+    assert.deepEqual(pt.call, { strike: 105, delta: 0.24, iv: 0.18 });
+    assert.ok(Math.abs(pt.riskReversal - 0.08) < 1e-12);
+    assert.equal(pt.deltaMissing, 1);
+    assert.equal(pt.contracts, 5);
+  } finally { cboe.restore(); }
+});

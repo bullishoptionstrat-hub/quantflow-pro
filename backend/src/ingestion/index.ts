@@ -378,7 +378,7 @@ export function getZeroDteLevels(symbol: string) {
   return getCboeSnapshot(symbol)?.zeroDte ?? null;
 }
 
-/** The volatility reading of the last Cboe chain for a symbol (ROADMAP 5.4), or null. */
+/** The volatility reading of the last Cboe chain for a symbol (ROADMAP 5.4, 5.5), or null. */
 export function getVolReading(symbol: string) {
   const snap = getCboeSnapshot(symbol);
   if (!snap) return null;
@@ -389,6 +389,7 @@ export function getVolReading(symbol: string) {
     asOf: snap.asOf,
     delayedMinutes: snap.delayedMinutes,
     termStructure: snap.termStructure,
+    skew: snap.skew,
   };
 }
 

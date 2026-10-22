@@ -22,6 +22,7 @@
 import axios from 'axios';
 import { numeric } from '../optionalNumber';
 import { termStructureOf, ivOrNull, type IvPoint, type TermStructure } from '../termStructure';
+import { skewOf, type SkewInput, type Skew } from '../skew';
 
 export interface CboeGexLevel {
   strike: number;
@@ -136,6 +137,11 @@ export interface CboeSnapshot {
    * (ROADMAP 5.4). See `ingestion/termStructure.ts` for every rule in it.
    */
   termStructure: TermStructure;
+  /**
+   * The 25-delta risk reversal per expiry, selected from Cboe's own
+   * per-contract `delta` and `iv` (ROADMAP 5.5). See `ingestion/skew.ts`.
+   */
+  skew: Skew;
   /** The chain's own trading date, from the vendor's clock rather than ours. */
   tradeDate: string | null;
   unusual: CboeUnusualContract[];
@@ -245,6 +251,9 @@ export async function fetchCboeChain(symbol: string): Promise<CboeSnapshot | nul
   // Every parsed contract, open interest or not: a quoted IV on a contract
   // nobody holds yet is still a point on the curve.
   const ivPoints: IvPoint[] = [];
+  // Same rows, with the delta: skew selects by it. Read once, below, after
+  // `delta` has been parsed for the DEX path.
+  const skewInputs: SkewInput[] = [];
 
   /** Accumulate one contract into one strike bucket. */
   const accumulate = (
@@ -304,6 +313,10 @@ export async function fetchCboeChain(symbol: string): Promise<CboeSnapshot | nul
     // and it still joins the gamma aggregation it legitimately belongs to.
     const delta = numeric(r.delta);
     const volume = numeric(r.volume) ?? 0;
+    skewInputs.push({
+      expiry: parsed.expiry, strike: parsed.strike, right: parsed.right,
+      iv: ivOrNull(numeric(r.iv)), delta,
+    });
 
     if (oi > 0 && gamma !== 0) {
       accumulate(byStrike, parsed.strike, parsed.right, oi, gamma, delta);
@@ -356,6 +369,7 @@ export async function fetchCboeChain(symbol: string): Promise<CboeSnapshot | nul
       }
       : null,
     termStructure: termStructureOf(ivPoints, spot, tradeDate),
+    skew: skewOf(skewInputs, tradeDate),
     tradeDate,
     unusual: unusual.slice(0, 40),
     contractCount: rows.length,

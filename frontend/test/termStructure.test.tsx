@@ -30,6 +30,7 @@ const vol = (o: Partial<VolResponse> = {}): VolResponse => ({
       { expiry: '2026-12-18', dte: 85, atmStrike: null, distancePct: null, callIv: null, putIv: null, atmIv: null, ivMissing: 0, contracts: 0 },
     ],
   },
+  skew: null,
   ivRank: null, ivPercentile: null, ivRankUnavailable: REFUSAL,
   ...o,
 })
