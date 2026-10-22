@@ -92,6 +92,8 @@ import { h001Cr2Interval } from './h001Cr2';
 import type { H001Cr2Result } from './h001Cr2';
 import { h001VolBalance } from './h001Balance';
 import type { H001BalanceResult } from './h001Balance';
+import { h001Exploratory } from './h001Exploratory';
+import type { H001ExploratoryEndpoint } from './h001Exploratory';
 import type { H001Result, Interval, Observation } from './h001Verdict';
 
 /** A signal as the study receives it; `marks` is measured here (X3), never supplied. */
@@ -124,7 +126,6 @@ export interface H001MetaEventRow {
 /** Diagnostics the frozen text names that this report does not compute. */
 export const H001_ABSENT: ReadonlyArray<{ item: string; section: string; decides: boolean }> = [
   { item: 'sensitivity: staleness bounds of 1 s and 5 s', section: '§I', decides: false },
-  { item: 'exploratory endpoints H1 and D1', section: '§K', decides: false },
 ];
 
 export interface H001Report {
@@ -148,6 +149,8 @@ export interface H001Report {
     /** Δ_AD — secondary, decides nothing (§K). */
     deltaAD: { estimateBp: number | null; ci95: Interval | null; n: { observations: number; days: number } };
   };
+  /** §K's exploratory endpoints: Δ_AC on the primary's own units at H1 and D1 — decides nothing. */
+  exploratory: { H1: H001ExploratoryEndpoint; D1: H001ExploratoryEndpoint };
   sensitivities: {
     premiumFloor: H001Sensitivity & { floor: number; belowFloor: number };
     /** §I's as-known replay, which is also §J's secondary (J3). */
@@ -335,6 +338,10 @@ export function analyseH001(input: H001AnalysisInput, study: H001Study): H001Cor
     controls: { matches: c.matches, poolSize: c.poolSize, rejected: c.rejected, unmatchedA: c.unmatchedA },
     balance: h001VolBalance(c.matches, quotes),
     clock: { ...d, deltaAD: h001SecondaryInterval(d.differences, opts) },
+    exploratory: {
+      H1: h001Exploratory(c.matches, quotes, 'H1', opts),
+      D1: h001Exploratory(c.matches, quotes, 'D1', opts),
+    },
     absent: H001_ABSENT,
   };
 }

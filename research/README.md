@@ -170,9 +170,9 @@ Five readings it had to make, each open to challenge before any data is read:
   classification".
 
 The report carries `absent`: every diagnostic the frozen text names and this
-code does not compute (§I's staleness sensitivities, §K's H1/D1; §D's CR2,
-§I's $100k floor and §G's volatility balance until 2026-10-12; §J's as-known
-secondary until 2026-10-21). All of them decide nothing, so the verdict is
+code does not compute (§I's staleness sensitivities; §D's CR2, §I's $100k
+floor and §G's volatility balance until 2026-10-12; §J's as-known secondary
+until 2026-10-21; §K's H1/D1 until 2026-10-22). All of them decide nothing, so the verdict is
 complete without them; the report is not, and says so.
 
 **2026-10-12.** §D's CR2 cross-check is code: `backend/src/research/h001Cr2.ts`,
@@ -321,4 +321,86 @@ caught.
 §K's exploratory H1 and D1. For D1 the repository's grader uses a nominal 24 h.
 That lands on a weekend for a Friday decision, and the exit rule would then
 read Friday's last quote, so D1 needs a reading of its own before it is
-computed.
+computed. *Computed 2026-10-22, with that reading. See the next entry.*
+
+**2026-10-22.** §K's exploratory endpoints are code: `backend/src/research/h001Exploratory.ts`.
+The report's `exploratory.H1` and `exploratory.D1` carry Δ_AC on the primary's
+own matched units at the two longer horizons. Each comes with the primary's
+day-clustered bootstrap, `decides: false`, and a note that it supports no
+claim. `h001ReturnOver` is §C's measurement at any horizon; `h001Return` is
+now that function at M15, so the entry rule, the exit rule and the one-feed
+check have one home. The readings, each open to challenge before any data is
+read:
+
+- **K1** H1 and D1 are the repository's own nominal horizons, 60 min and 24 h
+  (`HORIZON_NOMINAL_MS`, the grader's table). The study and the track record
+  therefore mean the same thing by them. A test also holds the study's
+  15 minutes equal to the record's M15.
+- **K2** A unit whose exit falls outside a regular session is not measured at
+  that horizon, and is counted. That covers an exit after its date's close,
+  before its open, or on a weekend or holiday. Past the calendar's coverage
+  the calendar cannot say, so that is counted apart (`SESSION_UNKNOWN`) and
+  never as a closure.
+  The latest quote before a Saturday exit is Friday's, and a 15:30 decision's
+  H1 exit falls after the close. Measuring either reports a different quantity
+  under the same label, depending on whether the vendor's file carries
+  extended-hours quotes, which is V3's argument. This answers the D1 question
+  left open on 2026-10-21: 24 h, refused where 24 h is not a session, rather
+  than "the next trading day", which would mix one-day and weekend returns
+  under one label.
+- **K3** The exit quote must come from the session the horizon ends in.
+  §C sets no bound on how old the exit quote may be. Within a session that
+  stays §C's open question, and at M15 and H1 this rule cannot bite. Across
+  sessions it would let a file that ends on the decision's day, or a feed
+  that went dark overnight, use that day's close as the next day's price.
+  That turns a one-day return into an intraday one under the D1 label. The
+  rule is checked on the latest quote itself, before the book is read. An
+  earlier session's last quote that is also one-sided is therefore refused
+  for the missing session, not blamed on the book.
+- **K4** The units are the primary's: its matched A meta-events and the C
+  controls it drew. Nothing is re-drawn, and nothing unmeasurable is
+  replaced. A refused control is counted, the set's mean is taken over the
+  controls that measured (D3's rule), and an A meta-event with none left drops
+  out, counted.
+- **K5** Δ_AC is the only estimand reported at H1 and D1. Adding Δ_AB or Δ_AD
+  at exploratory horizons would be a search the text does not license.
+- **K6** An exit never reads a date inside the frozen holdout, whatever quotes
+  the caller supplied, and the refusal comes before any mark is taken. A
+  decision on 2026-06-30, the last confirmatory day, has its D1 exit on
+  2026-07-01, the holdout's first day, and §A says the holdout is "not
+  accessed for H-001-v2 at all". The windows now live in
+  `research/h001Windows.ts`, and a test holds them to the frozen file's §A
+  table. This is the one place the analysis itself reaches past the data it
+  was given. Keeping holdout dates out of the analysis's *input* is the
+  loader's job and the exposure ledger's.
+
+One property is stated rather than corrected: at these horizons the outcome
+windows overlap. For H1 the overlap falls inside one day, which the
+day-clustered bootstrap already treats as one cluster. A D1 window ends on the
+next session, whose meta-events form a different cluster, so D1's interval can
+be narrower than its dependence warrants. The payload says so.
+
+**Audited before merge.** A high-effort review of the change returned eight
+findings. Five were fixed:
+- the calendar's UNKNOWN had been counted as a closure;
+- K3 had blamed a broken book for a missing session;
+- D1 could read the holdout, now K6;
+- the reported exit age had included units behind no difference;
+- two derived values were rebuilt after the loop behind a non-null assertion.
+
+Three were declined, with reasons:
+- *Every core run computes the exploratory endpoints, including the two
+  sensitivity runs that discard them.* True, and the same is already true of
+  the balance, CR2 and Δ_AD. The cost is a few bootstraps and indexed marks
+  per run, and a structural change for one of four diagnostics would be
+  inconsistent.
+- *Session bounds are computed in five places.* True, with one benign
+  disagreement: the live board treats the closing instant as closed, and the
+  study treats it as inside, as its decision window does. A shared helper
+  touches four modules and is its own change.
+- *Per-date caching.* The cost is small since the quote book.
+
+27 mutations, each caught.
+
+**Still absent:** only §I's 1 s / 5 s staleness bounds, for the reason recorded
+under the 2026-10-12 entries.
