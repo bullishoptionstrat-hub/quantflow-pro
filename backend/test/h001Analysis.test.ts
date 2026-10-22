@@ -83,9 +83,9 @@ function signal(id: string, day: string, h: number, m: number, over: Partial<H00
 }
 
 /** Every signal's evidence, plus the C controls, on one FINAL_CORRECTED tape; revisions read from that tape. */
-function assemble(built: Built[], controls: TradeReportEvent[]) {
+function assemble(built: Built[], controls: TradeReportEvent[], more: MarketEvent[] = []) {
   const log = new EventLog();
-  const all: MarketEvent[] = [...built.flatMap((b) => b.evidence), ...controls];
+  const all: MarketEvent[] = [...built.flatMap((b) => b.evidence), ...controls, ...more];
   for (const e of all) log.append(e);
   const tape = log.finalCorrected();
   const signals = built.map((b) => ({
@@ -95,12 +95,14 @@ function assemble(built: Built[], controls: TradeReportEvent[]) {
         underlying: 'SPY', firstEventAt: b.evidence[0]!.eventTime, lastEventAt: b.evidence[b.evidence.length - 1]!.eventTime },
       tape, { finalityHorizonMs: 60_000, clusterGapMs: 500 }),
   }));
-  return { tape, signals };
+  return { tape, signals, log };
 }
 
-function fixture(extra: (day: string) => Built[] = () => []) {
+/** `more`: events beyond the evidence and the six genuine controls — cancels, and the trades they take back. */
+function fixture(extra: (day: string) => Built[] = () => [], more: (day: string) => MarketEvent[] = () => []) {
   const built: Built[] = [];
   const controls: TradeReportEvent[] = [];
+  const others: MarketEvent[] = [];
   for (const day of DAYS) {
     built.push(
       signal(`${day}-a1`, day, 10, 5),
@@ -120,8 +122,9 @@ function fixture(extra: (day: string) => Built[] = () => []) {
     );
     // Six genuine controls in the 10:00 hour with a1's key.
     for (let i = 0; i < 6; i++) controls.push(trade(day, ET(day, 10, 20 + i * 5)));
+    others.push(...more(day));
   }
-  return { built, controls, ...assemble(built, controls) };
+  return { built, controls, ...assemble(built, controls, others) };
 }
 
 const run = (over: Partial<Parameters<typeof runH001Analysis>[0]> = {}) => {
@@ -227,7 +230,7 @@ test('§I $100k floor: the pipeline re-run on the candidates that clear it, meta
 
   // S2: each half is exactly the core pipeline on its own inputs.
   const kept = f.signals.filter((s) => s.totalPremium >= 100_000);
-  const direct = analyseH001({ ...args, signals: kept });
+  const direct = analyseH001({ ...args, signals: kept }, 'FINAL_TAPE');
   assert.deepEqual(sens.primary, direct.primary);
   assert.deepEqual(sens.cr2, direct.cr2);
   assert.deepEqual(sens.metaEvents, { A: 4, B: 2 });
@@ -235,7 +238,7 @@ test('§I $100k floor: the pipeline re-run on the candidates that clear it, meta
   assert.equal(sens.decides, false);
   const { sensitivities, ...rest } = report;
   void sensitivities;
-  assert.deepEqual(rest, analyseH001({ ...args, signals: f.signals }), 'the primary is computed without reference to any sensitivity');
+  assert.deepEqual(rest, analyseH001({ ...args, signals: f.signals }, 'FINAL_TAPE'), 'the primary is computed without reference to any sensitivity');
   assert.ok(!report.absent.some((a) => a.item.includes('$100k')), 'computed, so no longer listed absent');
 });
 
@@ -280,7 +283,11 @@ test('the report lists what it did not compute, and the absent items decide noth
   const { report } = run();
   assert.equal(report.absent, H001_ABSENT);
   const sections = report.absent.map((a) => a.section).join(' ');
-  for (const s of ['§I', '§J', '§K']) assert.ok(sections.includes(s), s);
+  // §I's staleness bounds and §K's H1/D1 are still not computed.
+  for (const s of ['§I', '§K']) assert.ok(sections.includes(s), s);
+  // §J's secondary is computed (as `sensitivities.asKnown`), so it is no longer listed.
+  assert.ok(!sections.includes('§J'), sections);
+  assert.ok(!report.absent.some((a) => /as-known/i.test(a.item)), 'computed, so no longer listed absent');
   assert.ok(report.absent.every((a) => !a.decides), 'an absent item that decides would make the verdict incomplete, not merely the report');
 });
 
@@ -351,14 +358,151 @@ test('the composer indexes the quotes once per run and takes every mark from tha
     assert.deepEqual(fn.match(/input\.quotes/g), ['input.quotes'], name);
     assert.match(fn, /const quotes = bookOf\(input\.quotes\)/, name);
   }
-  // Every core run inside runH001Analysis is handed that one book.
-  const calls = fnOf('runH001Analysis').match(/analyseH001\(\{[^}]*\}\)/g) ?? [];
-  assert.equal(calls.length, 2);
+  // Every core run inside runH001Analysis is handed that one book: the
+  // primary, the $100k floor and the as-known study.
+  const calls = fnOf('runH001Analysis').match(/analyseH001\(\{[^}]*\}, '(?:FINAL_TAPE|AS_KNOWN)'\)/g) ?? [];
+  assert.equal(calls.length, 3);
   for (const c of calls) assert.match(c, /\bquotes\b/, c);
+  assert.equal((fnOf('runH001Analysis').match(/analyseH001\(/g) ?? []).length, 3, 'no core run the pattern above missed');
 });
 
 test('the report is the same whether the caller hands in the quotes or a book of them', () => {
   const f = fixture();
   const args = { signals: f.signals, tape: f.tape, ctx: CTX, truthSetAvailable: false, replicates: 200 };
   assert.deepEqual(runH001Analysis({ ...args, quotes: quoteBook(QUOTES) }), runH001Analysis({ ...args, quotes: QUOTES }));
+});
+
+// ─── §J's secondary: the as-known study ─────────────────────────────────────
+
+/** A cancel naming the trade it takes back, after the fact. */
+function cancelOf(day: string, at: number, referencedProviderEventId: string): MarketEvent {
+  return buildTradeEvent({
+    provider: 'hypothetical', datasetId: 'HYPOTHETICAL.OPRA', sequenceScope: `line-1:${day}`,
+    providerSequence: String(seq++), eventTime: at, providerReceiveTime: at + 3,
+    instrument: { underlying: 'SPY', expiry: '2026-03-20', strike: 552, right: 'C' },
+    venue: 'C', rawSessionIdentifier: 0, rawRecordRef: `raw/${day}#${seq}`, synthetic: false, replay: true,
+    rawMessageType: 'CANC', referencedProviderEventId,
+  });
+}
+
+/**
+ * The base fixture plus, each day:
+ *   x  an A signal at 10:50 whose only print the final tape takes back at 10:52,
+ *      after x formed — INVALIDATED_BY_CORRECTION;
+ *   v  an A signal at 14:30 whose revision was read from an as-known view, never
+ *      from the final tape;
+ *   k  a 10:47 execution with a1's key that the final tape takes back at 10:55.
+ */
+function asKnownFixture() {
+  const f = fixture(
+    (day) => [signal(`${day}-x`, day, 10, 50, {}, { providerEventId: `x-${day}` }), signal(`${day}-v`, day, 14, 30)],
+    (day) => [
+      cancelOf(day, ET(day, 10, 52), `x-${day}`),
+      trade(day, ET(day, 10, 47), { providerEventId: `k-${day}` }),
+      cancelOf(day, ET(day, 10, 55), `k-${day}`),
+    ],
+  );
+  const signals = f.signals.map((s) => {
+    if (!s.signalId.endsWith('-v')) return s;
+    const ev = s.evidence;
+    return { ...s, finalRevision: reviseSignal(
+      { signalId: s.signalId, evidenceEventIds: ev.map((e) => e.eventId), decidedAt: s.decisionAt, underlying: 'SPY',
+        firstEventAt: ev[0]!.eventTime, lastEventAt: ev[ev.length - 1]!.eventTime },
+      f.log.asKnownAt(s.decisionAt + 120_000), { finalityHorizonMs: 60_000, clusterGapMs: 500 }) };
+  });
+  const printOf = (id: string) => f.built.find((b) => b.signal.signalId === id)!.evidence[0]!.eventId;
+  const kOf = (day: string) => f.tape.trades.find((t) => t.event.providerEventId === `k-${day}`)!.event.eventId;
+  return { ...f, signals, printOf, kOf };
+}
+
+test('§J secondary: the signals the final tape took back are in the as-known study, and only there (J1, J5)', () => {
+  const f = asKnownFixture();
+  // The premise: each fixture is the revision outcome it is named for.
+  const rev = (id: string) => f.signals.find((s) => s.signalId === id)!.finalRevision;
+  for (const day of DAYS) {
+    assert.equal(rev(`${day}-x`).status, 'INVALIDATED_BY_CORRECTION');
+    assert.ok(rev(`${day}-v`).evaluatedAt !== null, 'v\'s revision is an as-known one');
+    assert.equal(f.tape.trades.find((t) => t.event.eventId === f.kOf(day))!.state, 'CANCELLED');
+  }
+  const args = { tape: f.tape, quotes: QUOTES, ctx: CTX, truthSetAvailable: false, replicates: 400 };
+  const report = runH001Analysis({ ...args, signals: f.signals });
+
+  // The primary drops them on the final-tape rule, and only on it.
+  assert.equal(report.eligibility.considered, 20);
+  assert.deepEqual(report.eligibility.included, { A: 6, B: 2 });
+  assert.equal(report.eligibility.unknown, 2);
+  assert.deepEqual(report.eligibility.byRule['final-tape'], { fail: 2, unknown: 2 });
+
+  const k = report.sensitivities.asKnown;
+  assert.equal(k.decides, false);
+  assert.deepEqual(k.included, { A: 10, B: 2 });
+  assert.deepEqual(k.metaEvents, { A: 8, B: 2 }, 'x and v each open their own meta-event');
+  assert.deepEqual(k.admittedOnlyAsKnown, { count: 4, byStatus: { AS_KNOWN_VIEW: 2, INVALIDATED_BY_CORRECTION: 2 } });
+
+  // J5: exactly the core pipeline as the as-known study, and the primary untouched by it.
+  const direct = analyseH001({ ...args, signals: f.signals }, 'AS_KNOWN');
+  assert.deepEqual(k.primary, direct.primary);
+  assert.deepEqual(k.cr2, direct.cr2);
+  assert.equal(k.unmatchedA, direct.controls.unmatchedA);
+  assert.equal(k.poolSize, direct.controls.poolSize);
+  const { sensitivities, ...rest } = report;
+  void sensitivities;
+  assert.deepEqual(rest, analyseH001({ ...args, signals: f.signals }, 'FINAL_TAPE'), 'the primary is computed without reference to any sensitivity');
+
+  // The waiver only adds: everything the primary includes, the as-known study includes too.
+  const included = (rows: typeof direct.eligibility.rows) => new Set(rows.filter((r) => r.verdict === 'INCLUDED').map((r) => r.signalId));
+  const inAsKnown = included(direct.eligibility.rows);
+  for (const id of included(report.eligibility.rows)) assert.ok(inAsKnown.has(id), id);
+});
+
+test('§J secondary: its controls include executions the final tape took back, never a meta-event\'s own print (J2, X5)', () => {
+  const f = asKnownFixture();
+  const args = { signals: f.signals, tape: f.tape, quotes: QUOTES, ctx: CTX, truthSetAvailable: false, replicates: 200 };
+  const primary = analyseH001(args, 'FINAL_TAPE');
+  const asKnown = analyseH001(args, 'AS_KNOWN');
+  const rejectedIn = (r: typeof primary, id: string) => r.controls.rejected.find((x) => x.eventId === id);
+  for (const day of DAYS) {
+    // k: rejected by the primary for its state; in the as-known pool.
+    assert.match(rejectedIn(primary, f.kOf(day))!.why, /CANCELLED/);
+    assert.equal(rejectedIn(asKnown, f.kOf(day)), undefined);
+    // x's print: the primary rejects it for its state; the as-known study
+    // excludes it as the evidence of x's own meta-event — never a control in either.
+    const x = f.printOf(`${day}-x`);
+    assert.match(rejectedIn(primary, x)!.why, /CANCELLED/);
+    assert.equal(rejectedIn(asKnown, x), undefined, 'excluded (X5), not rejected');
+    for (const r of [primary, asKnown]) {
+      for (const m of r.controls.matches) assert.ok(!m.controls.some((c) => c.eventId === x), `${m.metaEventId} drew x's own print`);
+    }
+  }
+  // Same size, different composition: the primary pools v's print (v is in no
+  // meta-event there) where the as-known study pools k instead.
+  assert.equal(primary.controls.poolSize, 16);
+  assert.equal(asKnown.controls.poolSize, 16);
+  const xMatch = asKnown.controls.matches.find((m) => m.metaEventId === `A:${DAYS[0]}-x`)!;
+  assert.equal(xMatch.status, 'MATCHED', 'x is matched in its own hour');
+  assert.equal(xMatch.controls.length, 5);
+});
+
+test('§J secondary: the report\'s bytes do not depend on the order the signals were listed in', () => {
+  // The as-known tally has two keys here, inserted x-first going forward and
+  // v-first reversed: only a fixed key order makes the two reports identical.
+  const f = asKnownFixture();
+  const args = { tape: f.tape, quotes: QUOTES, ctx: CTX, truthSetAvailable: false, replicates: 200 };
+  const strip = (r: ReturnType<typeof runH001Analysis>) => JSON.stringify({ ...r, eligibility: { ...r.eligibility, rows: undefined } });
+  const forward = runH001Analysis({ ...args, signals: f.signals });
+  assert.equal(Object.keys(forward.sensitivities.asKnown.admittedOnlyAsKnown.byStatus).length, 2);
+  assert.equal(strip(runH001Analysis({ ...args, signals: [...f.signals].reverse() })), strip(forward));
+});
+
+test('§I $100k floor is a sensitivity of the primary: it runs as the final-tape study', () => {
+  // Every signal here is $120k, so the floor keeps them all — including x and
+  // v, which only the as-known study admits. A floor run under the wrong study
+  // would include them; run under the primary's, it IS the primary.
+  const f = asKnownFixture();
+  const report = runH001Analysis({ signals: f.signals, tape: f.tape, quotes: QUOTES, ctx: CTX, truthSetAvailable: false, replicates: 200 });
+  const floor = report.sensitivities.premiumFloor;
+  assert.equal(floor.belowFloor, 0);
+  assert.deepEqual(floor.included, report.eligibility.included);
+  assert.deepEqual(floor.primary, report.primary);
+  assert.notDeepEqual(floor.included, report.sensitivities.asKnown.included, 'the fixture separates the two studies');
 });

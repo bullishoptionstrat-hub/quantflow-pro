@@ -161,6 +161,10 @@ const LEDGER: Record<string, string> = {
     'The same counter on the same rule, for prints refused at the seam for an ' +
     'unreadable expiry. This module owns and increments it, so absent really ' +
     'does mean none have been refused — it is not a reading a vendor omitted.',
+  'research/h001Analysis.ts: tally[why] ?? 0':
+    'A tally the composer owns, initialised on its first increment: how many ' +
+    'signals the as-known study admitted for one reason. An absent key means ' +
+    'none were — it counts rows this module just read, and is never a reading.',
   'ingestion/index.ts: a.ts ?? 0':
     'A sort comparator over seeded prints, giving an undefined timestamp a ' +
     'stable position rather than NaN. Nothing is published from it.',

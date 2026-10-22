@@ -29,6 +29,9 @@
  * (§G), or build meta-events (§B, `metaEvents.ts`). It takes whether the marks
  * exist as an input rather than choosing them, so the one place that chooses a
  * mark is the one place that is tested for look-ahead.
+ *
+ * §J names two studies of one replay, and a verdict is for one of them
+ * (`H001Study`). They differ in exactly one rule: the final-tape revision.
  */
 import type { InferredSide, OptionRight } from '../flow-engine/types';
 import type { TradeReportEvent } from '../events/types';
@@ -112,6 +115,25 @@ export interface H001Context {
 }
 
 /**
+ * Which of §J's two studies a verdict is for — named after the two halves of
+ * the revision's own `ResearchConsequence` (`signalRevision.ts`).
+ *
+ *   FINAL_TAPE  §J's primary: "excluding any whose final-tape revision is not
+ *               FINAL".
+ *   AS_KNOWN    §J's secondary: "the pure as-known replay, cancelled trades
+ *               included". The revision record already says what an
+ *               as-known study does with every status — `asKnownStudies:
+ *               'INCLUDE'`, because the signal "formed in real time;
+ *               live-behaviour studies always keep it" — so the final-tape
+ *               rule does not apply, and every other rule does.
+ *
+ * Required and checked, never defaulted: a caller that forgot it, or passed a
+ * misspelling, would otherwise silently get one of the two answers — and the
+ * permissive one is the one a typo would reach.
+ */
+export type H001Study = 'FINAL_TAPE' | 'AS_KNOWN';
+
+/**
  * The decision window: open ≤ decisionAt, and the M15 exit falls inside the
  * regular session. §L writes it as "09:30 to 15:45 ET (12:45 on an early
  * close)" and gives the reason in the same line — "so the M15 exit falls inside
@@ -141,7 +163,8 @@ export function h001DecisionWindow(decisionAt: number): { ok: boolean; unknown?:
   return { ok: true, why: '' };
 }
 
-export function h001Eligibility(c: H001Candidate, ctx: H001Context): H001Eligibility {
+export function h001Eligibility(c: H001Candidate, ctx: H001Context, study: H001Study): H001Eligibility {
+  if (study !== 'FINAL_TAPE' && study !== 'AS_KNOWN') throw new RangeError(`unknown study ${String(study)}`);
   const findings: H001Finding[] = [];
   const fail = (rule: H001Rule, why: string) => findings.push({ rule, outcome: 'FAIL', why });
   const unknown = (rule: H001Rule, why: string) => findings.push({ rule, outcome: 'UNKNOWN', why });
@@ -194,10 +217,16 @@ export function h001Eligibility(c: H001Candidate, ctx: H001Context): H001Eligibi
   const rights = importPermitted(c.manifest, ctx.today, ctx.mode);
   if (!rights.allowed) fail('rights', rights.why.join('; '));
 
-  if (c.finalRevision.evaluatedAt !== null) {
-    unknown('final-tape', 'the revision was read from an as-known view; §J needs the FINAL_CORRECTED one');
-  } else if (c.finalRevision.status !== 'FINAL') {
-    fail('final-tape', `final-tape revision is ${c.finalRevision.status}: ${c.finalRevision.why}`);
+  // §J: the final-tape rule is the primary's alone. In the as-known study the
+  // revision's consequence is INCLUDE whatever its status, and the signal
+  // stands with the content it formed with — a REVISED one is not recomputed,
+  // because recomputing before use is the final-tape study's consequence.
+  if (study === 'FINAL_TAPE') {
+    if (c.finalRevision.evaluatedAt !== null) {
+      unknown('final-tape', 'the revision was read from an as-known view; §J needs the FINAL_CORRECTED one');
+    } else if (c.finalRevision.status !== 'FINAL') {
+      fail('final-tape', `final-tape revision is ${c.finalRevision.status}: ${c.finalRevision.why}`);
+    }
   }
 
   const missingMarks = [!c.marks.entry && 'entry', !c.marks.exit && 'exit'].filter(Boolean);

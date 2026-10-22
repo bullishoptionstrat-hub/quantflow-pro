@@ -109,7 +109,7 @@ test('five controls are drawn without replacement from an exact-match pool, dete
   const pool = Array.from({ length: 9 }, (_, i) => trade({ eventTime: ET(10, 20 + i * 3), providerReceiveTime: ET(10, 20 + i * 3) + 1_500 }));
   const tape = tapeOf(pool);
   const a = [metaA('a1', ET(10, 5))];
-  const m = matchControls({ a, tape, excludedEventIds: new Set(), quotes: QUOTES });
+  const m = matchControls({ study: 'FINAL_TAPE', a, tape, excludedEventIds: new Set(), quotes: QUOTES });
   assert.equal(m.poolSize, 9);
   const row = m.matches[0]!;
   assert.equal(row.status, 'MATCHED');
@@ -133,17 +133,17 @@ test('five controls are drawn without replacement from an exact-match pool, dete
   assert.deepEqual(m.primary, [{ date: DAY, valueBp: row.differenceBp }]);
   assert.equal(m.unmatchedA, 0);
   // Same data, same draw — and the order the inputs arrive in is not data.
-  const again = matchControls({ a, tape: tapeOf([...pool].reverse()), excludedEventIds: new Set(), quotes: QUOTES });
+  const again = matchControls({ study: 'FINAL_TAPE', a, tape: tapeOf([...pool].reverse()), excludedEventIds: new Set(), quotes: QUOTES });
   assert.deepEqual(again.matches, m.matches);
   // Fewer than five available: all of them, not a refusal.
-  const three = matchControls({ a, tape: tapeOf(pool.slice(0, 3)), excludedEventIds: new Set(), quotes: QUOTES });
+  const three = matchControls({ study: 'FINAL_TAPE', a, tape: tapeOf(pool.slice(0, 3)), excludedEventIds: new Set(), quotes: QUOTES });
   assert.equal(three.matches[0]!.controls.length, 3);
 });
 
 test('the draw is a draw: across A events, every pool member is chosen, and none twice for one event', () => {
   const pool = Array.from({ length: 8 }, (_, i) => trade({ eventTime: ET(10, 20 + i * 4) }));
   const a = Array.from({ length: 12 }, (_, i) => metaA(`a${String(i).padStart(2, '0')}`, ET(10, 2 + i * 4, 30)));
-  const m = matchControls({ a, tape: tapeOf(pool), excludedEventIds: new Set(), quotes: QUOTES });
+  const m = matchControls({ study: 'FINAL_TAPE', a, tape: tapeOf(pool), excludedEventIds: new Set(), quotes: QUOTES });
   const seen = new Map<string, number>();
   for (const row of m.matches) {
     assert.equal(row.status, 'MATCHED');
@@ -153,7 +153,7 @@ test('the draw is a draw: across A events, every pool member is chosen, and none
   assert.equal(seen.size, 8, 'M6: an execution may control more than one A event, and none is never drawn');
   // M6: the stream is consumed in A order (date, start, id), not in the order
   // the caller happened to list them — which would make the draw depend on it.
-  const reversed = matchControls({ a: [...a].reverse(), tape: tapeOf(pool), excludedEventIds: new Set(), quotes: QUOTES });
+  const reversed = matchControls({ study: 'FINAL_TAPE', a: [...a].reverse(), tape: tapeOf(pool), excludedEventIds: new Set(), quotes: QUOTES });
   assert.deepEqual(reversed.matches, m.matches);
   // Not the same five every time — which a sort without a shuffle would give.
   assert.ok(new Set(m.matches.map((r) => r.controls.map((c) => c.eventId).sort().join())).size > 1);
@@ -168,15 +168,15 @@ test('exact match only: a near miss on any axis is NO_MATCH, counted, and never 
     premium: trade({ size: 300 }), // $90,000: the bucket below
   };
   const tape = tapeOf(Object.values(miss));
-  const m = matchControls({ a: [metaA('a1', at)], tape, excludedEventIds: new Set(), quotes: QUOTES });
+  const m = matchControls({ study: 'FINAL_TAPE', a: [metaA('a1', at)], tape, excludedEventIds: new Set(), quotes: QUOTES });
   assert.equal(m.poolSize, 4, 'each one is a usable control — for a different A event');
   assert.equal(m.matches[0]!.status, 'NO_MATCH');
   assert.equal(m.unmatchedA, 1);
   assert.deepEqual(m.primary, []);
   // And the same A event matches each of them once its own key moves there.
-  const keyOfTrade = (e: TradeReportEvent) => controlPool(tapeOf([e]), new Set(), QUOTES).pool[0]!.key;
+  const keyOfTrade = (e: TradeReportEvent) => controlPool(tapeOf([e]), new Set(), QUOTES, 'FINAL_TAPE').pool[0]!.key;
   assert.notEqual(keyString(keyOfTrade(miss.premium)), keyString(keyOfTrade(trade())));
-  const moved = matchControls({ a: [metaA('a1', at, { premium: 90_000 })], tape, excludedEventIds: new Set(), quotes: QUOTES });
+  const moved = matchControls({ study: 'FINAL_TAPE', a: [metaA('a1', at, { premium: 90_000 })], tape, excludedEventIds: new Set(), quotes: QUOTES });
   assert.deepEqual(moved.matches[0]!.controls.map((c) => c.eventId), [miss.premium.eventId]);
 });
 
@@ -184,6 +184,7 @@ test('an A meta-event with no key is unmatched, not dropped from the denominator
   const tape = tapeOf([trade()]);
   // A $40k first signal has no premium bucket, so no exact match can exist for it.
   const m = matchControls({
+    study: 'FINAL_TAPE',
     a: [metaA('a1', ET(10, 5), { premium: 40_000 }), metaA('a2', ET(10, 6))],
     tape, excludedEventIds: new Set(), quotes: QUOTES,
   });
@@ -198,7 +199,7 @@ test('an A meta-event with no key is unmatched, not dropped from the denominator
 test('"not part of any A or B meta-event": an A event\'s own prints never control it', () => {
   const own = trade({ eventTime: ET(10, 20) });
   const other = trade({ eventTime: ET(10, 25) });
-  const m = matchControls({ a: [metaA('a1', ET(10, 5))], tape: tapeOf([own, other]),
+  const m = matchControls({ study: 'FINAL_TAPE', a: [metaA('a1', ET(10, 5))], tape: tapeOf([own, other]),
     excludedEventIds: new Set([own.eventId]), quotes: QUOTES });
   assert.deepEqual(m.matches[0]!.controls.map((c) => c.eventId), [other.eventId]);
   assert.equal(m.rejected.some((r) => r.eventId === own.eventId), false, 'excluded, not rejected: it is not a control at all');
@@ -225,7 +226,7 @@ test('M7: an execution that could not be measured the same way is out of the poo
   // control it then cannot measure.
   const tExit = bad.noMarks!.availableAt + 1_000 + 15 * 60_000;
   const quotes = [...QUOTES, { provider: 'p', eventTime: tExit - 1, availableAt: tExit + 4, bid: null, ask: 550.02 }];
-  const { pool, rejected } = controlPool(tape, new Set(), quotes);
+  const { pool, rejected } = controlPool(tape, new Set(), quotes, 'FINAL_TAPE');
   assert.deepEqual(pool.map((c) => c.eventId), [good.eventId]);
   const why = (e: TradeReportEvent) => rejected.find((r) => r.eventId === e.eventId)?.why ?? '(not rejected)';
   assert.match(why(cancelled), /CANCELLED/);
@@ -237,18 +238,18 @@ test('M7: an execution that could not be measured the same way is out of the poo
   assert.equal(rejected.some((r) => r.eventId === put.eventId || r.eventId === qqq.eventId), false);
   // So an A event beside the bad ones is matched to the one usable control,
   // and gets one control — not five of which four are later thrown away.
-  const m = matchControls({ a: [metaA('a1', ET(10, 5))], tape, excludedEventIds: new Set(), quotes });
+  const m = matchControls({ study: 'FINAL_TAPE', a: [metaA('a1', ET(10, 5))], tape, excludedEventIds: new Set(), quotes });
   assert.deepEqual(m.matches[0]!.controls.map((c) => c.eventId), [good.eventId]);
 });
 
 test('the pool comes from the final tape; an as-known view is refused', () => {
   const log = new EventLog();
   log.append(trade());
-  assert.throws(() => controlPool(log.asKnownAt(ET(12, 0)), new Set(), QUOTES), RangeError);
+  assert.throws(() => controlPool(log.asKnownAt(ET(12, 0)), new Set(), QUOTES, 'FINAL_TAPE'), RangeError);
 });
 
 test('an A meta-event with no §C return is a pipeline defect, not a dropped observation', () => {
-  assert.throws(() => matchControls({ a: [metaA('a1', ET(10, 5))], tape: tapeOf([trade()]), excludedEventIds: new Set(), quotes: [] }), RangeError);
+  assert.throws(() => matchControls({ study: 'FINAL_TAPE', a: [metaA('a1', ET(10, 5))], tape: tapeOf([trade()]), excludedEventIds: new Set(), quotes: [] }), RangeError);
 });
 
 // ─── The D control ───────────────────────────────────────────────────────────
@@ -342,7 +343,7 @@ test('D5: an A meta-event with no window still consumes its five draws, so it ne
   assert.deepEqual(withNoWindow.matches[1]!.times, withWindow.matches[1]!.times);
   // And its stream is its own: the C draw does not move the D times.
   const alone = matchClockControls({ a: [metaA('x', ET(8, 30)), b], quotes });
-  matchControls({ a: [b], tape: tapeOf([trade()]), excludedEventIds: new Set(), quotes });
+  matchControls({ study: 'FINAL_TAPE', a: [b], tape: tapeOf([trade()]), excludedEventIds: new Set(), quotes });
   assert.deepEqual(alone, withNoWindow);
   // The times are the seeded stream's: the second A meta-event's five are draws 6–10.
   const rand = seededRandom(20260927);
@@ -367,4 +368,46 @@ test('Δ_AD is reported with the primary\'s own day-clustered bootstrap, and dec
   const one = h001SecondaryInterval([{ date: DAY, valueBp: 2 }, { date: DAY, valueBp: 4 }]);
   assert.equal(one.estimateBp, 3);
   assert.equal(one.ci95, null, 'one day cannot be resampled');
+});
+
+test('J2: the as-known study draws executions the final tape took back; every other M7 filter is unchanged', () => {
+  const good = trade({ eventTime: ET(10, 30) });
+  const cancelled = trade({ eventTime: ET(10, 31), providerEventId: 'j1', providerSequence: undefined });
+  const cancel = buildTradeEvent(rec({
+    eventTime: ET(10, 32), providerEventId: 'jc1', providerSequence: undefined, rawMessageType: 'CANC',
+    referencedProviderEventId: 'j1', price: undefined, size: undefined,
+  }));
+  // A cancel whose codes do not say which report it means, on a venue where
+  // one report precedes it: that report is disputed, not cancelled.
+  const disputed = trade({ eventTime: ET(10, 33), venue: 'X' });
+  const unclear = buildTradeEvent(rec({
+    eventTime: ET(10, 34), venue: 'X', rawMessageType: 'CANC', rawConditions: ['ZZZZ'], price: undefined, size: undefined,
+  }));
+  const synthetic = trade({ eventTime: ET(10, 35), synthetic: true });
+  const late = trade({ eventTime: ET(15, 50) });
+  const tape = tapeOf([good, cancelled, cancel, disputed, unclear, synthetic, late]);
+  const stateOf = (e: TradeReportEvent) => tape.trades.find((t) => t.event.eventId === e.eventId)!.state;
+  assert.equal(stateOf(cancelled), 'CANCELLED', 'the fixture reaches a cancelled trade');
+  assert.equal(stateOf(disputed), 'CANCEL_UNRESOLVED', 'the fixture reaches a disputed trade');
+
+  const primary = controlPool(tape, new Set(), QUOTES, 'FINAL_TAPE');
+  const asKnown = controlPool(tape, new Set(), QUOTES, 'AS_KNOWN');
+  assert.deepEqual(primary.pool.map((c) => c.eventId), [good.eventId]);
+  assert.match(primary.rejected.find((r) => r.eventId === cancelled.eventId)!.why, /CANCELLED/);
+  assert.match(primary.rejected.find((r) => r.eventId === disputed.eventId)!.why, /CANCEL_UNRESOLVED/);
+  assert.deepEqual(asKnown.pool.map((c) => c.eventId).sort(), [good, cancelled, disputed].map((e) => e.eventId).sort());
+  // The state rule is the only one lifted: every other rejection is the same, in the same order.
+  const byState = new Set([cancelled.eventId, disputed.eventId]);
+  assert.deepEqual(asKnown.rejected, primary.rejected.filter((r) => !byState.has(r.eventId)));
+  assert.ok(asKnown.rejected.length >= 2, 'the fixture reaches the other filters too');
+  // A control in both pools is measured identically: same key, anchor and return.
+  assert.deepEqual(asKnown.pool.find((c) => c.eventId === good.eventId), primary.pool[0]);
+  // "Not part of any A or B meta-event" still holds: an excluded execution is
+  // out of the as-known pool, whatever its state.
+  const without = controlPool(tape, new Set([cancelled.eventId]), QUOTES, 'AS_KNOWN');
+  assert.ok(!without.pool.some((c) => c.eventId === cancelled.eventId));
+  assert.ok(!without.rejected.some((r) => r.eventId === cancelled.eventId), 'excluded, not rejected');
+  // A study that is neither is refused, not read as either.
+  assert.throws(() => controlPool(tape, new Set(), QUOTES, 'FINAL' as never), RangeError);
+  assert.throws(() => matchControls({ study: undefined as never, a: [], tape, excludedEventIds: new Set(), quotes: QUOTES }), RangeError);
 });
