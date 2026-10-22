@@ -33,6 +33,7 @@
  * §J names two studies of one replay, and a verdict is for one of them
  * (`H001Study`). They differ in exactly one rule: the final-tape revision.
  */
+import { regularSessionInstants } from '../market/session';
 import type { InferredSide, OptionRight } from '../flow-engine/types';
 import type { TradeReportEvent } from '../events/types';
 import { detectorAdmission } from '../events/detector';
@@ -40,7 +41,6 @@ import type { SignalRevision } from '../events/signalRevision';
 import { H001_V2_SESSION_RULE, researchEligibility } from '../market/researchEligibility';
 import { contractSessionAt } from '../market/contractLifecycle';
 import { marketDateOf, instantEt } from '../market/civil';
-import { sessionOn } from '../flow-engine/calendar';
 import { importPermitted } from '../provenance/researchManifest';
 import type { DatasetRightsManifest } from '../provenance/researchManifest';
 import type { BusinessMode } from '../provenance/rights';
@@ -149,14 +149,12 @@ export type H001Study = 'FINAL_TAPE' | 'AS_KNOWN';
 export function h001DecisionWindow(decisionAt: number): { ok: boolean; unknown?: string; why: string } {
   const date = marketDateOf(decisionAt);
   if (date === null) return { ok: false, unknown: 'the decision time cannot be read in the market timezone', why: '' };
-  const s = sessionOn(date);
-  if (s.openHour === null || s.openMinute === null || s.closeHour === null || s.closeMinute === null) {
-    if (s.kind === 'UNKNOWN') return { ok: false, unknown: s.basis, why: '' };
-    return { ok: false, why: `${s.basis}; no regular session to decide in` };
+  const bounds = regularSessionInstants(date);
+  if (!bounds.ok) {
+    if (bounds.unknown) return { ok: false, unknown: bounds.why, why: '' };
+    return { ok: false, why: `${bounds.why}; no regular session to decide in` };
   }
-  const open = instantEt(date, s.openHour, s.openMinute);
-  const close = instantEt(date, s.closeHour, s.closeMinute);
-  if (open === null || close === null) return { ok: false, unknown: `the session bounds on ${date} could not be placed`, why: '' };
+  const { open, close } = bounds;
   const exit = decisionAt + H001_ENTRY_LATENCY_MS + H001_HORIZON_MS;
   if (decisionAt < open) return { ok: false, why: 'decided before the regular open' };
   if (exit > close) return { ok: false, why: 'the M15 exit would fall after the regular close' };
