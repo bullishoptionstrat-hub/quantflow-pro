@@ -267,6 +267,39 @@ test('VolResponse matches what /api/gex/vol returns', () => {
   }
 });
 
+test('the skew block on /api/gex/vol is what the frontend declares (ROADMAP 5.5)', () => {
+  const body = load('vol');
+  assert.ok(body.skew, 'a chain that gives a curve gives a skew block');
+  assertDeclaredFieldsExist('SkewBlock', body.skew);
+  assertDeclaredFieldsExist('SkewPoint', body.skew.points);
+  const legs = body.skew.points.flatMap((p: any) => [p.put, p.call]).filter(Boolean);
+  assert.ok(legs.length > 0, 'the recorded chain carried deltas');
+  assertDeclaredFieldsExist('SkewLeg', legs);
+  assert.equal(body.skew.targetDelta, 0.25);
+  assert.equal(body.skew.ivUnits, 'FRACTION');
+  for (const p of body.skew.points) {
+    // The risk reversal exists exactly when both legs do, and is their difference.
+    const both = p.put !== null && p.call !== null;
+    assert.equal(p.riskReversal !== null, both, `${p.expiry}: risk reversal without both legs`);
+    if (both) {
+      assert.ok(Math.abs(p.riskReversal - (p.put.iv - p.call.iv)) < 1e-9, `${p.expiry}: not put minus call`);
+      assert.ok(Math.abs(p.riskReversalPct - p.riskReversal * 100) < 1e-9);
+      // The chosen deltas carry the vendor's sign and are near the target —
+      // on SPY within a few hundredths; a chain where "25Δ" came out at 0.5
+      // would be a selection bug, not a sparse expiry.
+      assert.ok(p.put.delta < 0 && p.call.delta > 0, `${p.expiry}: leg signs`);
+      assert.ok(Math.abs(Math.abs(p.put.delta) - 0.25) < 0.1, `${p.expiry}: put delta ${p.put.delta}`);
+      assert.ok(Math.abs(Math.abs(p.call.delta) - 0.25) < 0.1, `${p.expiry}: call delta ${p.call.delta}`);
+    }
+    assert.ok(p.deltaMissing <= p.contracts && p.ivMissing <= p.contracts);
+  }
+  // Same expiries as the term structure: both are readings of the one chain.
+  assert.deepEqual(
+    body.skew.points.map((p: any) => p.expiry),
+    body.termStructure.points.map((p: any) => p.expiry),
+  );
+});
+
 // ─── Health ─────────────────────────────────────────────────────────────────
 
 test('the settings page reads fields /api/health actually sends', () => {

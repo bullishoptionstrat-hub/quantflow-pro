@@ -23,6 +23,14 @@ import type { VolResponse } from '@/lib/types'
  *   - **ATM is shown with its distance from spot.** On a sparse expiry the
  *     nearest strike with both sides quoted can be far from the money; the
  *     column makes that visible instead of hiding it behind the label.
+ *
+ * And a fourth, for the skew table (ROADMAP 5.5):
+ *
+ *   - **The delta actually chosen is shown beside each leg.** "25Δ" is the
+ *     target; the row Cboe sent nearest it might be 0.31Δ, and the table says
+ *     so rather than letting the header vouch for the number. The target
+ *     itself comes from the payload (`targetDelta`), so the header cannot
+ *     claim a delta the backend did not select by.
  */
 
 const mono = "'JetBrains Mono', monospace"
@@ -36,6 +44,16 @@ export function ivPct(v: number | null): string {
 /** Cboe's iv30, published already as a percentage, shown to two places. */
 export function iv30Pct(v: number | null): string {
   return v == null ? '—' : `${v.toFixed(2)}%`
+}
+
+/** A published delta, with its sign, to two places. */
+export function deltaText(v: number): string {
+  return `${v > 0 ? '+' : ''}${v.toFixed(2)}Δ`
+}
+
+/** The risk reversal in vol points, signed, to two places. */
+export function rrText(pct: number | null): string {
+  return pct == null ? '—' : `${pct > 0 ? '+' : ''}${pct.toFixed(2)}`
 }
 
 export function TermStructurePanel({ panel, symbol }: { panel: Panel<VolResponse>; symbol: string }) {
@@ -75,7 +93,7 @@ export function TermStructurePanel({ panel, symbol }: { panel: Panel<VolResponse
         </div>
       ) : (
         <>
-          <table className="flow-table">
+          <table className="flow-table" data-testid="term-table">
             <thead>
               <tr>
                 <th>EXPIRY</th><th>DTE</th><th>ATM STRIKE</th><th>FROM SPOT</th>
@@ -104,6 +122,50 @@ export function TermStructurePanel({ panel, symbol }: { panel: Panel<VolResponse
           {/* Verbatim: the basis and the units travel with the numbers. */}
           <div style={{ ...muted, padding: '10px 16px 14px' }} data-testid="iv-basis">
             {v.termStructure?.basis} Published units: per-contract {v.termStructure?.ivUnits}, iv30 {v.termStructure?.iv30Units}; shown as percentages.
+          </div>
+        </>
+      )}
+
+      {v.skew && v.skew.points.some((p) => p.put !== null || p.call !== null) && (
+        <>
+          <div className="card-header" style={{ fontWeight: 700, fontSize: 13 }} data-testid="skew-header">
+            SKEW — {Math.round(v.skew.targetDelta * 100)}Δ RISK REVERSAL
+          </div>
+          <table className="flow-table" data-testid="skew-table">
+            <thead>
+              <tr>
+                <th>EXPIRY</th><th>DTE</th>
+                <th>PUT</th><th>PUT IV</th>
+                <th>CALL</th><th>CALL IV</th>
+                <th>RR (PTS)</th><th>NO Δ</th>
+              </tr>
+            </thead>
+            <tbody>
+              {v.skew.points.map((p) => (
+                <tr key={p.expiry}>
+                  <td style={{ fontFamily: mono }}>{p.expiry}</td>
+                  <td style={{ fontFamily: mono }}>{p.dte ?? '—'}</td>
+                  <td style={{ fontFamily: mono }}>
+                    {p.put ? <>{p.put.strike} <span style={{ color: 'var(--text-muted)' }}>{deltaText(p.put.delta)}</span></> : '—'}
+                  </td>
+                  <td style={{ fontFamily: mono }}>{p.put ? ivPct(p.put.iv) : '—'}</td>
+                  <td style={{ fontFamily: mono }}>
+                    {p.call ? <>{p.call.strike} <span style={{ color: 'var(--text-muted)' }}>{deltaText(p.call.delta)}</span></> : '—'}
+                  </td>
+                  <td style={{ fontFamily: mono }}>{p.call ? ivPct(p.call.iv) : '—'}</td>
+                  {/* No colour on the sign: positive is the ordinary equity state, not a warning. */}
+                  <td style={{ fontFamily: mono, fontWeight: 700 }}>
+                    {rrText(p.riskReversalPct)}
+                  </td>
+                  <td style={{ fontFamily: mono, color: p.deltaMissing > 0 ? '#fde68a' : 'var(--text-muted)' }}>
+                    {p.deltaMissing} / {p.contracts}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div style={{ ...muted, padding: '10px 16px 14px' }} data-testid="skew-basis">
+            {v.skew.basis} Risk reversal is in vol points (IV × 100).
           </div>
         </>
       )}

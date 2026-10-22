@@ -797,6 +797,33 @@ Only after there is something to show. Ordered by "will you open it every day":
       the panel multiplies the fraction by 100 once, at render. *The original
       description:* IV rank / percentile / term structure — needs greeks in
       the chain, so it lands naturally after Phase 3.
+- [x] **5.5 — IV skew: the 25-delta risk reversal per expiry.** *Opened and
+      closed 2026-10-22, in four committed phases, each verified before the
+      next.* The other half of capability axis #6 that is a reading of one
+      chain. Cboe publishes a per-contract `delta` beside its `iv`, so "the
+      25-delta put" is a **selection** among rows the vendor sent, not a
+      computation: per expiry, the put and the call whose published |delta|
+      is nearest 0.25 and that carry an IV. Nothing is interpolated — that
+      would be a model (linear in what?) with no basis chosen here — and
+      **the delta actually chosen is published beside each leg**, so a
+      sparse expiry's 0.31Δ is on the row rather than behind the header.
+      Ties go to the lower strike; a wrong-sign, zero or |δ|>1 delta is
+      missing, not selected, and counted in `deltaMissing`. Risk reversal is
+      put IV minus call IV, sign convention stated on the payload (positive
+      means puts bid over calls), in both fraction and vol points so the
+      renderer converts nothing. On the live SPY chain (trade date
+      2026-10-22, captured to `vol.json`): delta on nearly every row, chosen
+      |deltas| within 0.03 of target, risk reversal +0.1 at 0 DTE rising to
+      +5.7 points at a month — the ordinary state, which is what a correct
+      reading of an ordinary day should show. Served on the existing
+      `/api/gex/vol` payload as `skew`; rendered as a second table under the
+      term structure, uncoloured, because a positive number is not a
+      warning. **Held:** 9 backend tests (3 mutations each caught by the
+      intended test), wire check holding `rr == put.iv − call.iv`, leg signs
+      and delta proximity on the recording, 7 frontend tests including the
+      captured chain. **Not done, same reason as 5.4:** skew *history* (is
+      today's RR high for this name?) needs persisted IV, which the rights
+      registry refuses for this chain.
 
 ---
 

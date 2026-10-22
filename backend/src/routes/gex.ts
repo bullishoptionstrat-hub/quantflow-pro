@@ -127,9 +127,10 @@ router.get('/', (req: Request, res: Response) => {
   });
 });
 
-// GET /api/gex/vol — ATM IV term structure from the same chain (ROADMAP 5.4),
-// with IV rank and percentile refused and the reason on the payload. Same
-// mount and tier as `/api/gex`: it reads a cached snapshot and costs nothing.
+// GET /api/gex/vol — ATM IV term structure (ROADMAP 5.4) and the 25-delta
+// risk reversal per expiry (ROADMAP 5.5) from the same chain, with IV rank
+// and percentile refused and the reason on the payload. Same mount and tier
+// as `/api/gex`: it reads a cached snapshot and costs nothing.
 router.get('/vol', (req: Request, res: Response) => {
   const symbol = ((req.query.symbol as string) || 'SPY').toUpperCase();
   const v = getVolReading(symbol);
@@ -147,6 +148,9 @@ router.get('/vol', (req: Request, res: Response) => {
     asOf: v?.asOf ?? null,
     delayedMinutes: v?.delayedMinutes ?? null,
     termStructure: v?.termStructure ?? null,
+    // `null` when no chain; otherwise always the block, with whatever
+    // expiries had both a 25-delta put and call. See `ingestion/skew.ts`.
+    skew: v?.skew ?? null,
     // Refused, not deferred. See `ingestion/termStructure.ts`.
     ivRank: null,
     ivPercentile: null,

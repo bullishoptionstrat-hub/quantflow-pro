@@ -336,6 +336,42 @@ export interface TermPoint {
  * factor of 100 between them to that fixture. The panel multiplies the
  * fraction by 100 once, at render, and shows `%` on both.
  */
+/** One side of the risk reversal. Mirrors `SkewLeg` in `backend/src/ingestion/skew.ts`. */
+export interface SkewLeg {
+  strike: number
+  /** The delta Cboe published on the chosen row — not 0.25 by fiat. */
+  delta: number
+  /** A fraction, like every per-contract IV on this payload. */
+  iv: number
+}
+
+/** One expiry's 25-delta risk reversal. Mirrors `SkewPoint` in the backend. */
+export interface SkewPoint {
+  expiry: string
+  dte: number | null
+  put: SkewLeg | null
+  call: SkewLeg | null
+  /** put.iv - call.iv, as a fraction, only when both legs exist. */
+  riskReversal: number | null
+  /** The same in vol points (×100). */
+  riskReversalPct: number | null
+  ivMissing: number
+  deltaMissing: number
+  contracts: number
+}
+
+/**
+ * ROADMAP 5.5 — the skew block on `GET /api/gex/vol`. A selection among rows
+ * Cboe sent, by its published delta; nothing interpolated. `targetDelta` is on
+ * the payload so the column header and the selection cannot disagree.
+ */
+export interface SkewBlock {
+  targetDelta: 0.25
+  points: SkewPoint[]
+  ivUnits: 'FRACTION'
+  basis: string
+}
+
 export interface VolResponse {
   symbol: string
   realData: boolean
@@ -352,6 +388,8 @@ export interface VolResponse {
     iv30Units: 'PERCENT'
     basis: string
   } | null
+  /** `null` when there is no chain; otherwise the block, possibly with no points. */
+  skew: SkewBlock | null
   ivRank: null
   ivPercentile: null
   ivRankUnavailable: string
