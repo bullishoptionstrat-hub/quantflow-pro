@@ -26,6 +26,8 @@
  * must stay the first line. `dotenvOrder.test.ts` fails if it moves.
  */
 import 'dotenv/config';
+// Bundled data-vendor keys; fills only what the environment left unset.
+import './bundledKeys';
 
 import express from 'express';
 import { createServer } from 'http';
