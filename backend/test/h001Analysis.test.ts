@@ -521,7 +521,8 @@ test('§K: H1 and D1 are measured on the primary\'s own matched units, and decid
   // At D1, Tuesday's exits are Wednesday's; Wednesday's would be Thursday's,
   // and the fixture has no Thursday quotes — so Wednesday's close cannot stand in (K3).
   assert.equal(report.exploratory.D1.differences.length, 1);
-  assert.deepEqual(report.exploratory.D1.refused.aMetaEvents, { OUTSIDE_SESSION: 0, NO_MARK: 0, EXIT_FROM_EARLIER_SESSION: 1 });
+  assert.deepEqual(report.exploratory.D1.refused.aMetaEvents,
+    { IN_HOLDOUT: 0, OUTSIDE_SESSION: 0, SESSION_UNKNOWN: 0, EXIT_FROM_EARLIER_SESSION: 1, NO_MARK: 0 });
   // The primary's verdict never reads them: it is the verdict of the matched M15 differences alone.
   assert.equal(report.primary.n.metaEvents, report.cr2.n.observations);
 });
