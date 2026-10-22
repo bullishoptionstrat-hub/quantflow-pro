@@ -8,7 +8,7 @@
  * shape someone typed.
  */
 import { describe, expect, test } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { VolResponse } from '@/lib/types'
@@ -46,7 +46,7 @@ describe('the IV panel', () => {
   test('a fraction is shown as a percentage and iv30 is not multiplied twice', async () => {
     const { TermStructurePanel } = await import('@/components/gex/TermStructure')
     const { container } = render(<TermStructurePanel panel={{ status: 'ok', data: vol() }} symbol="SPY" />)
-    const row = screen.getByText('2026-10-16').closest('tr')!
+    const row = within(screen.getByTestId('term-table')).getByText('2026-10-16').closest('tr')!
     expect(row.textContent).toContain('17.10%')
     expect(row.textContent).toContain('18.90%')
     expect(row.textContent).toContain('18.00%')
@@ -69,7 +69,8 @@ describe('the IV panel', () => {
     expect(pts.length).toBeGreaterThan(5)
     const near30 = pts.filter((p) => p.dte !== null && p.atmIv !== null)
       .reduce((a, b) => (Math.abs(b.dte! - 30) < Math.abs(a.dte! - 30) ? b : a))
-    const row = screen.getByText(near30.expiry).closest('tr')!
+    // Scoped to the term-structure table: the skew table (5.5) lists the same expiries.
+    const row = within(screen.getByTestId('term-table')).getByText(near30.expiry).closest('tr')!
     // What is on screen for that expiry is within a point of the headline iv30,
     // which Cboe publishes in percent — the same reading, so the same number.
     const shown = Number(row.textContent!.match(/(\d+\.\d{2})%\s*\d+ \/ \d+$/)![1])
@@ -79,7 +80,7 @@ describe('the IV panel', () => {
   test('an expiry with no two-sided ATM shows dashes, not zeros', async () => {
     const { TermStructurePanel } = await import('@/components/gex/TermStructure')
     render(<TermStructurePanel panel={{ status: 'ok', data: vol() }} symbol="SPY" />)
-    const row = screen.getByText('2026-12-18').closest('tr')!
+    const row = within(screen.getByTestId('term-table')).getByText('2026-12-18').closest('tr')!
     expect(row.textContent).not.toMatch(/\b0\.0+\b/)
     expect(row.textContent).toContain('—')
   })
