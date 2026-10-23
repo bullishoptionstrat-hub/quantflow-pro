@@ -7,7 +7,7 @@
  * slips past this file still cannot corrupt the record.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { reconcileWrite } from './identity';
+import { HISTORY_COLLISION_NOTE, reconcileWrite } from './identity';
 import {
   emptyTally, tallyOutcome, tallyToRows, reportNotes, type OutcomeTally,
 } from './trackRecordRows';
@@ -65,6 +65,52 @@ const num = (v: unknown): number | undefined => {
   return Number.isFinite(n) ? n : undefined;
 };
 
+/**
+ * Splits a key list into `in.(…)` filters short enough to survive the trip.
+ *
+ * PostgREST builds the filter into the URL **and echoes the whole URL back**
+ * in a `Content-Location` response header, percent-encoded. Measured against
+ * PostgREST 12.2.3 through a local stack (`npm run test:pg`): 200 signal keys
+ * answer 200; 250 come back with a response header Node's `fetch` refuses to
+ * parse (`UND_ERR_HEADERS_OVERFLOW` — its ceiling is 16 KB); 2,000 are
+ * refused by the server outright with `400 Bad Request`. A 64-hex key is 67
+ * bytes once its comma is encoded, so the client fails at about 240 keys.
+ *
+ * The chunk size used to be a count — 500 in `trackRecord` and `backtest`,
+ * and **no chunking at all** in `listUngraded`, which `recover()` calls with a
+ * limit of 500 and so put up to 2,000 keys in one URL. Every one of those
+ * paths therefore failed against a real server once the population passed a
+ * couple of hundred signals: the track record at about the size where its
+ * rates first become publishable, and recovery on any busy day.
+ *
+ * So the budget is in **bytes**, encoded, and set at 6 KB rather than near
+ * the 16 KB that was measured: the client limit is not the only one. Supabase
+ * fronts PostgREST with a gateway whose request-line limit has not been
+ * measured from here, and nginx's default buffer for one is 8 KB, so the
+ * budget stays under the smallest limit that is plausible rather than the
+ * largest one observed.
+ */
+const IN_LIST_BUDGET_BYTES = 6_000;
+
+export function inListChunks(keys: readonly string[], budget = IN_LIST_BUDGET_BYTES): string[][] {
+  const chunks: string[][] = [];
+  let cur: string[] = [];
+  let bytes = 0;
+  for (const k of keys) {
+    // The key plus its encoded separator, which is what the URL carries.
+    const cost = encodeURIComponent(k).length + 3;
+    if (cur.length > 0 && bytes + cost > budget) {
+      chunks.push(cur);
+      cur = [];
+      bytes = 0;
+    }
+    cur.push(k);
+    bytes += cost;
+  }
+  if (cur.length > 0) chunks.push(cur);
+  return chunks;
+}
+
 export class SupabaseSignalStore implements SignalStore {
   readonly kind = 'supabase' as const;
 
@@ -81,9 +127,7 @@ export class SupabaseSignalStore implements SignalStore {
         existingContentHash: existing!.contentHash,
         incomingContentHash: rec.contentHash,
         detectedAt: Date.now(),
-        note:
-          'Same signal key arrived with different content. The stored row was kept ' +
-          'and the incoming write refused.',
+        note: HISTORY_COLLISION_NOTE,
       });
       return { verdict, signalKey: rec.signalKey };
     }
@@ -151,16 +195,19 @@ export class SupabaseSignalStore implements SignalStore {
     const rows = (data ?? []).map(fromRow);
     if (rows.length === 0) return [];
 
-    const { data: outs, error: oErr } = await this.db
-      .from(T_OUTCOMES)
-      .select('signal_key')
-      .is('superseded_at', null)
-      .in('signal_key', rows.map((r) => r.signalKey));
-    if (oErr) throw new Error(`signal_outcomes scan failed: ${oErr.message}`);
-
+    // Chunked: `limit * 4` keys in one `in.(…)` is a URL the server refuses at
+    // the limit `recover()` actually passes — see `inListChunks`.
     const counts = new Map<string, number>();
-    for (const o of outs ?? []) {
-      counts.set(o.signal_key, (counts.get(o.signal_key) ?? 0) + 1);
+    for (const chunk of inListChunks(rows.map((r) => r.signalKey))) {
+      const { data: outs, error: oErr } = await this.db
+        .from(T_OUTCOMES)
+        .select('signal_key')
+        .is('superseded_at', null)
+        .in('signal_key', chunk);
+      if (oErr) throw new Error(`signal_outcomes scan failed: ${oErr.message}`);
+      for (const o of outs ?? []) {
+        counts.set(o.signal_key, (counts.get(o.signal_key) ?? 0) + 1);
+      }
     }
     // `< GRADED_HORIZONS.length`, not `< 4`: `EXPIRY` is in the union and is
     // never graded, so counting against the union's size meant this filter
@@ -180,6 +227,21 @@ export class SupabaseSignalStore implements SignalStore {
     if (rec.label === 'UNGRADED' && !rec.ungradedReason?.trim()) {
       throw new Error(
         `Outcome for ${rec.signalKey}/${rec.horizon} is UNGRADED with no reason.`,
+      );
+    }
+    // A correction is refused here, by name, rather than left to fail as a
+    // unique violation. The memory store implements supersession and this one
+    // never has: it does not write `supersedes`, and retiring the live row and
+    // inserting its replacement are two requests that PostgREST cannot make
+    // atomic, so a failure between them would leave the horizon with no live
+    // outcome at all. Nothing in `src/` writes a correction today, so this
+    // closes no live path — it stops a test against the memory store from
+    // standing as evidence that corrections work in production.
+    if (rec.supersedes !== undefined) {
+      throw new Error(
+        `Outcome ${rec.signalKey}/${rec.horizon} is a correction (supersedes ${rec.supersedes}), ` +
+        'and this store does not implement supersession. Corrections need a single-transaction ' +
+        'path (an RPC) that does not exist yet.',
       );
     }
     const { error } = await this.db.from(T_OUTCOMES).insert({
@@ -290,8 +352,14 @@ export class SupabaseSignalStore implements SignalStore {
       synthetic: await this.count(T_SIGNALS, (q) => q.eq('synthetic', true)),
       eventTimeOnlyBasis: await this.count(T_SIGNALS, (q) =>
         q.eq('synthetic', false).eq('decision_basis', 'EVENT_TIME_ONLY')),
+      // `OBSERVED` too: the exclusions are applied in order — synthetic, then
+      // event-time-only, then rights — so each signal is counted under the
+      // first reason that removes it, as the memory store counts. Without it a
+      // replayed signal from an unverified source was counted twice, and the
+      // notes explaining what the report left out added up to more signals
+      // than it had dropped. Found against a real database (`npm run test:pg`).
       rightsRefused: await this.count(T_SIGNALS, (q) =>
-        q.eq('synthetic', false).neq('rights_class', 'PERMITTED')),
+        q.eq('synthetic', false).eq('decision_basis', 'OBSERVED').neq('rights_class', 'PERMITTED')),
     };
 
     // The research population: real, permitted, observed. Matches the partial
@@ -310,11 +378,9 @@ export class SupabaseSignalStore implements SignalStore {
     const tallies = new Map<string, OutcomeTally>();
 
     if (kindByKey.size > 0) {
-      const keys = [...kindByKey.keys()];
-      // Chunked: PostgREST builds the IN list into the URL, which has a length
-      // limit a large research population would blow past.
-      for (let i = 0; i < keys.length; i += 500) {
-        const chunk = keys.slice(i, i + 500);
+      // Chunked by encoded bytes, not by count: a count of 500 was itself past
+      // the limit. See `inListChunks`.
+      for (const chunk of inListChunks([...kindByKey.keys()])) {
         const { data: outs, error: oErr } = await this.db
           .from(T_OUTCOMES)
           .select('signal_key, horizon, label, directional_return_at_horizon, entry_mark_at, exit_mark_at')
@@ -417,10 +483,8 @@ export class SupabaseSignalStore implements SignalStore {
     );
 
     if (signalByKey.size > 0) {
-      const keys = [...signalByKey.keys()];
       // Chunked for the same URL-length reason as `trackRecord`.
-      for (let i = 0; i < keys.length; i += 500) {
-        const chunk = keys.slice(i, i + 500);
+      for (const chunk of inListChunks([...signalByKey.keys()])) {
         const { data: outs, error: oErr } = await this.db
           .from(T_OUTCOMES)
           .select('signal_key, horizon, label, directional_return_at_horizon, entry_mark_at, exit_mark_at')

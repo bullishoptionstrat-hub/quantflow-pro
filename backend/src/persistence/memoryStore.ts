@@ -17,6 +17,7 @@
  * is killed, which would lose everything instead of the oldest thing.
  */
 import {
+  HISTORY_COLLISION_NOTE,
   reconcileWrite,
   type WriteVerdict,
 } from './identity';
@@ -68,11 +69,7 @@ export class InMemorySignalStore implements SignalStore {
         existingContentHash: existing!.contentHash,
         incomingContentHash: rec.contentHash,
         detectedAt: Date.now(),
-        note:
-          `Same signal key arrived with different content. The stored row was kept ` +
-          `and the incoming write refused. Two different signals hashing to one key, ` +
-          `or one signal whose economics changed after emission — either is a ` +
-          `pipeline defect worth finding.`,
+        note: HISTORY_COLLISION_NOTE,
       });
       return { verdict, signalKey: rec.signalKey };
     }

@@ -11,5 +11,5 @@
     "noEmit": true,
     "rootDir": "."
   },
-  "include": ["src/**/*", "test/**/*", "tools/**/*"]
+  "include": ["src/**/*", "test/**/*", "test-pg/**/*", "tools/**/*"]
 }
