@@ -61,8 +61,8 @@
  * interval can be narrower than its dependence warrants. Correcting it means
  * choosing a dependence model the text does not name; the payload says so.
  */
+import { regularSessionInstants } from '../market/session';
 import { HORIZON_NOMINAL_MS } from '../persistence/types';
-import { sessionOn } from '../flow-engine/calendar';
 import { instantEt, marketDateOf } from '../market/civil';
 import { h001ReturnOver, markAt, H001_ENTRY_LATENCY_MS } from './h001Marks';
 import { H001_HOLDOUT, inWindow } from './h001Windows';
@@ -87,13 +87,9 @@ export const H001_EXPLORATORY_HORIZON_MS: Readonly<Record<H001ExploratoryHorizon
 export function regularSessionAt(at: number): { ok: true; open: number } | { ok: false; unknown: boolean; why: string } {
   const date = marketDateOf(at);
   if (date === null) return { ok: false, unknown: true, why: 'the instant cannot be read in the market timezone' };
-  const s = sessionOn(date);
-  if (s.openHour === null || s.openMinute === null || s.closeHour === null || s.closeMinute === null) {
-    return { ok: false, unknown: s.kind === 'UNKNOWN', why: s.basis };
-  }
-  const open = instantEt(date, s.openHour, s.openMinute);
-  const close = instantEt(date, s.closeHour, s.closeMinute);
-  if (open === null || close === null) return { ok: false, unknown: true, why: `the session bounds on ${date} could not be placed` };
+  const bounds = regularSessionInstants(date);
+  if (!bounds.ok) return bounds;
+  const { open, close } = bounds;
   if (at < open) return { ok: false, unknown: false, why: `before the regular open on ${date}` };
   if (at > close) return { ok: false, unknown: false, why: `after the regular close on ${date}` };
   return { ok: true, open };

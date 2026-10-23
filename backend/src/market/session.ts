@@ -20,7 +20,7 @@
  * `flow-engine/calendar.ts`, published on `/api/health`, and read there.
  */
 import { sessionOn, SOURCE, READ_AT, COVERAGE } from '../flow-engine/calendar';
-import { marketDateOf, minutesEt } from './civil';
+import { instantEt, marketDateOf, minutesEt } from './civil';
 
 /** What the board may say about the current session. */
 export type SessionState =
@@ -105,4 +105,33 @@ export function marketSessionAt(atMs: number): MarketSession {
     state: open ? ('OPEN' as const) : ('CLOSED_OUTSIDE_HOURS' as const),
     basis: `${s.basis}; ${open ? 'inside' : 'outside'} those hours`,
   };
+}
+
+/**
+ * A market date's published regular session as two instants — the one home
+ * for "where are this date's bounds" in code that measures in instants (the
+ * H-001 study's decision window, balance window, clock window and exploratory
+ * exits). Four copies of these three steps had grown by 2026-10-22, each with
+ * its own null checks.
+ *
+ * It answers bounds, not membership, so every caller keeps its own inclusive
+ * or exclusive edge: the live board treats the closing instant as closed,
+ * while the study treats an exit at the close as inside its session.
+ * `unknown` keeps "the calendar cannot say" apart from "the market was shut",
+ * because reading the first as the second is how an outage gets filed as a
+ * holiday.
+ */
+export type RegularSessionInstants =
+  | { ok: true; open: number; close: number }
+  | { ok: false; unknown: boolean; why: string };
+
+export function regularSessionInstants(date: string): RegularSessionInstants {
+  const s = sessionOn(date);
+  if (s.openHour === null || s.openMinute === null || s.closeHour === null || s.closeMinute === null) {
+    return { ok: false, unknown: s.kind === 'UNKNOWN', why: s.basis };
+  }
+  const open = instantEt(date, s.openHour, s.openMinute);
+  const close = instantEt(date, s.closeHour, s.closeMinute);
+  if (open === null || close === null) return { ok: false, unknown: true, why: `the session bounds on ${date} could not be placed` };
+  return { ok: true, open, close };
 }

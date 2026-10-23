@@ -86,13 +86,13 @@
  * The trailing 30-minute realised-volatility balance diagnostic (§G, decides
  * nothing) is `h001Balance.ts`, which reads each control's `anchor`.
  */
+import { regularSessionInstants } from '../market/session';
 import type { TradeReportEvent } from '../events/types';
 import type { TapeView } from '../events/eventLog';
 import { detectorAdmission } from '../events/detector';
 import { H001_V2_SESSION_RULE, researchEligibility } from '../market/researchEligibility';
 import { contractSessionAt } from '../market/contractLifecycle';
 import { addDays, instantEt, marketDateOf, minutesEt } from '../market/civil';
-import { sessionOn } from '../flow-engine/calendar';
 import { premiumOf } from '../flow-engine/types';
 import { h001Return, markAt, H001_ENTRY_LATENCY_MS, H001_ENTRY_MAX_AGE_MS, H001_HORIZON_MS } from './h001Marks';
 import type { QuoteSource } from './h001Marks';
@@ -388,14 +388,13 @@ export const H001_CLOCK_CONTROLS_PER_EVENT = 5;
  * calendar cannot say.
  */
 export function clockWindow(date: string, hourEt: number): { from: number; to: number } | null {
-  const s = sessionOn(date);
-  if (s.openHour === null || s.openMinute === null || s.closeHour === null || s.closeMinute === null) return null;
-  const open = instantEt(date, s.openHour, s.openMinute);
-  const close = instantEt(date, s.closeHour, s.closeMinute);
+  const bounds = regularSessionInstants(date);
+  if (!bounds.ok) return null;
+  const { open, close } = bounds;
   const hourStart = instantEt(date, hourEt, 0);
   // The hour's end is the next hour's start; computed as a duration so 23:00
   // has an end too, and a DST transition cannot move it (none falls in a session).
-  if (open === null || close === null || hourStart === null) return null;
+  if (hourStart === null) return null;
   const from = Math.max(open, hourStart);
   const to = Math.min(hourStart + 3_600_000 - 1, close - H001_ENTRY_LATENCY_MS - H001_HORIZON_MS);
   return from <= to ? { from, to } : null;

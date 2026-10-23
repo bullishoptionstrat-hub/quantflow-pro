@@ -39,6 +39,7 @@
  *       on the (Σw − 1) divisor, and flagged when |SMD| > 0.1: §G says
  *       "above 0.1", and imbalance in either direction is imbalance.
  */
+import { regularSessionInstants } from '../market/session';
 import { markAt, H001_ENTRY_LATENCY_MS, H001_ENTRY_MAX_AGE_MS } from './h001Marks';
 import type { QuoteSource } from './h001Marks';
 import type { AMatch } from './h001Controls';
@@ -61,10 +62,9 @@ export function trailingRv(anchor: number, quotes: QuoteSource): RvResult {
   const start = end - H001_RV_WINDOW_MS;
   // V3: the window lies inside the regular session, whatever quotes exist.
   const date = marketDateOf(end);
-  const s = date === null ? null : sessionOn(date);
-  const open = date === null || s === null || s.openHour === null || s.openMinute === null
-    ? null : instantEt(date, s.openHour, s.openMinute);
-  if (open === null) return { ok: false, why: 'the calendar cannot place this session\'s regular open' };
+  const bounds = date === null ? null : regularSessionInstants(date);
+  if (bounds === null || !bounds.ok) return { ok: false, why: 'the calendar cannot place this session\'s regular open' };
+  const open = bounds.open;
   if (start < open) return { ok: false, why: `the 30-minute window starts ${Math.ceil((open - start) / 60_000)} min before the regular open` };
   const steps = H001_RV_WINDOW_MS / H001_RV_STEP_MS;
   const mids: number[] = [];
