@@ -157,6 +157,9 @@ const LEDGER: Record<string, string> = {
   'ingestion/index.ts: unparsedFrames[source] ?? 0':
     'Initialising a counter on first increment. Counting from zero is what a ' +
     'counter does.',
+  'persistence/recorder.ts: this.stats.heldBySource[s] ?? 0':
+    'The unparsedFrames counter rule: signals held from the record per source ' +
+    'while it awaits live validation, initialised on first increment.',
   'ingestion/index.ts: tradierRefusals[out.refused] ?? 0':
     'The unparsedFrames counter rule: Tradier timesales refused (cancel, ' +
     'correction, unsubscribed, malformed), initialised on first increment by ' +

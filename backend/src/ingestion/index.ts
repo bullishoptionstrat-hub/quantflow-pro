@@ -16,7 +16,8 @@ import { fetchCboeChain, getCboeSnapshot, getCboeSymbols } from './connectors/cb
 import { fetchOccVolume, getOccVolume } from './connectors/occ';
 import { describeHttpError } from './httpError';
 import {
-  buildUniverse, subscriptionFrame, timesaleToPrint,
+  buildUniverse, coverageStatement, subscriptionFrame, timesaleToPrint, universeRuleFromEnv,
+  TradierValidator,
   type TimesaleRefusal, type UniverseContract, type UniverseReport,
 } from './tradierStream';
 import { marketDateOf } from '../market/civil';
@@ -480,6 +481,18 @@ export function getIngestionStatus() {
      * `null` until a universe has been built.
      */
     tradierUniverse: tradierUniverseReport,
+    /**
+     * Whether Tradier's own prints show working market data: valid contract
+     * identities, quotes, uncrossed books, plausible prices, sane timestamps.
+     * Tradier signals are held out of the record until this reads VALIDATED.
+     */
+    tradierLive: tradierValidator.report(),
+    /** What the universe leaves out — the record describes this subset and nothing wider. */
+    tradierCoverage: {
+      rule: tradierRuleConfig.rule,
+      problems: tradierRuleConfig.problems,
+      statement: coverageStatement(tradierRuleConfig.rule, WATCHED_SYMBOLS),
+    },
     // Listed even before the connector loop has run, so a refusal is visible
     // on a cold /api/health rather than only after the first poll tick. Every
     // string here is a quoted public restriction and a terms URL — nothing
@@ -855,6 +868,15 @@ let tradierUniverseReport: UniverseReport | null = null;
 let tradierUniverseTimer: ReturnType<typeof setInterval> | null = null;
 /** Streamed events that did not become prints, by reason. Counted, never silent. */
 const tradierRefusals: Partial<Record<TimesaleRefusal, number>> = {};
+/** The rule the universe is built under, read once from the environment. */
+const tradierRuleConfig = universeRuleFromEnv(process.env);
+/** Judges the stream on its own prints; nothing from Tradier is recorded until it passes. */
+const tradierValidator = new TradierValidator();
+
+/** Sources held out of the record until their own prints validate them. */
+export function heldSources(): ReadonlySet<string> {
+  return tradierValidator.report().recording === 'HELD' ? new Set(['tradier']) : new Set();
+}
 
 /** Tradier REST, production host — a sandbox token is refused before the stream opens. */
 const tradierGet = async (path: string, params: Record<string, string>) => {
@@ -1021,10 +1043,20 @@ function startTradierIngestion(): void {
       // an option symbol. See `tradierStream.ts` for the three defects that
       // made this path unable to deliver a single options print.
       const subscribe = async () => {
+        if (tradierRuleConfig.problems.length > 0) {
+          // A malformed setting would silently change what the record can
+          // contain if it fell back to the default, so nothing is subscribed.
+          sources['tradier'] = 'error';
+          sourceErrors['tradier'] =
+            `stream open, but the contract-selection settings are invalid: ${tradierRuleConfig.problems.join('; ')}`;
+          return;
+        }
         try {
-          const built = await buildUniverse(tradierGet, WATCHED_SYMBOLS, marketDateOf(Date.now()) ?? '');
+          const today = marketDateOf(Date.now()) ?? '';
+          const built = await buildUniverse(tradierGet, WATCHED_SYMBOLS, today, tradierRuleConfig.rule);
           tradierUniverse = built.contracts;
           tradierUniverseReport = built.report;
+          tradierValidator.observeUniverse(tradierUniverse, today);
         } catch (err) {
           console.error('[tradier] universe build failed:', (err as Error).message);
         }
@@ -1062,8 +1094,13 @@ function startTradierIngestion(): void {
           return;
         }
         const out = timesaleToPrint(data, tradierUniverse);
-        if ('print' in out) emitSignals(ingestPrint(out.print));
-        else tradierRefusals[out.refused] = (tradierRefusals[out.refused] ?? 0) + 1;
+        if ('print' in out) {
+          tradierValidator.observePrint(out.print, Date.now());
+          emitSignals(ingestPrint(out.print));
+        } else {
+          tradierRefusals[out.refused] = (tradierRefusals[out.refused] ?? 0) + 1;
+          tradierValidator.observeRefusal(out.refused);
+        }
       });
 
       tradierWs.on('error', (err) => {
@@ -1451,6 +1488,8 @@ let lastRecovery: RecoveryReport | undefined;
  */
 function startSignalHistory(): void {
   const { store, recorder } = initPersistence();
+  // A source still being validated on its own prints is displayed, not recorded.
+  recorder.holdUntilValidated(heldSources);
 
   // Underlying marks come from Twelve Data's spot cache, and from nowhere else.
   //
@@ -1661,7 +1700,11 @@ const noteGap = (gap: CollectionGap) => gapLedger.note(gap);
  * sources that could actually be persisted.
  */
 function sampleCoverage(): CoverageSample {
-  const recordable = RECORDABLE_FOR_COVERAGE.filter((s) => sources[s] === 'connected');
+  // A held source is connected and not recording: counting it as collecting
+  // would mark a window productive while its signals were being kept out of
+  // the record. It is named in the reason instead.
+  const held = heldSources();
+  const recordable = RECORDABLE_FOR_COVERAGE.filter((s) => sources[s] === 'connected' && !held.has(s));
   const stats = describePersistence().recorder;
   // Real signals only. The simulator runs whenever no live feed does, so
   // counting synthetic rows here would report a dead deployment as productive
@@ -1674,7 +1717,7 @@ function sampleCoverage(): CoverageSample {
   // Name the states rather than just the absence, so a reason read months
   // later says whether this was an outage, a missing key or a rights refusal.
   const detail = RECORDABLE_FOR_COVERAGE
-    .map((s) => `${s}=${sources[s] ?? 'unstarted'}`)
+    .map((s) => `${s}=${held.has(s) && sources[s] === 'connected' ? 'connected, held until validated' : sources[s] ?? 'unstarted'}`)
     .join(', ');
   return {
     collecting: false,
