@@ -49,3 +49,21 @@ test('the backtest route in particular is proxied', () => {
   // renders but every "Run backtest" 404s at the Next server.
   expect(proxySegments()).toContain('backtest')
 })
+
+/**
+ * The socket does not go through the rewrite, so it carries its own default
+ * backend address. A production build with no NEXT_PUBLIC_WS_URL used to fall
+ * back to localhost — the reader's own machine — and the live feed never
+ * connected. Both defaults must name the same production host.
+ */
+test('the socket and the /api proxy default to the same production backend', () => {
+  const host = (file: string) => {
+    const src = readFileSync(join(ROOT, 'frontend', file), 'utf8')
+    const hits = src.match(/https:\/\/[a-z0-9.-]+\.onrender\.com/g) ?? []
+    return Array.from(new Set(hits))
+  }
+  const proxy = host('next.config.js')
+  const socket = host('lib/socket.ts')
+  expect(proxy).toHaveLength(1)
+  expect(socket).toEqual(proxy)
+})

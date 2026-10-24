@@ -25,7 +25,15 @@ let authSubscription: { unsubscribe: () => void } | null = null
 export function getSocket(): Socket {
   if (socket) return socket
 
-  const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'http://localhost:3001'
+  // Same default as BACKEND_URL in next.config.js. The socket connects to the
+  // backend directly (rewrites do not proxy WebSockets), so a production build
+  // with no NEXT_PUBLIC_WS_URL must not fall back to localhost: that is the
+  // reader's own machine, and the feed would never connect.
+  const WS_URL =
+    process.env.NEXT_PUBLIC_WS_URL ||
+    (process.env.NODE_ENV === 'development'
+      ? 'http://localhost:3001'
+      : 'https://quantflow-pro-backend.onrender.com')
 
   socket = io(WS_URL, {
     autoConnect: true,
