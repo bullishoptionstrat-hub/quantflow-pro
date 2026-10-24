@@ -26,8 +26,11 @@
  * must stay the first line. `dotenvOrder.test.ts` fails if it moves.
  */
 import 'dotenv/config';
-// Bundled data-vendor keys; fills only what the environment left unset.
-import './bundledKeys';
+// There is deliberately no in-source fallback for vendor keys. `bundledKeys.ts`
+// (#87) shipped seven of them in a public repository; every one is disclosed
+// and due for rotation, and a replacement placed back in source would be
+// disclosed the same way. Keys come from the environment only: `backend/.env`
+// locally, Render's secret environment in deployment.
 
 import express from 'express';
 import { createServer } from 'http';
