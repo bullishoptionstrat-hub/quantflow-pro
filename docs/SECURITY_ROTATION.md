@@ -23,14 +23,24 @@ SHA-256 **fingerprint**, how many places it appears, and where it first did.
 Fixtures fabricated as a run of consecutive characters are skipped.
 
 Findings come in two grades. **Key-shaped** values (16+ characters with letters
-and digits, or a vendor prefix) are listed first. **Low-confidence** values are
-listed separately: a value under a `SECRET` or `PASSWORD` name that is 6–15
-characters long or letters-only. A person chose those, so they can be real
-secrets — a session-signing secret, an admin password — but they also look like
-ordinary configuration. Read each one before rotating on it. Still excluded at
-both grades: template defaults (`change-me`, `your-…`), a value that only names
-its role (`secret`), dotted code paths (`os.environ.get`), and an unquoted
-`NAME: identifier` reference.
+and digits, or a vendor prefix) are listed first, with their fingerprint.
+**Low-confidence** values are listed separately: a value under any credential
+name (`…KEY`, `…TOKEN`, `…SECRET`, `…PASSWORD`) that is 6–15 characters long or
+letters-only. They can be real secrets — a session-signing secret, a hand-set
+token — but they also look like ordinary configuration, so read each one before
+rotating on it. Their fingerprints are **withheld**: a 10-hex SHA-256 prefix of a
+short value can be brute-forced, so printing it would disclose the value.
+
+Nothing under a credential name is dropped for its length. What is not listed is
+**counted by name** at the end of the report: values of 1–5 characters (almost
+always test fixtures like `x` or `abc`), template defaults (`change-me`,
+`your-…`, a value that only names its role such as `secret`), and empty or
+non-literal values. Only code that reads a value — `process.env.X`,
+`os.environ.get`, a constant's name, an unquoted `NAME: identifier` — is not
+counted, because it is not a value.
+
+`security:verify` never probes a low-confidence value: it reports it
+`NOT_PROBED` for a person to read first.
 
 Credentials that reached somewhere other than git — a chat transcript, a
 screenshot, a support ticket — are not in this report and must be added to the

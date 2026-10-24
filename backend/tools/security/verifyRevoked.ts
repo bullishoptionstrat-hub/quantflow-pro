@@ -25,7 +25,7 @@ import 'dotenv/config';
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { scanHistory, referencesIn, type Exposure } from './exposure';
+import { displayFingerprint, scanHistory, referencesIn, type Exposure } from './exposure';
 
 export type Verdict = 'REVOKED' | 'STILL_VALID' | 'UNKNOWN' | 'NOT_PROBED';
 
@@ -103,8 +103,16 @@ export async function verify(
   for (const e of exposures) {
     const value = values.get(e.fingerprint);
     const probe = e.names.map((n) => PROBES[n]).find(Boolean);
+    // A low-confidence value is most often a fixture or config. Sending it to a
+    // vendor proves nothing about a real key and transmits a possibly-real
+    // short secret; it is read first, by a person.
+    if (e.confidence === 'low') {
+      out.push({ names: e.names, fingerprint: displayFingerprint(e), verdict: 'NOT_PROBED', status: null,
+        basis: 'low confidence — read it before probing or rotating' });
+      continue;
+    }
     if (!probe || value === undefined) {
-      out.push({ names: e.names, fingerprint: e.fingerprint, verdict: 'NOT_PROBED', status: null,
+      out.push({ names: e.names, fingerprint: displayFingerprint(e), verdict: 'NOT_PROBED', status: null,
         basis: 'no probe for this variable — rotate it and confirm at the vendor dashboard' });
       continue;
     }
@@ -116,7 +124,7 @@ export async function verify(
       status = res.status;
       verdict = probe.classify(res.status, await res.text());
     } catch { verdict = 'UNKNOWN'; }
-    out.push({ names: e.names, fingerprint: e.fingerprint, verdict, status, basis: probe.basis });
+    out.push({ names: e.names, fingerprint: displayFingerprint(e), verdict, status, basis: probe.basis });
   }
   return out;
 }
