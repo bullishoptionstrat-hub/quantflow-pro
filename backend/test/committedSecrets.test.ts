@@ -94,6 +94,9 @@ function trackedFiles(): string[] {
  */
 const SECRET_KEY = /(?:^|\n)\s*(?:export\s+)?([A-Z][A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD|DSN)[A-Z0-9_]*)\s*=\s*["']?([^\s"'\n#]{12,})/g;
 
+/** `NAME: "value"` and `"NAME": "value"` — the form a TS/JSON object writes a key in. */
+const SECRET_PROPERTY = /(?:^|[\s{,(])["']?([A-Z][A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD|DSN)[A-Z0-9_]*)["']?\s*:\s*["']([^\s"'\n]{16,})["']/g;
+
 /** Values that are documentation, not credentials. */
 const PLACEHOLDER =
   /^(?:your|my|the|a)[-_]|(?:[-_]your[-_]|xxx|placeholder|example|changeme|change[-_]me|change[-_]this|replace[-_]me|dummy|sample|todo|fixme|<[^>]*>|\.\.\.|\*{3,})/i;
@@ -125,6 +128,18 @@ function inspect(where: string, body: Buffer): Finding[] {
 
   for (const [re, what] of KNOWN_PREFIX) {
     if (re.test(text)) found.push({ where, what });
+  }
+  // The object-literal form, `NAME: "value"` / `"NAME": "value"`. The
+  // `KEY=value` pattern above could not see it, which is how `bundledKeys.ts`
+  // carried seven vendor keys past this guard for as long as it existed — its
+  // own header claimed an exemption here that was never written; it simply
+  // never matched. The value must be quoted, so a type annotation like
+  // `FOO_KEY: string` is not read as one.
+  for (const m of text.matchAll(SECRET_PROPERTY)) {
+    const [, name, value] = m;
+    if (PLACEHOLDER.test(value!) || /^https?:\/\//.test(value!)) continue;
+    if (!/[0-9]/.test(value!) || !/[A-Za-z]/.test(value!)) continue;
+    found.push({ where, what: `${name} assigned a non-placeholder value (object literal)` });
   }
   for (const m of text.matchAll(SECRET_KEY)) {
     const [, name, value] = m;
@@ -198,6 +213,28 @@ test('the guard can actually see inside an archive', () => {
   );
   assert.deepEqual(inspect('.env.example', example), [],
     '.env.example must stay checkable — a guard that fails on it gets deleted');
+});
+
+test('the object-literal form is seen, which is the form #87 used', () => {
+  // Built at run time so no credential-shaped literal sits in this file.
+  const fake = (n: number) => Array.from({ length: n }, (_, i) => 'a1b2c3d4e5'[i % 10]).join('') + 'Z9';
+  const body = `const BUNDLED = {\n  POLYGON_API_KEY: "${fake(30)}",\n  "FMP_API_KEY": '${fake(30)}',\n};`;
+  const found = inspect('bundled.ts', Buffer.from(body));
+  assert.equal(found.length, 2, JSON.stringify(found));
+  // And a type annotation or a placeholder in that form is not a finding.
+  assert.deepEqual(inspect('t.ts', Buffer.from('interface E { POLYGON_API_KEY: string }\nconst x = { FMP_API_KEY: "your-fmp-api-key-here" };')), []);
+});
+
+test('no source file falls back to a key written in source', () => {
+  // The defect #87 introduced was not one leaked value but a mechanism: a
+  // module that copies literals into process.env when the environment lacks
+  // them. A replacement key put back into such a module is disclosed the
+  // moment it is pushed. Keys come from the environment only.
+  const offenders = trackedFiles()
+    .filter((p) => /^backend\/(src|tools)\/.*\.ts$/.test(p))
+    .filter((p) => /process\.env\[[^\]]+\]\s*=(?!=)/.test(readFileSync(join(REPO, p), 'utf8')));
+  assert.deepEqual(offenders, [], `assigns into process.env: ${offenders.join(', ')}`);
+  assert.ok(!existsSync(join(REPO, 'backend', 'src', 'bundledKeys.ts')));
 });
 
 test('.gitignore has no archive exception', () => {
