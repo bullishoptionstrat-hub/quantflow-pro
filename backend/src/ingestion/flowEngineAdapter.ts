@@ -25,9 +25,11 @@ import {
 import type {
   ClassifiedSignal,
   ContractStats,
+  FlowEngineConfig,
   InferredSide,
   OptionTradeEvent,
 } from '../flow-engine/types';
+import { DEFAULT_CONFIG } from '../flow-engine/types';
 import { classifySource, type RightsClass } from '../provenance/rights';
 
 // ─── Input ──────────────────────────────────────────────────────────────────
@@ -287,10 +289,10 @@ export function occSymbol(
   return `${underlying}${y.slice(2)}${m}${d}${right}${strikePart}`;
 }
 
-const contractStats = new Map<string, ContractStats>();
 const MAX_TRACKED_CONTRACTS = 5_000;
 
-function recordStats(symbol: string, print: RawPrint): void {
+function recordStats(S: IngestorState, symbol: string, print: RawPrint): void {
+  const { contractStats } = S;
   const prev = contractStats.get(symbol);
   if (!prev && contractStats.size >= MAX_TRACKED_CONTRACTS) {
     // Bounded: drop the oldest insertion rather than growing without limit.
@@ -312,11 +314,6 @@ function recordStats(symbol: string, print: RawPrint): void {
   });
 }
 
-// ─── Engine instance ────────────────────────────────────────────────────────
-
-const engine = new FlowEngine({}, (sym) => contractStats.get(sym));
-
-/** Source label per print id, so emitted signals keep their provenance. */
 /**
  * Whether the venues on a signal were each separately observed.
  *
@@ -338,11 +335,7 @@ interface PrintOrigin {
   venueAllocation: VenueAllocation;
 }
 
-const printSource = new Map<string, PrintOrigin>();
 const MAX_TRACKED_PRINTS = 20_000;
-
-let seq = 0;
-let lastPrintTs = 0;
 
 // ─── Signal observers ───────────────────────────────────────────────────────
 
@@ -372,22 +365,11 @@ export type SignalObserver = (
   origin: SignalOrigin,
 ) => void;
 
-const observers: SignalObserver[] = [];
-
-export function onSignal(fn: SignalObserver): void {
-  observers.push(fn);
-}
-
-/** Test seam. */
-export function __clearSignalObservers(): void {
-  observers.length = 0;
-}
-
-function notify(sigs: ClassifiedSignal[]): void {
-  if (observers.length === 0) return;
+function notify(S: IngestorState, sigs: ClassifiedSignal[]): void {
+  if (S.observers.length === 0) return;
   for (const sig of sigs) {
-    const origin = originOf(sig);
-    for (const fn of observers) {
+    const origin = originOf(S, sig);
+    for (const fn of S.observers) {
       try {
         fn(sig, origin);
       } catch (err) {
@@ -408,8 +390,8 @@ function notify(sigs: ClassifiedSignal[]): void {
  * a rights decision taken on the first print alone would let one permitted
  * print carry an entire cluster of unverified ones into the record.
  */
-function originOf(sig: ClassifiedSignal): SignalOrigin {
-  const resolved = sig.printIds.map((id) => printSource.get(id));
+function originOf(S: IngestorState, sig: ClassifiedSignal): SignalOrigin {
+  const resolved = sig.printIds.map((id) => S.printSource.get(id));
   const origins = resolved.filter(Boolean);
   const sources = [...new Set(origins.map((o) => o!.source))];
 
@@ -444,11 +426,8 @@ function originOf(sig: ClassifiedSignal): SignalOrigin {
  * every row is rejected looks exactly like a quiet tape. `sourceNotes` is the
  * channel for "arriving and qualified", which is what this is.
  */
-const unreadableExpiries: Record<string, number> = {};
-/** The first malformed value seen per source, so the note can name the shape. */
-const unreadableExpirySample: Record<string, string> = {};
-
-function noteUnreadableExpiry(source: string, expiry: string): void {
+function noteUnreadableExpiry(S: IngestorState, source: string, expiry: string): void {
+  const { unreadableExpiries, unreadableExpirySample } = S;
   const n = (unreadableExpiries[source] ?? 0) + 1;
   unreadableExpiries[source] = n;
   if (unreadableExpirySample[source] === undefined) {
@@ -467,18 +446,11 @@ function noteUnreadableExpiry(source: string, expiry: string): void {
   }
 }
 
-/**
- * Per source: how many prints were refused, and an example of the value.
- *
- * Read by `getIngestionStatus()` into `sourceNotes`. Exported rather than
- * folded into a note string here, because formatting a health note is that
- * module's job and a second copy of the vocabulary is how `sourceNotes` and
- * `sourceErrors` would start disagreeing.
- */
-export function unreadableExpiryCounts(): Record<string, { count: number; sample: string }> {
+/** Per source: how many prints were refused, and an example of the value. */
+function unreadableExpiryCountsOf(S: IngestorState): Record<string, { count: number; sample: string }> {
   const out: Record<string, { count: number; sample: string }> = {};
-  for (const [source, count] of Object.entries(unreadableExpiries)) {
-    out[source] = { count, sample: unreadableExpirySample[source] ?? '' };
+  for (const [source, count] of Object.entries(S.unreadableExpiries)) {
+    out[source] = { count, sample: S.unreadableExpirySample[source] ?? '' };
   }
   return out;
 }
@@ -487,7 +459,7 @@ export function unreadableExpiryCounts(): Record<string, { count: number; sample
  * Feed one print. Returns the signals finalized by this print (often none —
  * the engine emits on burst close, not per trade).
  */
-export function ingestPrint(print: RawPrint): WireFlowEvent[] {
+function ingestInto(S: IngestorState, print: RawPrint): WireFlowEvent[] {
   // `strike` joined this guard late. It was the one field of the five that a
   // caller could leave absent: `occSymbol` pads `Math.round(0 * 1000)` to
   // `00000000` without complaint, so a strike-0 print became a real-looking
@@ -531,7 +503,7 @@ export function ingestPrint(print: RawPrint): WireFlowEvent[] {
   // against a live vendor from this tree — so a format mismatch surfaces here,
   // counted and named on /api/health, instead of as a tape of 0DTE prints.
   if (Number.isNaN(expiryInstantMs(print.expiry))) {
-    noteUnreadableExpiry(print.source, print.expiry);
+    noteUnreadableExpiry(S, print.source, print.expiry);
     return [];
   }
 
@@ -540,16 +512,16 @@ export function ingestPrint(print: RawPrint): WireFlowEvent[] {
   // field exists to prevent.
   if (print.root !== undefined && !/^[A-Z][A-Z0-9]{0,5}$/.test(print.root)) return [];
 
-  const ts = print.ts ?? Date.now();
+  const ts = print.ts ?? S.now();
   // Receipt time is stamped here, at the boundary — the earliest moment this
   // process could possibly have known about the print. Distinct from `ts`,
   // which is when it happened at the venue; the gap between them is the feed
   // latency a forward measurement must be charged.
-  const receivedAt = print.receivedAt ?? (print.replay ? undefined : Date.now());
-  lastPrintTs = Math.max(lastPrintTs, ts);
+  const receivedAt = print.receivedAt ?? (print.replay ? undefined : S.now());
+  S.lastPrintTs = Math.max(S.lastPrintTs, ts);
   const symbol = occSymbol(print.root ?? print.symbol, print.expiry, print.right, print.strike);
 
-  recordStats(symbol, print);
+  recordStats(S, symbol, print);
 
   // NBBO first: a trade with no fresh quote can only ever infer AMBIGUOUS.
   //
@@ -563,7 +535,7 @@ export function ingestPrint(print: RawPrint): WireFlowEvent[] {
   const ask = print.ask;
   if (bid !== undefined && ask !== undefined && ask > 0 && ask >= bid
       && !print.tradeTimeUnknown) {
-    engine.onQuote({ ts: print.quoteTs ?? ts, contractSymbol: symbol, bid, ask });
+    S.engine.onQuote({ ts: print.quoteTs ?? ts, contractSymbol: symbol, bid, ask });
   }
 
   // ONE upstream record is ONE observed execution.
@@ -593,7 +565,8 @@ export function ingestPrint(print: RawPrint): WireFlowEvent[] {
   const out: ClassifiedSignal[] = [];
 
   {
-    const id = print.id ?? `p${++seq}`;
+    const { printSource } = S;
+    const id = print.id ?? `p${++S.seq}`;
     // Evict the oldest entries rather than clearing: a wholesale clear would
     // drop the origins of prints in an unfinalized burst, and those origins
     // carry `synthetic` — the one flag that must always reach the UI.
@@ -634,12 +607,123 @@ export function ingestPrint(print: RawPrint): WireFlowEvent[] {
       iso: print.iso,
       receivedAt,
     };
-    out.push(...engine.onTrade(trade));
+    out.push(...S.engine.onTrade(trade));
   }
 
-  notify(out);
-  return out.map(toWireEvent);
+  notify(S, out);
+  return out.map((sig) => toWireEvent(S, sig));
 }
+
+/** See `drainIdle`. */
+function drainIdleOf(S: IngestorState, quietMs: number): WireFlowEvent[] {
+  if (S.lastPrintTs === 0 || S.now() - S.lastPrintTs < quietMs) return [];
+  return flushOf(S);
+}
+
+function flushOf(S: IngestorState): WireFlowEvent[] {
+  const flushed = S.engine.flush();
+  notify(S, flushed);
+  return flushed.map((sig) => toWireEvent(S, sig));
+}
+
+/** See `resetDaily`. */
+function resetDailyOf(S: IngestorState): void {
+  S.engine.resetDaily();
+  S.contractStats.clear();
+  // `printSource` is deliberately NOT cleared: a burst can straddle the reset,
+  // and losing its origins would emit `synthetic: false` for simulated data.
+  // The map is bounded by eviction in `ingestPrint`.
+}
+
+// ─── Instances ──────────────────────────────────────────────────────────────
+
+/**
+ * Everything one ingestion pipeline remembers between prints: the engine with
+ * its NBBO book and open bursts, the per-contract stats the scorer reads, the
+ * origin of every print still inside a burst, and who is told about signals.
+ *
+ * It used to be module state, so there was exactly one pipeline per process.
+ * A research re-run that needed the engine under a different configuration —
+ * H-001-v2 §I's 1 s and 5 s staleness bounds — then had two options, both
+ * wrong: feed the live engine (its NBBO book and repeat counters would absorb
+ * historical prints, and its observers include the recorder, so a replayed
+ * signal would be offered to the track record), or re-implement the seam
+ * beside it, which is a second copy of the six refusals above for nobody to
+ * keep in agreement. An instance gets the same seam, and nothing else.
+ */
+interface IngestorState {
+  readonly engine: FlowEngine;
+  readonly contractStats: Map<string, ContractStats>;
+  readonly printSource: Map<string, PrintOrigin>;
+  seq: number;
+  lastPrintTs: number;
+  readonly observers: SignalObserver[];
+  readonly unreadableExpiries: Record<string, number>;
+  /** The first malformed value seen per source, so the note can name the shape. */
+  readonly unreadableExpirySample: Record<string, string>;
+  /** Stamps receipt time, a missing trade time, `emittedAt`, and the idle-drain clock. */
+  readonly now: () => number;
+}
+
+export interface IngestorOptions {
+  /** Overrides on the engine's defaults; the live pipeline passes none. */
+  engineConfig?: Partial<FlowEngineConfig>;
+  /**
+   * The wall clock. A replay that must be deterministic passes its own; the
+   * live default reads `Date.now()` at each call, so a test that stubs it
+   * still reaches this instance.
+   */
+  now?: () => number;
+}
+
+export interface Ingestor {
+  ingestPrint(print: RawPrint): WireFlowEvent[];
+  drainIdle(quietMs?: number): WireFlowEvent[];
+  /** Finalize every open burst now, whatever the clock says. The end of a replay. */
+  flush(): WireFlowEvent[];
+  resetDaily(): void;
+  onSignal(fn: SignalObserver): void;
+  clearSignalObservers(): void;
+  unreadableExpiryCounts(): Record<string, { count: number; sample: string }>;
+  /** The configuration this instance's engine runs under, resolved against the defaults. */
+  readonly config: Readonly<FlowEngineConfig>;
+}
+
+export function createIngestor(opts: IngestorOptions = {}): Ingestor {
+  const now = opts.now ?? (() => Date.now());
+  const contractStats = new Map<string, ContractStats>();
+  const S: IngestorState = {
+    engine: new FlowEngine(opts.engineConfig ?? {}, (sym) => contractStats.get(sym), now),
+    contractStats,
+    printSource: new Map(),
+    seq: 0,
+    lastPrintTs: 0,
+    observers: [],
+    unreadableExpiries: {},
+    unreadableExpirySample: {},
+    now,
+  };
+  return {
+    ingestPrint: (print) => ingestInto(S, print),
+    drainIdle: (quietMs = 500) => drainIdleOf(S, quietMs),
+    flush: () => flushOf(S),
+    resetDaily: () => resetDailyOf(S),
+    onSignal: (fn) => { S.observers.push(fn); },
+    clearSignalObservers: () => { S.observers.length = 0; },
+    unreadableExpiryCounts: () => unreadableExpiryCountsOf(S),
+    config: Object.freeze({ ...DEFAULT_CONFIG, ...opts.engineConfig }),
+  };
+}
+
+/**
+ * The one live pipeline. Every connector, the recorder and `/api/health` reach
+ * it through the module-level functions below, which is what they always
+ * called — so the live path is unchanged by instances existing at all.
+ */
+const live = createIngestor();
+
+/** Feed one print to the live pipeline. Returns the signals it finalized (often none). */
+export function ingestPrint(print: RawPrint): WireFlowEvent[] { return live.ingestPrint(print); }
 
 /**
  * Drain bursts that have gone quiet. The engine finalizes a burst when a later
@@ -647,24 +731,30 @@ export function ingestPrint(print: RawPrint): WireFlowEvent[] {
  * signal indefinitely. Only drains when the feed has been silent well past the
  * sweep window, so a live cluster is never cut in half.
  */
-export function drainIdle(quietMs = 500): WireFlowEvent[] {
-  if (lastPrintTs === 0 || Date.now() - lastPrintTs < quietMs) return [];
-  const flushed = engine.flush();
-  notify(flushed);
-  return flushed.map(toWireEvent);
-}
+export function drainIdle(quietMs = 500): WireFlowEvent[] { return live.drainIdle(quietMs); }
 
 /**
  * Clear per-session counters. `repeatHits` is scored as "prior signals on the
  * same contract+side *today*", so on a long-lived process it must be reset or
  * every contract drifts toward the maximum repeat component.
  */
-export function resetDaily(): void {
-  engine.resetDaily();
-  contractStats.clear();
-  // `printSource` is deliberately NOT cleared: a burst can straddle the reset,
-  // and losing its origins would emit `synthetic: false` for simulated data.
-  // The map is bounded by eviction in `ingestPrint`.
+export function resetDaily(): void { live.resetDaily(); }
+
+export function onSignal(fn: SignalObserver): void { live.onSignal(fn); }
+
+/** Test seam. */
+export function __clearSignalObservers(): void { live.clearSignalObservers(); }
+
+/**
+ * Per source: how many prints the live pipeline refused, and an example value.
+ *
+ * Read by `getIngestionStatus()` into `sourceNotes`. Exported rather than
+ * folded into a note string here, because formatting a health note is that
+ * module's job and a second copy of the vocabulary is how `sourceNotes` and
+ * `sourceErrors` would start disagreeing.
+ */
+export function unreadableExpiryCounts(): Record<string, { count: number; sample: string }> {
+  return live.unreadableExpiryCounts();
 }
 
 /**
@@ -745,16 +835,16 @@ export function displayRightsOf(sources: string[]): {
   return { datasets: [...seen].sort(), rights_display: weakest };
 }
 
-function toWireEvent(sig: ClassifiedSignal): WireFlowEvent {
+function toWireEvent(S: IngestorState, sig: ClassifiedSignal): WireFlowEvent {
   const dominant = [...sig.legs].sort((a, b) => b.totalPremium - a.totalPremium)[0];
   const leg = dominant ?? sig.legs[0]!;
-  const stats = contractStats.get(leg.contract.symbol);
+  const stats = S.contractStats.get(leg.contract.symbol);
   // `?? 0` here put a spot price of zero on the wire — and fed `moneynessOf`,
   // which then classified the strike against it.
   const spot = stats?.underlyingPrice ?? null;
 
-  const origins = sig.printIds.map((id) => printSource.get(id)).filter(Boolean);
-  const { source, sources, synthetic } = originOf(sig);
+  const origins = sig.printIds.map((id) => S.printSource.get(id)).filter(Boolean);
+  const { source, sources, synthetic } = originOf(S, sig);
   const rights = displayRightsOf(sources);
   const iv = origins.find((o) => o?.iv !== undefined)?.iv ?? null;
   const delta = origins.find((o) => o?.delta !== undefined)?.delta ?? null;

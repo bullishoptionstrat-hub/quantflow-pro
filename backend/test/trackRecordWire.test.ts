@@ -260,7 +260,7 @@ test('the wire event is actually populated from displayRightsOf', () => {
   const src = readFileSync(
     join(__dirname, '..', 'src', 'ingestion', 'flowEngineAdapter.ts'), 'utf8',
   );
-  const body = /function toWireEvent\([\s\S]*?\n\}/.exec(src);
+  const body = /function toWireEvent\(S: IngestorState, [\s\S]*?\n\}/.exec(src);
   assert.ok(body, 'toWireEvent is still a function by that name');
 
   assert.match(body[0], /const rights = displayRightsOf\(sources\)/,
@@ -270,6 +270,6 @@ test('the wire event is actually populated from displayRightsOf', () => {
   assert.match(body[0], /rights_display: rights\.rights_display/, '');
 
   // `sources`, plural — the whole cluster, not whichever print landed first.
-  assert.match(body[0], /const \{ source, sources, synthetic \} = originOf\(sig\)/,
+  assert.match(body[0], /const \{ source, sources, synthetic \} = originOf\(S, sig\)/,
     'the lineage is resolved over every contributing source');
 });

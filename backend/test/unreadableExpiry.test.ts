@@ -114,7 +114,7 @@ test('the gate reuses the one home for reading an expiry', () => {
   const src = readFileSync(
     join(__dirname, '..', 'src', 'ingestion', 'flowEngineAdapter.ts'), 'utf8');
   const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
-  const gate = code.indexOf('export function ingestPrint');
+  const gate = code.indexOf('function ingestInto(');
   assert.ok(gate > 0);
   const body = code.slice(gate, gate + 1200);
   assert.match(body, /Number\.isNaN\(expiryInstantMs\(print\.expiry\)\)/,

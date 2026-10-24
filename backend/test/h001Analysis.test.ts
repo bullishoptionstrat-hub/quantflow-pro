@@ -526,3 +526,38 @@ test('§K: H1 and D1 are measured on the primary\'s own matched units, and decid
   // The primary's verdict never reads them: it is the verdict of the matched M15 differences alone.
   assert.equal(report.primary.n.metaEvents, report.cr2.n.observations);
 });
+
+// ─── §I staleness bounds (S4, S5) ───────────────────────────────────────────
+
+test('§I staleness: each declared bound runs the whole pipeline on its own candidates, and decides nothing', () => {
+  const f = fixture();
+  const base = { signals: f.signals, tape: f.tape, quotes: QUOTES, ctx: CTX, truthSetAvailable: false, replicates: 400 };
+  const without = runH001Analysis(base);
+  // A re-run that lost some candidates — what a tighter bound does when a
+  // side becomes AMBIGUOUS — and one that kept them all.
+  const fewer = f.signals.filter((_, i) => i % 2 === 0);
+  const report = runH001Analysis({ ...base, staleness: { 1000: fewer, 5000: f.signals } });
+
+  const s = report.sensitivities.staleness!;
+  assert.equal(s[1000].boundMs, 1000);
+  assert.equal(s[5000].boundMs, 5000);
+  assert.equal(s[1000].decides, false);
+  assert.deepEqual(s[5000].primary, report.primary, 'the same candidates give the primary\'s answer');
+  assert.notDeepEqual(s[1000].included, report.eligibility.included, 'fewer candidates, re-formed');
+
+  const { sensitivities: a, absent: ab, ...restWith } = report;
+  const { sensitivities: b, absent: bb, ...restWithout } = without;
+  void a; void b; void ab; void bb;
+  assert.deepEqual(restWith, restWithout, 'the primary is computed without reference to the re-runs');
+  assert.ok(!report.absent.some((x) => x.item.includes('staleness')), 'computed, so no longer listed absent');
+  assert.ok(without.absent.some((x) => x.item.includes('staleness')), 'and still listed when not supplied');
+  assert.equal(without.sensitivities.staleness, undefined);
+});
+
+test('§I staleness: an undeclared bound, or one bound without the other, is refused', () => {
+  const f = fixture();
+  const base = { signals: f.signals, tape: f.tape, quotes: QUOTES, ctx: CTX, truthSetAvailable: false, replicates: 400 };
+  assert.throws(() => runH001Analysis({ ...base, staleness: { 1000: f.signals } as never }), /forking path/);
+  assert.throws(() => runH001Analysis({ ...base, staleness: { 1000: f.signals, 2000: f.signals } as never }), /forking path/);
+  assert.throws(() => runH001Analysis({ ...base, staleness: { 1000: f.signals, 5000: f.signals, 3000: f.signals } as never }), /forking path/);
+});
