@@ -74,6 +74,20 @@
  *       statuses it admitted that the primary did not, so a reader can see
  *       exactly what the two answers differ by.
  *
+ * §I's staleness bounds re-form the signals themselves, so they cannot be
+ * re-runs of this function on the same candidates; the candidates come from
+ * a replay through an isolated engine (`replaySeam.ts`, reading S3 there).
+ * Two readings here:
+ *
+ *   S4  The re-run's signals are supplied, one set per bound, and only §I's
+ *       declared bounds are accepted. A bound nobody declared before the data
+ *       is a forking path, so it throws rather than being reported beside the
+ *       ones that were.
+ *   S5  Supplying one bound and not the other is refused too: the frozen text
+ *       declares the pair, and a report carrying one of them reads as though
+ *       the sensitivity was run. Supplying neither leaves the item in
+ *       `absent`, exactly as before.
+ *
  * What the report does NOT contain is listed on it, in `absent`, because a
  * report that is silent about a missing diagnostic reads as one that ran it.
  */
@@ -95,6 +109,8 @@ import type { H001BalanceResult } from './h001Balance';
 import { h001Exploratory } from './h001Exploratory';
 import type { H001ExploratoryEndpoint } from './h001Exploratory';
 import type { H001Result, Interval, Observation } from './h001Verdict';
+import { H001_STALENESS_BOUNDS_MS } from './replaySeam';
+import type { H001StalenessBound } from './replaySeam';
 
 /** A signal as the study receives it; `marks` is measured here (X3), never supplied. */
 export type H001Signal = Omit<H001Candidate, 'marks'>;
@@ -110,6 +126,11 @@ export interface H001AnalysisInput {
   truthSetAvailable: boolean;
   /** Tests only; a study runs the frozen 10,000. */
   replicates?: number;
+  /**
+   * §I's staleness re-runs (S4, S5): the candidates formed by replaying the
+   * tape at each declared bound. Absent, the sensitivity stays in `absent`.
+   */
+  staleness?: Readonly<Record<H001StalenessBound, readonly H001Signal[]>>;
 }
 
 export interface H001MetaEventRow {
@@ -155,6 +176,8 @@ export interface H001Report {
     premiumFloor: H001Sensitivity & { floor: number; belowFloor: number };
     /** §I's as-known replay, which is also §J's secondary (J3). */
     asKnown: H001Sensitivity & { admittedOnlyAsKnown: H001AsKnownAdmissions };
+    /** §I's staleness bounds, one re-run each; present only when supplied (S5). */
+    staleness?: Record<H001StalenessBound, H001Sensitivity & { boundMs: H001StalenessBound }>;
   };
   absent: typeof H001_ABSENT;
 }
@@ -205,14 +228,36 @@ export function runH001Analysis(input: H001AnalysisInput): H001Report {
   const p = analyseH001({ ...input, quotes, signals: kept }, 'FINAL_TAPE');
   // J1–J5: the same candidates, tape and quotes, as the as-known study.
   const k = analyseH001({ ...input, quotes }, 'AS_KNOWN');
+  const staleness = stalenessOf(input, quotes);
   return {
     ...core,
     sensitivities: {
       premiumFloor: { floor, belowFloor: input.signals.length - kept.length, ...sensitivityOf(p) },
       asKnown: { ...sensitivityOf(k), admittedOnlyAsKnown: admittedOnlyAsKnown(input.signals, core, k) },
+      ...(staleness ? { staleness } : {}),
     },
-    absent: core.absent,
+    absent: staleness ? core.absent.filter((a) => !a.item.startsWith('sensitivity: staleness')) : core.absent,
   };
+}
+
+/** S4, S5: each declared bound, through the whole pipeline on its own candidates. */
+function stalenessOf(
+  input: H001AnalysisInput, quotes: QuoteBook,
+): Record<H001StalenessBound, H001Sensitivity & { boundMs: H001StalenessBound }> | undefined {
+  if (input.staleness === undefined) return undefined;
+  const supplied = Object.keys(input.staleness).map(Number).sort((a, b) => a - b);
+  const declared = [...H001_STALENESS_BOUNDS_MS];
+  if (supplied.join(',') !== declared.join(',')) {
+    throw new RangeError(
+      `§I declares staleness bounds ${declared.join(' and ')} ms; got ${supplied.join(', ') || 'none'}. ` +
+      'An undeclared bound is a forking path, and one bound without the other reads as the pair.',
+    );
+  }
+  const run = (b: H001StalenessBound) => ({
+    boundMs: b,
+    ...sensitivityOf(analyseH001({ ...input, quotes, signals: input.staleness![b] }, 'FINAL_TAPE')),
+  });
+  return { 1000: run(1000), 5000: run(5000) };
 }
 
 function sensitivityOf(r: H001Core): H001Sensitivity {

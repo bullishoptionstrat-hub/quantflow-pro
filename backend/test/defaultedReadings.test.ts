@@ -175,6 +175,10 @@ const LEDGER: Record<string, string> = {
     'A tally the composer owns, initialised on its first increment: how many ' +
     'signals the as-known study admitted for one reason. An absent key means ' +
     'none were — it counts rows this module just read, and is never a reading.',
+  'research/replaySeam.ts: out.quoteStatus[q.status] ?? 0':
+    'A tally the replay owns, initialised on its first increment: how many ' +
+    'admitted trades resolved their causal quote each way. An absent status ' +
+    'means none did; it counts this function\'s own decisions, never a reading.',
   'ingestion/index.ts: a.ts ?? 0':
     'A sort comparator over seeded prints, giving an undefined timestamp a ' +
     'stable position rather than NaN. Nothing is published from it.',
