@@ -32,6 +32,7 @@ import {
   GRADED_HORIZONS,
   MIN_PUBLISHABLE_SAMPLE,
   type CollectionGap,
+  type EntryMarkRecord,
   type OutcomeRecord,
   type SignalRecord,
   type SignalStore,
@@ -54,6 +55,8 @@ export class InMemorySignalStore implements SignalStore {
   private readonly outcomes = new Map<string, Map<string, OutcomeRecord>>();
   /** Every revision ever written, including superseded ones. */
   private readonly outcomeHistory = new Map<string, OutcomeRecord[]>();
+  /** One per signal, write-once — the table `signal_entry_marks` in memory. */
+  private readonly entryMarks = new Map<string, EntryMarkRecord>();
   private readonly incidents: WriteIncident[] = [];
   private readonly gaps: CollectionGap[] = [];
   private evicted = 0;
@@ -142,6 +145,23 @@ export class InMemorySignalStore implements SignalStore {
     const hist = this.outcomeHistory.get(rec.signalKey) ?? [];
     hist.push(rec);
     this.outcomeHistory.set(rec.signalKey, hist);
+  }
+
+  async writeEntryMark(mark: EntryMarkRecord): Promise<'WRITTEN' | 'EXISTS'> {
+    if (!this.signals.has(mark.signalKey)) {
+      // The table's foreign key, kept in step: a mark for a signal that was
+      // never recorded has nothing to grade.
+      throw new Error(`entry mark for unknown signal ${mark.signalKey}`);
+    }
+    if (!(mark.price > 0) || !mark.source.trim()) throw new Error('entry mark must have a positive price and a named source');
+    if (this.entryMarks.has(mark.signalKey)) return 'EXISTS';
+    this.entryMarks.set(mark.signalKey, { ...mark });
+    return 'WRITTEN';
+  }
+
+  async getEntryMark(signalKey: string): Promise<EntryMarkRecord | undefined> {
+    const m = this.entryMarks.get(signalKey);
+    return m ? { ...m } : undefined;
   }
 
   async listOutcomes(signalKey: string): Promise<OutcomeRecord[]> {

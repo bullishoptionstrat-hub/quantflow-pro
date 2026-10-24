@@ -271,6 +271,14 @@ export interface GraderStats {
   writeFailures: number;
   /** Checkpoints currently awaiting a retry after a failed write. */
   writeRetrying: number;
+  /**
+   * Entry marks written to durable storage when taken, and writes that
+   * failed. A failure here is not lost data yet — the mark is still held in
+   * memory and reaches the first outcome row — but it is exactly the case a
+   * restart before that row would lose, so it is counted where it is visible.
+   */
+  entryMarksPersisted: number;
+  entryMarkWriteFailures: number;
   lastTickAt?: number;
   lastError?: string;
 }
@@ -280,8 +288,10 @@ export class SignalGrader {
   private readonly cfg: GraderConfig;
   private stats: GraderStats = {
     tracked: 0, graded: 0, ungraded: 0, positive: 0, negative: 0, flat: 0,
-    writeFailures: 0, writeRetrying: 0,
+    writeFailures: 0, writeRetrying: 0, entryMarksPersisted: 0, entryMarkWriteFailures: 0,
   };
+  /** Entry-mark writes in flight. `settle()` awaits them; nothing else waits on them. */
+  private readonly entryWrites = new Set<Promise<void>>();
 
   constructor(
     private readonly store: SignalStore,
@@ -389,6 +399,9 @@ export class SignalGrader {
     );
     if (remaining.size === 0) return;
 
+    // Taken once, here; why each path takes it the way it does is on the field.
+    const entryMark = resumed ? resumed.entryMark : this.spot(rec.underlying);
+
     this.pending.set(rec.signalKey, {
       signalKey: rec.signalKey,
       underlying: rec.underlying,
@@ -406,9 +419,32 @@ export class SignalGrader {
       // was actually observed and persisted at the time; when none was, it
       // carries none and grades UNGRADED with the reason. Inventing one here
       // would turn a lost checkpoint into a confident, wrong measurement.
-      entryMark: resumed ? resumed.entryMark : this.spot(rec.underlying),
+      entryMark,
       remaining,
     });
+    // Persist the entry the moment it is taken. It used to reach storage only
+    // with the first outcome row, fifteen minutes later, so a process that
+    // stopped in between — a sleep, a deploy, a crash — took it with it and
+    // recovery could only grade UNGRADED. A resumed signal's mark came from
+    // storage already, so it is not written again.
+    if (!resumed && entryMark) this.persistEntry(rec.signalKey, entryMark);
+  }
+
+  /** Await every in-flight entry-mark write. For shutdown and for tests. */
+  async settle(): Promise<void> {
+    await Promise.all([...this.entryWrites]);
+  }
+
+  private persistEntry(signalKey: string, m: Mark): void {
+    const p = this.store
+      .writeEntryMark({ signalKey, price: m.price, source: m.source, asOf: m.asOf })
+      .then(() => { this.stats.entryMarksPersisted++; })
+      .catch((err) => {
+        this.stats.entryMarkWriteFailures++;
+        this.stats.lastError = err instanceof Error ? err.message : String(err);
+      })
+      .finally(() => { this.entryWrites.delete(p); });
+    this.entryWrites.add(p);
   }
 
   /**
@@ -468,7 +504,14 @@ export class SignalGrader {
         const remaining = GRADED_HORIZONS.filter((h) => !done.has(h));
         if (remaining.length === 0) { report.alreadyComplete++; continue; }
 
-        const entryMark = recoverEntryMark(outs, rightsFor);
+        // The mark persisted when it was taken comes first; an outcome row's
+        // copy is the fallback for signals registered before that table
+        // existed. Either way it is a mark observed at the time, never one
+        // taken now.
+        const stored = await this.store.getEntryMark(rec.signalKey);
+        const entryMark = (stored && recoverEntryMark([{
+          entryMark: stored.price, entryMarkSource: stored.source, entryMarkAt: stored.asOf,
+        }], rightsFor)) ?? recoverEntryMark(outs, rightsFor);
         if (entryMark) report.withEntryMark++;
         this.register(rec, { remaining, entryMark });
         report.resumed++;

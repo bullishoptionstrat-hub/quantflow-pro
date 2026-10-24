@@ -323,6 +323,15 @@ export interface WriteResult {
   signalKey: string;
 }
 
+/** One signal's entry price, persisted when taken. See `signal_entry_marks`. */
+export interface EntryMarkRecord {
+  signalKey: string;
+  price: number;
+  source: string;
+  /** When the price was true, on the vendor's clock. */
+  asOf: number;
+}
+
 export interface SignalStore {
   readonly kind: 'memory' | 'supabase';
 
@@ -348,6 +357,16 @@ export interface SignalStore {
 
   writeOutcome(rec: OutcomeRecord): Promise<void>;
   listOutcomes(signalKey: string): Promise<OutcomeRecord[]>;
+
+  /**
+   * The entry price a signal is graded from, written when it is taken.
+   *
+   * Write-once: `EXISTS` when a mark is already stored for the signal, and the
+   * stored one is kept — the first observation is the entry, and a later
+   * process taking its own mark is not a correction of it.
+   */
+  writeEntryMark(mark: EntryMarkRecord): Promise<'WRITTEN' | 'EXISTS'>;
+  getEntryMark(signalKey: string): Promise<EntryMarkRecord | undefined>;
 
   recordIncident(inc: WriteIncident): Promise<void>;
   listIncidents(limit: number): Promise<WriteIncident[]>;

@@ -32,7 +32,7 @@ before(async () => {
 after(async () => { await stack?.stop(); });
 beforeEach(() => {
   stack.psql(
-    'truncate public.signal_outcomes, public.signal_write_incidents, '
+    'truncate public.signal_outcomes, public.signal_entry_marks, public.signal_write_incidents, '
     + 'public.collection_gaps, public.signal_history restart identity cascade;',
   );
 });
@@ -130,19 +130,36 @@ async function gradedThenRestarted(store: SignalStore) {
   return { report, writeFailures: b.getStats().writeFailures, ...(await snapshot(store, rec.signalKey)) };
 }
 
-/** A restart before the first checkpoint: nothing was persisted to resume from. */
+/**
+ * A restart before the first checkpoint. The entry mark was persisted when it
+ * was taken, so the next process grades M15 from it rather than UNGRADED.
+ */
 async function restartedBeforeAnyGrade(store: SignalStore) {
   const rec = signal();
   await store.writeSignal(rec);
   let clock = T0;
   const now = () => clock;
-  new SignalGrader(store, rising(now), {}, now).register(rec);
+  const a = new SignalGrader(store, rising(now), {}, now);
+  a.register(rec);
+  await a.settle();
+  const original = await store.getEntryMark(rec.signalKey);
 
   clock = due('M15');
   const b = new SignalGrader(store, rising(now), {}, now);
   const report = await b.recover(500, RIGHTS);
   assert.equal(await b.tick(), 1);
-  return { report, ...(await snapshot(store, rec.signalKey)) };
+  return { report, original, ...(await snapshot(store, rec.signalKey)) };
+}
+
+/** A signal recorded and never registered with any grader: there is no entry mark anywhere. */
+async function neverRegistered(store: SignalStore) {
+  const rec = signal();
+  await store.writeSignal(rec);
+  const clock = due('M15');
+  const b = new SignalGrader(store, rising(() => clock), {}, () => clock);
+  const report = await b.recover(500, RIGHTS);
+  assert.equal(await b.tick(), 1);
+  return { report, stored: await store.getEntryMark(rec.signalKey), ...(await snapshot(store, rec.signalKey)) };
 }
 
 test('graded, restarted, recovered: the durable store answers exactly as the memory store does', async () => {
@@ -159,16 +176,62 @@ test('graded, restarted, recovered: the durable store answers exactly as the mem
   assert.deepEqual(pg.ungraded, [], 'a fully graded signal leaves the open set');
 });
 
-test('a restart before any grade leaves no entry mark to resume from, and the store says so', async () => {
+test('a restart before any grade resumes from the persisted entry mark, in both stores', async () => {
   const pg = await restartedBeforeAnyGrade(new SupabaseSignalStore(db));
   const mem = await restartedBeforeAnyGrade(new InMemorySignalStore());
   assert.deepEqual(pg, mem);
 
+  assert.equal(pg.report.withEntryMark, 1);
+  const [m15] = pg.outcomes;
+  assert.equal(m15!.label, 'POSITIVE');
+  assert.equal(m15!.entryMark, pg.original!.price, 'measured from the mark taken at the decision');
+  assert.equal(m15!.entryMarkAt, pg.original!.asOf);
+});
+
+test('a signal no grader ever saw still grades UNGRADED, and recovery takes no mark of its own', async () => {
+  const pg = await neverRegistered(new SupabaseSignalStore(db));
+  const mem = await neverRegistered(new InMemorySignalStore());
+  assert.deepEqual(pg, mem);
+
   assert.equal(pg.report.withEntryMark, 0);
+  assert.equal(pg.stored, undefined);
   const [m15] = pg.outcomes;
   assert.equal(m15!.label, 'UNGRADED');
   assert.equal(m15!.entryMark, undefined, 'no mark was re-taken at recovery time');
   assert.match(m15!.ungradedReason ?? '', /No usable entry mark/);
+});
+
+test('signal_entry_marks is write-once in the database, not only in the store', async () => {
+  const store = new SupabaseSignalStore(db);
+  const rec = signal();
+  await store.writeSignal(rec);
+  const mark = { signalKey: rec.signalKey, price: 550.25, source: 'twelvedata', asOf: T0 - SEC };
+  assert.equal(await store.writeEntryMark(mark), 'WRITTEN');
+  assert.equal(await store.writeEntryMark({ ...mark, price: 999 }), 'EXISTS');
+  assert.deepEqual(await store.getEntryMark(rec.signalKey), mark, 'numeric round-trips as a number');
+
+  // The trigger, not the client, refuses an edit or a delete — run as the
+  // superuser, which bypasses RLS and holds every privilege.
+  const k = rec.signalKey;
+  assert.throws(() => stack.psql(`\\set ON_ERROR_STOP 1\nupdate public.signal_entry_marks set entry_mark = 1 where signal_key = '${k}';`), /write-once/);
+  assert.throws(() => stack.psql(`\\set ON_ERROR_STOP 1\ndelete from public.signal_entry_marks where signal_key = '${k}';`), /write-once/);
+  assert.equal(stack.psql(`select entry_mark from public.signal_entry_marks where signal_key = '${k}'`).trim(), '550.25');
+
+  // A mark for a signal that was never recorded is refused by the foreign key.
+  await assert.rejects(store.writeEntryMark({ ...mark, signalKey: 'b'.repeat(64) }));
+});
+
+test('anon holds the grant and reads no entry marks: RLS denies', async () => {
+  const store = new SupabaseSignalStore(db);
+  const rec = signal();
+  await store.writeSignal(rec);
+  await store.writeEntryMark({ signalKey: rec.signalKey, price: 550, source: 'twelvedata', asOf: T0 });
+  const anon = createClient(stack.url, stack.anonKey, { auth: { persistSession: false, autoRefreshToken: false } });
+  const { data, error } = await anon.from('signal_entry_marks').select('*');
+  assert.equal(error, null);
+  assert.deepEqual(data, []);
+  const ins = await anon.from('signal_entry_marks').insert({ signal_key: rec.signalKey, entry_mark: 1, mark_source: 'x', mark_at: new Date(T0).toISOString() });
+  assert.equal(ins.error?.code, '42501');
 });
 
 test('a write the database refuses keeps the checkpoint pending, and the next tick writes it', async () => {
