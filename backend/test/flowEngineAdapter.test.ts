@@ -192,7 +192,7 @@ test('a strike-zero print is not classified as a deep-ITM call', () => {
   assert.equal(real[0]!.moneyness, 'ITM');
 });
 
-test('the Polygon trade path refuses a trade with no strike', () => {
+test('no ingestion path defaults an absent strike to zero', () => {
   // Source-level, because the guard above is the backstop and this is the
   // caller that needed it. `?? 0` on a field the line above tests for
   // `undefined` is the shape to look for.
@@ -200,6 +200,9 @@ test('the Polygon trade path refuses a trade with no strike', () => {
     .replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
   assert.ok(!/strike:\s*details\.strike_price\s*\?\?\s*0/.test(src),
     'the Polygon print must not default an absent strike to zero');
-  assert.match(src, /typeof details\.strike_price !== 'number'[\s\S]{0,80}continue/,
-    'and must skip the trade rather than ingest it');
+  // The caller this guarded — the Polygon trades poll — is gone (F-24): it
+  // addressed an endpoint that could never return a print. What remains to
+  // hold is that nothing reintroduces the zero-filled strike.
+  assert.ok(!/strike:\s*\w+(\.\w+)*\s*\?\?\s*0\b/.test(src),
+    'no ingestion path defaults an absent strike to zero');
 });

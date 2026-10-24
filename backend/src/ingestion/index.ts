@@ -424,12 +424,10 @@ export function getFlowStats() {
 }
 
 export function getIngestionStatus() {
-  // A connected source can still be degraded. Polygon's trades feed working
-  // while its NBBO lookups are refused means prints arrive and every one of
-  // them is non-directional — visible nowhere if the only vocabulary is
-  // connected/error.
+  // A connected source can still be degraded: prints arriving and every one
+  // of them non-directional, or frames arriving that cannot be parsed — visible
+  // nowhere if the only vocabulary is connected/error.
   const notes: Record<string, string> = {};
-  if (polygonQuoteNote) notes['polygon'] = polygonQuoteNote;
   for (const [source, note] of Object.entries(connectorNotes)) {
     notes[source] = notes[source] ? `${notes[source]}; ${note}` : note;
   }
@@ -1123,17 +1121,6 @@ function startTradierIngestion(): void {
 
 const POLYGON_KEY = process.env.POLYGON_API_KEY || '';
 
-/**
- * How many NBBO lookups one poll cycle may spend.
- *
- * The trades poll returns up to 25 prints and each distinct contract costs one
- * additional request, so an unbounded version would multiply this connector's
- * request rate by 25 against a vendor whose free tier allows five calls a
- * minute. Capped and deduped: the busiest contracts in a cycle get a side, the
- * tail stays AMBIGUOUS, and nothing is invented for the ones that miss out.
- */
-const POLYGON_QUOTE_BUDGET = 8;
-
 /** Polygon's contract ticker, e.g. `O:SPY260918C00500000`. Exported for tests. */
 export function polygonOptionTicker(
   underlying: string, expiry: string, right: 'C' | 'P', strike: number,
@@ -1142,9 +1129,6 @@ export function polygonOptionTicker(
   const strike8 = String(Math.round(strike * 1000)).padStart(8, '0');
   return `O:${underlying.toUpperCase()}${yymmdd}${right}${strike8}`;
 }
-
-/** Why the NBBO half is not contributing, when it is not. Reported separately. */
-let polygonQuoteNote: string | undefined;
 
 /**
  * Frames a streaming source sent that this process could not parse.
@@ -1166,8 +1150,8 @@ const unparsedFrames: Record<string, number> = {};
  * and incomplete. FRED reporting `error` because one of ten series was
  * discontinued upstream sends an operator hunting a key problem that does not
  * exist — the mirror image of reporting a dead source as `connected`, and just
- * as misleading. This is the same channel `polygonQuoteNote` uses for a trades
- * feed whose NBBO lookups are refused.
+ * as misleading. Chain sources with a partial failure, unparsed frames and
+ * entitlement denials all report through it.
  */
 const connectorNotes: Record<string, string> = {};
 
@@ -1222,137 +1206,43 @@ export async function fetchPolygonNbbo(
   return { bid, ask, ts: Math.round(ns / 1_000_000) };
 }
 
+/**
+ * The Polygon (Massive) options path is NOT STARTED, and says why.
+ *
+ * It polled `/v3/trades/options?limit=25` and read `details.expiration_date`,
+ * `details.strike_price` and `underlying_asset.ticker` off each result. Massive
+ * documents options trades as `/v3/trades/{optionsTicker}` — one contract per
+ * request — so that URL asks for a contract whose ticker is "options"; and a
+ * trade record carries `price`, `size`, `exchange`, `conditions`, the
+ * timestamps and a sequence number, not the contract's details. Every result
+ * would have failed the `!d.expiration_date` guard. On a plan entitled to
+ * options trades the source would have reported `connected` and produced
+ * nothing — the Tradier finding (F-23) in a second connector, F-24. On this
+ * deployment's plan it answered 403, which is the only reason it ever read as
+ * anything but healthy.
+ *
+ * Not repaired here, because the repair is a choice this code cannot make: a
+ * WebSocket plan streaming trades per contract, or a stated per-contract
+ * universe polled over REST the way `tradierStream.ts` subscribes one — at a
+ * request cost that only the plan's limits can size. Until one is chosen the
+ * source reports `error` with this reason, which is true, rather than
+ * `connected`, which was not. `fetchPolygonNbbo` and `polygonOptionTicker`
+ * stay: they address real per-contract endpoints and either design needs them.
+ */
+export const POLYGON_NOT_STARTED =
+  'not started: the options-trades poll addressed /v3/trades/options, but Massive/Polygon ' +
+  'serves options trades per contract (/v3/trades/{optionsTicker}) and the code read contract ' +
+  'details the trade records do not carry, so it could never produce a print. A working path ' +
+  'needs a plan choice: the WebSocket trades feed, or a per-contract universe over REST. See F-24.';
+
 function startPolygonIngestion(): void {
   if (!POLYGON_KEY) {
     markNoCredentials('polygon', ['POLYGON_API_KEY']);
     return;
   }
-
-  // Deliberately not marked 'connected' here. The first poll runs immediately
-  // and reports what actually happened; claiming a connection before one has
-  // succeeded is how a dead key showed as healthy.
-
-  async function poll() {
-    try {
-      // Key goes in the Authorization header, not the query string: the URL
-      // shows up in vendor error bodies and proxy logs, and this error path
-      // now surfaces those bodies through the public /api/health route.
-      const { data } = await axios.get(
-        'https://api.polygon.io/v3/trades/options?limit=25',
-        {
-          timeout: 5000,
-          headers: { Authorization: `Bearer ${POLYGON_KEY}` },
-        }
-      );
-
-      // Recovered: a poll got through, so drop any stale failure reason. Without
-      // this the source stayed 'error' forever after one bad poll.
-      sources['polygon'] = 'connected';
-      delete sourceErrors['polygon'];
-      polygonQuoteNote = undefined;
-
-      if (data?.results) {
-        // One NBBO lookup per distinct contract per cycle, up to the budget.
-        // Two prints on the same contract in one batch share a quote request;
-        // the one asked for is the earliest trade's, so a later print in the
-        // same contract sees a quote at or before its own timestamp too.
-        const quotes = new Map<string, { bid: number; ask: number; ts: number }>();
-        let spent = 0;
-        let quoteFailure: string | undefined;
-
-        for (const t of data.results) {
-          if (spent >= POLYGON_QUOTE_BUDGET) break;
-          const d = t.details ?? {};
-          if (!t.sip_timestamp || !d.expiration_date || !d.strike_price) continue;
-
-          const ticker = polygonOptionTicker(
-            t.underlying_asset?.ticker ?? 'UNK',
-            d.expiration_date,
-            d.contract_type === 'call' ? 'C' : 'P',
-            d.strike_price,
-          );
-          if (quotes.has(ticker)) continue;
-
-          spent++;
-          try {
-            const nbbo = await fetchPolygonNbbo(ticker, Number(t.sip_timestamp));
-            if (nbbo) quotes.set(ticker, nbbo);
-          } catch (err: any) {
-            // Reported, not swallowed — but on its own line. The trades feed is
-            // working (we are inside its success path), and flipping the whole
-            // source to `error` because quotes are not entitled would say the
-            // feed is down when it is delivering prints.
-            quoteFailure = describeHttpError(err);
-            break;
-          }
-        }
-
-        polygonQuoteNote = quoteFailure
-          ? `Trades are flowing; NBBO lookups are failing, so every Polygon signal ` +
-            `stays AMBIGUOUS: ${quoteFailure}`
-          : undefined;
-
-        for (const t of data.results) {
-          if (!t.sip_timestamp || !t.price || !t.size) continue;
-          const details = t.details ?? {};
-          if (!details.expiration_date) continue;
-
-          // Nine lines below, this same possibly-absent field was written as
-          // `strike: details.strike_price ?? 0`. The NBBO lookup knew it could
-          // be missing; the print did not.
-          if (typeof details.strike_price !== 'number' || !(details.strike_price > 0)) continue;
-
-          const nbbo = details.strike_price !== undefined
-            ? quotes.get(polygonOptionTicker(
-                t.underlying_asset?.ticker ?? 'UNK',
-                details.expiration_date,
-                details.contract_type === 'call' ? 'C' : 'P',
-                details.strike_price,
-              ))
-            : undefined;
-
-          emitSignals(ingestPrint({
-            id: `poly-${t.sequence_number ?? `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`}`,
-            ts: Math.round(t.sip_timestamp / 1_000_000),
-            symbol: t.underlying_asset?.ticker ?? 'UNK',
-            expiry: details.expiration_date,
-            strike: details.strike_price,
-            right: details.contract_type === 'call' ? 'C' : 'P',
-            price: t.price,
-            size: t.size,
-            exchange: String(t.exchange ?? 'UNKNOWN'),
-            conditions: Array.isArray(t.conditions) ? t.conditions : [],
-            // Polygon condition 4 marks an Intermarket Sweep Order.
-            iso: Array.isArray(t.conditions) ? t.conditions.includes(4) : undefined,
-            source: 'polygon',
-            // The trades endpoint carries no quote, so the NBBO is fetched
-            // separately, bounded at or before this trade's own timestamp.
-            // `quoteTs` is the quote's real time, not this trade's: the engine
-            // decides whether it is fresh enough to give a side, and a quote it
-            // judges stale leaves the print AMBIGUOUS — which is the correct
-            // outcome, not a failure. Pre-v3 this path fabricated a ±1%
-            // bid/ask and inferred a side from that.
-            bid: nbbo?.bid,
-            ask: nbbo?.ask,
-            quoteTs: nbbo?.ts,
-          }));
-        }
-      }
-    } catch (err: any) {
-      // Every failure is reported, and the vendor's own words are what get
-      // reported. This used to swallow anything that was not a 403 and, for a
-      // 403, substitute a guess ("not included in this Polygon plan") for
-      // Polygon's actual response — which made the health route confidently
-      // wrong about why the feed was down. Polygon names the reason in the
-      // body (NOT_AUTHORIZED vs. an entitlement message); that is the thing
-      // worth reading, so pass it through rather than editorializing.
-      sources['polygon'] = 'error';
-      sourceErrors['polygon'] = describeHttpError(err);
-    }
-  }
-
-  setInterval(poll, 10_000).unref();
-  poll();
+  sources['polygon'] = 'error';
+  sourceErrors['polygon'] = POLYGON_NOT_STARTED;
+  console.log(`[polygon] ${POLYGON_NOT_STARTED}`);
 }
 
 /**

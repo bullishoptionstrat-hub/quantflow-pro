@@ -15,7 +15,10 @@
  * correct by construction.
  *
  * **No call in this file has ever been made against real Polygon** — there is
- * no API key in this environment. These drive the parsing, budgeting and
+ * no API key in this environment. And since F-24 the trades poll these quotes
+ * were fetched for is not started: it addressed an endpoint that could never
+ * return a print. The quote helper is kept, and tested, because either
+ * replacement design needs a per-contract NBBO at or before the trade. These drive the parsing, budgeting and
  * timestamp handling with stubbed responses, in the style of
  * `deadSources.test.ts`. The live integration is unverified.
  */
@@ -111,33 +114,11 @@ test('the query is bounded at or before the trade', () => {
   assert.match(INDEX_SRC, /limit:\s*1\b/);
 });
 
-test('lookups are capped and deduped per cycle', () => {
-  // 25 trades per poll against a vendor whose free tier allows 5 calls/min.
-  assert.match(INDEX_SRC, /const POLYGON_QUOTE_BUDGET = \d+;/);
-  assert.match(INDEX_SRC, /if \(spent >= POLYGON_QUOTE_BUDGET\) break;/);
-  assert.match(INDEX_SRC, /if \(quotes\.has\(ticker\)\) continue;/);
-});
-
 test('the key stays in the header, never the query string', () => {
   // /api/health publishes vendor error bodies, and those can echo the URL.
   const quoteCall = INDEX_SRC.slice(INDEX_SRC.indexOf('async function fetchPolygonNbbo'));
   assert.match(quoteCall.slice(0, 900), /Authorization: `Bearer \$\{POLYGON_KEY\}`/);
   assert.ok(!/apiKey=|apikey=\$\{POLYGON_KEY\}/.test(quoteCall.slice(0, 900)));
-});
-
-test('a quote failure does not report the trades feed as down', () => {
-  // Polygon plans commonly include trades and not quotes. Flipping the source
-  // to `error` would say the feed is dead while it is delivering prints.
-  assert.match(INDEX_SRC, /polygonQuoteNote = quoteFailure/);
-  assert.match(INDEX_SRC, /stays AMBIGUOUS/);
-  const inner = INDEX_SRC.slice(
-    INDEX_SRC.indexOf('const nbbo = await fetchPolygonNbbo'),
-    INDEX_SRC.indexOf('polygonQuoteNote = quoteFailure'),
-  );
-  assert.ok(
-    !/sources\['polygon'\] = 'error'/.test(inner),
-    'the quote catch must not mark the whole source as failed',
-  );
 });
 
 test('the degraded state is reported, not just the binary one', () => {
@@ -151,7 +132,6 @@ test('the quote is published under its own timestamp', () => {
     join(__dirname, '..', 'src', 'ingestion', 'flowEngineAdapter.ts'), 'utf8',
   );
   assert.match(adapter, /engine\.onQuote\(\{\s*ts:\s*print\.quoteTs \?\? ts,/);
-  assert.match(INDEX_SRC, /quoteTs:\s*nbbo\?\.ts,/);
 });
 
 // ─── Loading with a stubbed transport ───────────────────────────────────────

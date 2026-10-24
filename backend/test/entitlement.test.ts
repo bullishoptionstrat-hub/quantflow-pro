@@ -143,10 +143,15 @@ test('the probe asks for the endpoint the pipeline actually uses', () => {
     join(__dirname, '..', 'src', 'ingestion', 'entitlement.ts'), 'utf8');
   const ingestion = readFileSync(
     join(__dirname, '..', 'src', 'ingestion', 'index.ts'), 'utf8');
-  assert.ok(ingestion.includes('/v3/trades/options'),
-    'the polygon connector should still poll the trades endpoint');
+  // Since F-24 the Polygon pipeline is not started — its poll addressed an
+  // endpoint that could never return a print — so the probe no longer mirrors
+  // a running request. It still asks the options-trades family, which is the
+  // plan question either replacement design will need answered, and the
+  // measured 403 there is a plan-level refusal rather than a per-ticker one.
+  assert.match(ingestion, /export const POLYGON_NOT_STARTED/,
+    'the polygon connector reports why it is not started');
   assert.ok(entitlement.includes('/v3/trades/options'),
-    'and the polygon probe should still ask for that same endpoint');
+    'and the polygon probe asks the options-trades entitlement question');
 });
 
 test('the tradier probe does not reuse the profile endpoint', () => {
