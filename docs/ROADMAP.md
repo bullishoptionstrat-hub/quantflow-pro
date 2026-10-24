@@ -518,8 +518,18 @@ every day is sample.
       market-data agreement says about non-professional subscriber status.
       Read both before funding — the plan leans on this item, so it should not
       be the sentence that reads as free.
+      **Correction, 2026-10-24 (F-23): "the connector is already written" was
+      not true in the sense that mattered.** As written it subscribed to the
+      underlyings, dropped every timesale, and filed SPXW under an underlying
+      called "SPXW" — a funded account would have delivered **no options
+      prints at all**, behind a source reporting `connected`. It now subscribes
+      to a stated contract universe (two nearest expirations, ±5% strikes, 100
+      contracts per underlying, published on `/api/health` as
+      `tradierUniverse`) and parses timesales with their quote. It has still
+      **never run against Tradier**: every mapping is SEARCH_ONLY until the
+      first live session, which is the first thing to check after funding.
       With that said: it is `PERMITTED` for DISPLAY **and** PERSIST in
-      `PRIVATE_RESEARCH`, the connector is already written, and
+      `PRIVATE_RESEARCH`, the connector is now written, and
       `probeTradierToken()` already distinguishes prod / sandbox / rejected.
       This is the single highest-leverage act in the whole document: it turns
       the terminal on. It may also retire Phase 0.4 — if Tradier can

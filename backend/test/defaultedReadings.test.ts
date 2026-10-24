@@ -157,6 +157,13 @@ const LEDGER: Record<string, string> = {
   'ingestion/index.ts: unparsedFrames[source] ?? 0':
     'Initialising a counter on first increment. Counting from zero is what a ' +
     'counter does.',
+  'ingestion/index.ts: tradierRefusals[out.refused] ?? 0':
+    'The unparsedFrames counter rule: Tradier timesales refused (cancel, ' +
+    'correction, unsubscribed, malformed), initialised on first increment by ' +
+    'the module that owns it.',
+  'ingestion/index.ts: tradierRefusals[k] ?? 0':
+    'Reading that same owned counter to decide whether a refusal kind has ' +
+    'occurred. Absent means none were refused, which is what zero says.',
   'ingestion/flowEngineAdapter.ts: unreadableExpiries[source] ?? 0':
     'The same counter on the same rule, for prints refused at the seam for an ' +
     'unreadable expiry. This module owns and increments it, so absent really ' +
