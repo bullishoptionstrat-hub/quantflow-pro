@@ -1095,6 +1095,69 @@ filled after the view and reads a signal judged before the fill as FINAL.
 
 Eight mutations, one per fix, each fail at least one test.
 
+## F-22 — The durable store had never met a database, and three of its paths broke at production size ✅ FIXED
+
+ROADMAP 1.1d asked for the Supabase store's read paths to run against a real
+Postgres before anything else was built on them. It had been open since PR #66
+because every test of `supabaseStore.ts` used a stub shaped like a PostgREST
+reply, and a stub agrees with whatever query the code builds. The local stack
+in `backend/tools/pgstack/` is PostgreSQL 16 with **every file in `supabase/`
+applied in the documented order**, a real PostgREST 12.2.3, and a shim for the
+three API roles and the `auth` schema. Nothing in it is a real credential: the
+JWT secret is minted per run and the cluster is deleted afterwards.
+`npm run test:pg` drives it, and most of its twenty tests are **differential**:
+the same writes go to this store and to `InMemorySignalStore`, and the answers
+must match.
+
+Three defects came out, none reachable by a stub.
+
+1. **PostgREST echoes the request URL back in `Content-Location`, and Node's
+   `fetch` refuses a response header over 16 KB.** Measured: an `in.(…)` of 200
+   signal keys answers 200; 250 fail in the *client* with
+   `UND_ERR_HEADERS_OVERFLOW`; 2,000 are refused by the server with 400. A
+   64-hex key is 67 bytes once its comma is encoded, so the ceiling is about
+   240 keys. `trackRecord` and `backtest` chunked at **500** keys, and
+   `listUngraded` did not chunk at all — and `recover()` calls it with a limit
+   of 500, which fetches 2,000 rows and puts every key in one URL. So the
+   track record would have failed at about the population where its rates
+   first become publishable, and startup recovery on any busy day. The chunk
+   is now sized in **encoded bytes** (`inListChunks`, 6 KB), under nginx's
+   default 8 KB request-line buffer, since Supabase's gateway limit has not
+   been measured from here.
+2. **`trackRecord` counted a signal under two exclusions.** The memory store
+   applies them in order — synthetic, then event-time-only, then rights — and
+   counts each signal once. The Supabase store's rights count did not exclude
+   event-time-only rows, so a replayed signal from an unverified source was
+   counted twice, and the notes explaining what the report left out added up
+   to more than it dropped.
+3. **The two stores wrote different collision notes.** The durable store's
+   left out the sentence saying what a collision means. Both now read
+   `HISTORY_COLLISION_NOTE`.
+
+One divergence is **refused by name** rather than fixed. The memory store
+implements supersession (correcting a graded outcome) and the Supabase store
+never has: it does not write `supersedes`, and retiring the live row and
+inserting its replacement are two PostgREST requests that cannot be made
+atomic. Nothing in `src/` writes a correction, so no live path changes. But a
+test against the memory store was standing as evidence that corrections work
+in production. The Supabase store now throws a stated error, and a
+single-transaction path (an RPC) is recorded as the missing piece.
+
+What the stack confirmed rather than found: the timeline CHECK, the one-live-
+outcome index, the mark-source and mark-order CHECKs and the immutability
+trigger all refuse what they claim to. `anon` really holds the table grant and
+still reads nothing, because RLS denies it; a privilege that was missing would
+also return an empty answer, which is why the grant is checked first.
+
+**Still not measured: Supabase itself.** This is PostgREST and PostgreSQL. Its
+gateway, pooler and real keys are not here, so 1.1c (probing the real service
+key) is untouched.
+
+Eight mutations, each failing at least one test. Two are caught only by
+`test/inListChunks.test.ts`, which runs on every `npm test`: ignoring URL
+encoding when sizing a chunk, which 64-hex keys never push over the budget,
+and returning to a count-based slice.
+
 ---
 
 ## Status summary
@@ -1122,3 +1185,4 @@ Eight mutations, one per fix, each fail at least one test.
 | F-19 | Unauthenticated `/api/health` checked one block, not the payload | **FIXED**, 3 tests, 3 mutations — the real router driven, every string scanned at any depth |
 | F-20 | The directive's example session conflict was the transitional encoding | **FIXED** — default identifier beside `v` is EXTENDED; CONFLICT needs an explicit non-default value; fixtures 15–16, 2 mutations |
 | F-21 | Self-audit of the phase: gate arithmetic fitted to itself, unchecked pair trades, absent quote keys read as prices, manifest dates and mode | **FIXED**, 5 tests, 8 mutations |
+| F-22 | Supabase store never run against a database: `in.(…)` URLs past the client's header limit at production size, a double-counted exclusion, drifted incident note | **FIXED**, 20 Postgres tests + 5 unit, 8 mutations; supersession refused by name; Supabase's own gateway still unmeasured |

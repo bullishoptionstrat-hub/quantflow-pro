@@ -460,7 +460,17 @@ every day is sample.
       have `entitled` as the one branch never observed, which is the shape
       `entitlement.ts` refuses. The right-shape branch therefore stays a `warn`
       with the sentence it always had: shape is not validity.
-- [ ] **1.1d — Run the store's read paths against a real Postgres. Opened
+- [x] **1.1d — Run the store's read paths against a real Postgres.** *Done
+      2026-10-23 (F-22), against PostgreSQL + PostgREST rather than Supabase.*
+      `npm run test:pg` boots a throwaway stack with every file in `supabase/`
+      applied and runs twenty tests, most of them comparing this store with the
+      memory store. It found `in.(…)` URLs past the client's 16 KB header
+      limit at production size (every chunked path, and `listUngraded`
+      unchunked), a double-counted exclusion, and a drifted incident note.
+      Bound (b) below turned out smaller than estimated: a static PostgREST
+      binary, the distro's PostgreSQL, a 60-line shim, and no container.
+      Supabase's own gateway and keys remain unmeasured, and that is 1.1c.
+      *Original text:* Opened
       2026-09-21 by PR #66, which named it as the thing to do before the next
       merge and could not do it.** `listUngraded`, `trackRecord` and
       `listOutcomes` are covered by fixtures shaped like PostgREST replies.

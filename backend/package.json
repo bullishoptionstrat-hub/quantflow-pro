@@ -6,6 +6,7 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "test": "tsx --test test/*.test.ts",
+    "test:pg": "tsx --test test-pg/*.test.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json && npm run typecheck:engine",
     "verify": "npm run typecheck && npm test",
     "preview:capture": "tsx tools/preview/capture.ts",

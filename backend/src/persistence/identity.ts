@@ -207,6 +207,19 @@ export interface Reconcilable {
 }
 
 /**
+ * The note a `HISTORY_COLLISION` incident carries. One string for both stores:
+ * each used to write its own, and they had drifted — the Supabase store's
+ * omitted the sentence saying what a collision means, so the store that holds
+ * the durable record kept the less useful one. Found by comparing the two
+ * stores' incidents against a real database (`npm run test:pg`).
+ */
+export const HISTORY_COLLISION_NOTE =
+  'Same signal key arrived with different content. The stored row was kept '
+  + 'and the incoming write refused. Two different signals hashing to one key, '
+  + 'or one signal whose economics changed after emission — either is a '
+  + 'pipeline defect worth finding.';
+
+/**
  * Decide what to do with an incoming write.
  *
  * The third verdict is the reason this function exists. Treating every
