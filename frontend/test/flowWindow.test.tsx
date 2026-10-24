@@ -150,6 +150,57 @@ describe('alerts follow the market, not the view', () => {
   })
 })
 
+describe('an alert records the rule that raised it and where it went (ROADMAP 5.3)', () => {
+  function withSpeech() {
+    const spoken: string[] = []
+    ;(window as any).speechSynthesis = { speak: (u: { text: string }) => spoken.push(u.text) }
+    ;(globalThis as any).SpeechSynthesisUtterance = class { rate = 1; pitch = 1; constructor(public text: string) {} }
+    return spoken
+  }
+  afterEach(() => { delete (window as any).speechSynthesis })
+
+  test('the threshold comes from the event, and the channels from what happened', async () => {
+    const spoken = withSpeech()
+    const s = await store()
+    s.setState({ voiceEnabled: true } as never)
+    await mountFeed()
+    await send([flow({ id: 'hot', is_unusual: true, heat_score: 83, unusual_threshold: 75 })])
+    const [a] = s.getState().powerAlerts
+    expect(a.trigger).toEqual({ heat_score: 83, unusual_threshold: 75, spoken: true, speak_above: 80, pushed: false, push_above: 85 })
+    expect(spoken).toHaveLength(1)
+  })
+
+  test('an event with no published threshold records null, never a borrowed 75', async () => {
+    await mountFeed()
+    await send([flow({ id: 'old', is_unusual: true, heat_score: 90 })])
+    expect((await store()).getState().powerAlerts[0].trigger.unusual_threshold).toBeNull()
+  })
+
+  test('nothing is spoken that does not get a row', async () => {
+    // Speech ran on its own heat test, so a backend whose threshold sat above
+    // 80 would have had the terminal speak a trade the alerts page never
+    // listed. Every announcement is an alert first now.
+    const spoken = withSpeech()
+    const s = await store()
+    s.setState({ voiceEnabled: true } as never)
+    await mountFeed()
+    await send([flow({ id: 'loud', is_unusual: false, heat_score: 95, unusual_threshold: 97 })])
+    expect(spoken).toHaveLength(0)
+    expect(s.getState().powerAlerts).toHaveLength(0)
+  })
+
+  test('a push the browser refused is not recorded as pushed', async () => {
+    ;(globalThis as any).Notification = Object.assign(function () {}, { permission: 'denied' })
+    try {
+      await mountFeed()
+      await send([flow({ id: 'p', is_unusual: true, heat_score: 99, unusual_threshold: 75 })])
+      expect((await store()).getState().powerAlerts[0].trigger.pushed).toBe(false)
+    } finally {
+      delete (globalThis as any).Notification
+    }
+  })
+})
+
 describe('the stat tiles say what they are over', () => {
   async function renderStats(flowEvents: FlowEvent[]) {
     ;(await store()).setState({ flowEvents } as never)

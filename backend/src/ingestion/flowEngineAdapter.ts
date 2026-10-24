@@ -154,6 +154,18 @@ export interface WireFlowEvent {
   sentiment: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
   /** `heat_score >= UNUSUAL_SCORE`. The threshold lives here and nowhere else. */
   is_unusual: boolean;
+  /**
+   * The threshold `is_unusual` was decided against — `UNUSUAL_SCORE` at the
+   * moment this signal was classified.
+   *
+   * Published so a power alert can name the rule that raised it (ROADMAP
+   * 5.3). The frontend used to state "75 or above" in its own copy, which
+   * was the threshold's second home: correct only while nobody changed the
+   * first. Carried per event rather than once on `/api/health` because a row
+   * records what was true when *it* fired, and a deploy can move the line
+   * between two alerts in one session.
+   */
+  unusual_threshold: number;
   exchange_count: number;
   /**
    * Every venue the contributing records named, and whether the size at each
@@ -760,6 +772,7 @@ function toWireEvent(sig: ClassifiedSignal): WireFlowEvent {
     heat_score: sig.score,
     sentiment: sentimentOf(sig.side, leg.contract.right),
     is_unusual: sig.score >= UNUSUAL_SCORE,
+    unusual_threshold: UNUSUAL_SCORE,
     exchange_count: exchanges.size,
     /**
      * Every venue named by the contributing records, and whether the size at

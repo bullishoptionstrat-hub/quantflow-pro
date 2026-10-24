@@ -753,7 +753,12 @@ Only after there is something to show. Ordered by "will you open it every day":
       duplicating, so the habit does not become a pile of near-identical rows.
 - [ ] **5.2** A morning view: overnight flow, today's GEX profile, gamma flip,
       the track record to date. One screen, opened once a day.
-- [ ] **5.3** Alerting that names its own trigger. Ledger line 98 records the
+- [x] **5.3** Alerting that names its own trigger. *Done 2026-10-24.* Every
+      power alert carries `trigger`: the heat that crossed the line, the
+      backend's threshold as published on the event (`unusual_threshold`, or
+      `null` — never a browser-side 75), and whether it was actually spoken or
+      pushed. Speech and push now fire only for alerts, so nothing is announced
+      without a row. *Original text:* Alerting that names its own trigger. Ledger line 98 records the
       power-alerts page describing a trigger the code did not implement and
       crediting a model that did not exist. Whatever fires, the rule that
       fired it goes on the row.

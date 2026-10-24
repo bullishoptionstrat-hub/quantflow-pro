@@ -3,6 +3,7 @@ import { useStore } from '@/store/useStore'
 import { formatTime, heatColor } from '@/lib/utils'
 import { HeatBadge } from '@/components/ui/HeatBadge'
 import type { OrderType } from '@/lib/types'
+import { describeTrigger } from '@/lib/alertTrigger'
 
 /**
  * The page described a trigger the code does not implement, and credited a
@@ -44,7 +45,14 @@ const alertColor = (t: OrderType) => ALERT_TYPE_COLORS[t] || DEFAULT_ALERT_COLOR
  * `heat_score >= 75`, so the two conditions are one, and stating them as a
  * pair implied a second test that does not exist. One condition, named once.
  */
-const TRIGGER = 'Raised when the engine scores a signal 75 or above — its unusual threshold, on any order type.'
+//
+// And it stated the number — "75 or above" — which made this string the
+// threshold's second home, right only while nobody moved the first. The
+// backend publishes the threshold on every event and each row below names
+// the one in force when it fired, so the general description names the rule
+// and leaves the number to the rows.
+const TRIGGER = "Raised when the engine's score reaches its unusual threshold, on any order type. Each alert names the threshold in force when it fired."
+
 
 export default function PowerAlertsPage() {
   const { powerAlerts, voiceEnabled, setVoiceEnabled, connected } = useStore()
@@ -135,6 +143,9 @@ export default function PowerAlertsPage() {
                   </div>
                   <div style={{ fontSize: 13, color: '#fafafa', fontFamily: "'JetBrains Mono', monospace" }}>
                     {alert.message}
+                  </div>
+                  <div style={{ marginTop: 4, fontSize: 10, color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.03em' }}>
+                    {describeTrigger(alert.trigger)}
                   </div>
                   {/*
                     A "ML CONFIDENCE: N%" line rendered here, gated on
