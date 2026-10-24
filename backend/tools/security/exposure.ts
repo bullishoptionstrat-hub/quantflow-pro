@@ -31,18 +31,20 @@ import { inflateRawSync } from 'node:zlib';
  * Nothing under a credential name is dropped for its length alone. What is not
  * listed is still COUNTED, by name, in the report's summary (`Skipped`):
  * `trivial` (1–5 characters — `x`, `abc`, the bulk of test fixtures), `template`
- * (`change-me`, `your-…`, a role word like `secret`) and `empty` (nothing, or
- * something other than a literal — `NAME: [`). Code that reads
- * a value — `process.env.X`, `os.environ.get`, a constant's name, an unquoted
- * identifier — is not a value at all and is not counted.
+ * (`change-me`, `your-…`, a role word like `secret`), `numeric` (digits with no
+ * letter — a PIN or a setting; read it before acting) and `empty` (nothing, or
+ * something other than a literal — `NAME: [`, `${OTHER}`). Code that reads a
+ * value — `process.env.X`, `os.environ.get`, a constant's name, an unquoted
+ * identifier — is not a value at all and is not counted, and neither is a
+ * number under a name that says it is a setting (`MAX_TOKENS`, `TOKEN_TTL`).
  */
 export type Confidence = 'high' | 'low';
-export type SkipKind = 'trivial' | 'template' | 'empty';
+export type SkipKind = 'trivial' | 'numeric' | 'template' | 'empty';
 export type Category = Confidence | SkipKind;
 
 /** Per kind, per variable name: how many assignments were recognised and not listed. */
 export type Skipped = Record<SkipKind, Map<string, number>>;
-export const newSkipped = (): Skipped => ({ trivial: new Map(), template: new Map(), empty: new Map() });
+export const newSkipped = (): Skipped => ({ trivial: new Map(), numeric: new Map(), template: new Map(), empty: new Map() });
 
 export interface Exposure {
   /** Every variable name this one value was assigned to. One key can wear several. */
@@ -65,7 +67,9 @@ export const displayFingerprint = (e: Pick<Exposure, 'fingerprint' | 'confidence
   (e.confidence === 'high' ? e.fingerprint : 'withheld');
 
 /**
- * `NAME=value`, `NAME: "value"`, `"NAME": "value"` — the three forms keys are written in.
+ * `NAME=value`, `NAME: "value"`, `"NAME": "value"` — the three forms keys are
+ * written in. This finds the name and the separator; `readValue` reads the
+ * value from there.
  *
  * Whitespace around the separator is `[ \t]`, never `\s`: with `\s`, an empty
  * assignment (`SUPABASE_SERVICE_ROLE_KEY=`) consumed the newline and took the
@@ -74,7 +78,48 @@ export const displayFingerprint = (e: Pick<Exposure, 'fingerprint' | 'confidence
  * rule below would not.
  */
 const ASSIGN =
-  /(?:^|[\s{,(])["']?([A-Z][A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD|DSN)[A-Z0-9_]*)["']?[ \t]*([=:])[ \t]*(["']?)([A-Za-z0-9_\-.]*)/g;
+  /(?:^|[\s{,(])["']?([A-Z][A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD|DSN)[A-Z0-9_]*)["']?[ \t]*([=:])[ \t]*/g;
+
+/**
+ * An unquoted value is a run of the characters secrets and connection strings
+ * are written in: letters, digits, `_ - .`, the base64 and URL characters
+ * `+ / = @ : ~ ! % * # $ & ? ^`. It ends at anything else — whitespace (which
+ * is also what starts a trailing ` # …` comment in shell and YAML), a quote,
+ * `,` `;` `|`, a bracket — so a line of code is not read as one long value.
+ *
+ * It used to be `[A-Za-z0-9_\-.]` — a key-shaped alphabet — so a value was cut
+ * at its first `+`, `/` or `@`. An `openssl rand -base64` secret came out as two
+ * characters and was counted as a trivial fixture instead of being listed.
+ */
+const UNQUOTED_RUN = /[A-Za-z0-9_\-.+/=@:~!%*#$&?^]*/y;
+
+/**
+ * The value starting at `i`, read whole. A quoted value runs to its closing
+ * quote on the same line (`\"` escapes in double quotes, as in JSON and shell);
+ * an unterminated quote falls back to the unquoted reading of what follows it,
+ * so a broken line is neither swallowed nor allowed to run into the next one.
+ */
+export function readValue(text: string, i: number): { value: string; quoted: boolean; end: number } {
+  const unquoted = (from: number) => {
+    UNQUOTED_RUN.lastIndex = from;
+    const run = UNQUOTED_RUN.exec(text)![0];
+    return { run, end: from + run.length };
+  };
+  const q = text[i];
+  if (q === '"' || q === "'") {
+    let value = '';
+    for (let j = i + 1; j < text.length && text[j] !== '\n' && text[j] !== '\r'; j++) {
+      const c = text[j]!;
+      if (c === '\\' && q === '"' && j + 1 < text.length && text[j + 1] !== '\n') { value += text[++j]; continue; }
+      if (c === q) return { value, quoted: true, end: j + 1 };
+      value += c;
+    }
+    const { run, end } = unquoted(i + 1);
+    return { value: run, quoted: true, end };
+  }
+  const { run, end } = unquoted(i);
+  return { value: run, quoted: false, end };
+}
 
 /** Below this, a value is a fixture or config (`x`, `abc`, `dev`) far more often than a secret: counted, not listed. */
 const MIN_LOW_CONFIDENCE = 6;
@@ -83,6 +128,17 @@ const MIN_KEY_SHAPED = 16;
 const ROLE_WORD = /^(?:secret|password|passwd|pass|pwd)$/i;
 /** `os.environ.get`, `settings.webhook_secret` — a dotted path is code reading a value, not the value. */
 const DOTTED_CODE = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+$/;
+/** What precedes a name declared in JS/TS source: `const `, `export let `, `var `. */
+const CODE_DECLARATION = /\b(?:const|let|var)\s+$/;
+/** `$OTHER`, `${OTHER}` — an interpolation, not a literal. `$2b$10$…` (a bcrypt hash) is a literal. */
+const INTERPOLATION = /^\$(?:\{|[A-Za-z_])/;
+/**
+ * A name that says its number is a setting, not a secret: `MAX_TOKENS`,
+ * `TOKEN_TTL_SECONDS`, `PASSWORD_MIN_LENGTH`. A number under any other
+ * credential name is counted as `numeric`, never dropped.
+ */
+const NUMERIC_SETTING =
+  /(?:^|_)(?:TTL|TIMEOUT|EXPIRY|EXPIRES|EXPIRATION|AGE|LENGTH|LEN|SIZE|MAX|MIN|COUNT|LIMIT|PORT|TOKENS|RETRIES|RETRY|INTERVAL|BITS|ROUNDS|ID|INDEX|VERSION|SECONDS|MS|MINUTES|HOURS|DAYS|DURATION|LIFETIME|BUDGET|THRESHOLD)(?:_|$)/;
 
 const PLACEHOLDER =
   /^(?:your|my|the|a)[-_]|(?:[-_]your[-_]|xxx|placeholder|example|changeme|change[-_]me|replace[-_]me|dummy|sample|todo|fixme|test|fake|stub|mock|redacted)/i;
@@ -114,12 +170,18 @@ export const fingerprint = (value: string) =>
  */
 export function classifyAssignments(text: string): Array<{ name: string; value: string; category: Category }> {
   const out: Array<{ name: string; value: string; category: Category }> = [];
-  for (const m of text.matchAll(ASSIGN)) {
+  const re = new RegExp(ASSIGN.source, 'g');
+  for (let m = re.exec(text); m; m = re.exec(text)) {
     const name = m[1]!;
     const separator = m[2]!;
-    const quoted = m[3] !== '';
-    const value = m[4]!;
-    if (value.length === 0) { out.push({ name, value, category: 'empty' }); continue; }
+    const { value, quoted, end } = readValue(text, m.index + m[0].length);
+    // Resume after the value, so a value's own text is never read as another assignment.
+    re.lastIndex = Math.max(end, re.lastIndex);
+    // `const NAME = /…/`, `let NAME = x + y`: in source code a literal is always
+    // quoted, so an unquoted right-hand side of a declaration is an expression.
+    const nameAt = m.index + m[0].indexOf(name);
+    if (!quoted && CODE_DECLARATION.test(text.slice(text.lastIndexOf('\n', nameAt) + 1, nameAt))) continue;
+    if (value.length === 0 || INTERPOLATION.test(value)) { out.push({ name, value, category: 'empty' }); continue; }
     // Code reading a value, not a value: `os.environ.get`, `process.env.X`,
     // another constant's name, an unquoted `NAME: identifier` reference.
     // A dotted path is code (`os.environ.get`, compiled `zod_1.z.string`,
@@ -138,7 +200,13 @@ export function classifyAssignments(text: string): Array<{ name: string; value: 
     const keyShaped = value.length >= MIN_KEY_SHAPED
       && (prefixed || (/[0-9]/.test(value) && /[A-Za-z]/.test(value)));
     if (keyShaped) { out.push({ name, value, category: 'high' }); continue; }
-    if (!/[A-Za-z]/.test(value)) continue;   // digits only: a port, a TTL, a count — not a credential
+    if (!/[A-Za-z]/.test(value)) {
+      // No letter at all. Digits are a PIN or a setting: counted unless the name
+      // says setting. No digit either (`...`, `***`) is not a readable literal.
+      if (!/[0-9]/.test(value)) out.push({ name, value, category: 'empty' });
+      else if (!NUMERIC_SETTING.test(name)) out.push({ name, value, category: 'numeric' });
+      continue;
+    }
     out.push({ name, value, category: value.length >= MIN_LOW_CONFIDENCE ? 'low' : 'trivial' });
   }
   return out;
@@ -254,7 +322,8 @@ export function formatReport(report: readonly Exposure[], skipped?: Skipped): st
   }
   if (skipped) {
     const kinds: Array<[SkipKind, string]> = [
-      ['trivial', '1–5 characters'], ['template', 'template default or placeholder'], ['empty', 'empty or not a literal (an array, a call)'],
+      ['trivial', '1–5 characters'], ['numeric', 'digits only (a PIN or a setting — read before acting)'],
+      ['template', 'template default or placeholder'], ['empty', 'empty or not a literal (an array, a call, ${…})'],
     ];
     const rows = kinds.filter(([k]) => skipped[k].size > 0).map(([k, label]) => {
       const names = [...skipped[k]].sort(([a], [b]) => a.localeCompare(b)).map(([n, c]) => `${n}×${c}`).join(', ');

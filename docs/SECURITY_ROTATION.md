@@ -31,13 +31,25 @@ token — but they also look like ordinary configuration, so read each one befor
 rotating on it. Their fingerprints are **withheld**: a 10-hex SHA-256 prefix of a
 short value can be brute-forced, so printing it would disclose the value.
 
+A value is read whole: a quoted value to its closing quote, an unquoted one up
+to whitespace (so a trailing ` # comment` is not part of it), a quote, `,`, `;`,
+`|` or a bracket. Base64 and URL characters (`+ / = @ : ~ ! % * # $ & ?
+^`) are part of the value, so a base64 secret is graded on its whole length.
+
 Nothing under a credential name is dropped for its length. What is not listed is
 **counted by name** at the end of the report: values of 1–5 characters (almost
-always test fixtures like `x` or `abc`), template defaults (`change-me`,
-`your-…`, a value that only names its role such as `secret`), and empty or
-non-literal values. Only code that reads a value — `process.env.X`,
-`os.environ.get`, a constant's name, an unquoted `NAME: identifier` — is not
-counted, because it is not a value.
+always test fixtures like `x` or `abc`), digits with no letter (a PIN or a
+setting — read it before acting), template defaults (`change-me`, `your-…`, a
+value that only names its role such as `secret`), and empty or non-literal
+values (`${OTHER}`, `<your-key>`). Not counted at all, because they are not
+values: code that reads a value — `process.env.X`, `os.environ.get`, a
+constant's name, an unquoted `NAME: identifier`, the unquoted right-hand side
+of a `const`/`let`/`var` — and a number under a name that says it is a setting
+(`MAX_TOKENS`, `TOKEN_TTL_SECONDS`).
+
+Limits: an unquoted value is read only to its first space, so a passphrase with
+spaces is read whole only when quoted; and a quoted sentence under a credential
+name can be listed at low confidence.
 
 `security:verify` never probes a low-confidence value: it reports it
 `NOT_PROBED` for a person to read first.
