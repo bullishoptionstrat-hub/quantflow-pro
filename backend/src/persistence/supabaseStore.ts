@@ -19,6 +19,7 @@ import {
   GRADED_HORIZONS,
   MIN_PUBLISHABLE_SAMPLE,
   type CollectionGap,
+  type EntryMarkRecord,
   type OutcomeRecord,
   type SignalRecord,
   type SignalStore,
@@ -32,6 +33,7 @@ const T_SIGNALS = 'signal_history';
 const T_OUTCOMES = 'signal_outcomes';
 const T_INCIDENTS = 'signal_write_incidents';
 const T_GAPS = 'collection_gaps';
+const T_ENTRY = 'signal_entry_marks';
 
 const iso = (ms: number) => new Date(ms).toISOString();
 const ms = (s: string) => Date.parse(s);
@@ -268,6 +270,31 @@ export class SupabaseSignalStore implements SignalStore {
     // The partial unique index is the real guard: it rejects a second live row
     // for the same (signal, horizon) even if this process raced with itself.
     if (error) throw new Error(`signal_outcomes insert failed: ${error.message}`);
+  }
+
+  async writeEntryMark(mark: EntryMarkRecord): Promise<'WRITTEN' | 'EXISTS'> {
+    const { error } = await this.db.from(T_ENTRY).insert({
+      signal_key: mark.signalKey,
+      entry_mark: mark.price,
+      mark_source: mark.source,
+      mark_at: iso(mark.asOf),
+    });
+    // 23505: a mark is already stored. The first observation is the entry, so
+    // the stored row is kept and this is reported rather than overwritten.
+    if (error?.code === '23505') return 'EXISTS';
+    if (error) throw new Error(`signal_entry_marks insert failed: ${error.message}`);
+    return 'WRITTEN';
+  }
+
+  async getEntryMark(signalKey: string): Promise<EntryMarkRecord | undefined> {
+    const { data, error } = await this.db
+      .from(T_ENTRY).select('*').eq('signal_key', signalKey).maybeSingle();
+    if (error) throw new Error(`signal_entry_marks read failed: ${error.message}`);
+    if (!data) return undefined;
+    // `numeric` arrives as a string; see `num`.
+    const price = num(data.entry_mark);
+    if (price === undefined) return undefined;
+    return { signalKey: data.signal_key, price, source: data.mark_source, asOf: ms(data.mark_at) };
   }
 
   async listOutcomes(signalKey: string): Promise<OutcomeRecord[]> {
