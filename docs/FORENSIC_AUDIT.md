@@ -1200,6 +1200,34 @@ Thirteen mutations, each caught; two survived the first draft (a refusal
 asserted on a return value that is empty either way, and a strike band hidden
 behind the cap) and the tests were rewritten until they bit.
 
+## F-24 — The Polygon options poll asked for a contract called "options" ✅ STOPPED (replacement needs a plan choice)
+
+The F-23 lens applied to the second real-time connector. It polled
+`/v3/trades/options?limit=25` and read `details.expiration_date`,
+`details.strike_price` and `underlying_asset.ticker` off each result. Massive
+(formerly Polygon) documents options trades as `/v3/trades/{optionsTicker}`,
+one contract per request, with records carrying price, size, exchange,
+conditions, timestamps and a sequence number — not the contract's details. So
+the URL asked for a contract whose ticker is "options", and any result would
+have failed the `!d.expiration_date` guard. This deployment's plan answered
+403, which is the only reason the source ever read as anything but healthy: on
+an entitled plan it would have reported `connected` and emitted nothing.
+
+It is **not started** now, and reports `error` with the reason
+(`POLYGON_NOT_STARTED`) rather than `disabled` (which means no key) or
+`connected` (which was false). It is not repaired, because the repair is a
+choice the code cannot make — the WebSocket trades feed, or a stated
+per-contract universe over REST sized to a plan's request limits.
+`fetchPolygonNbbo` and `polygonOptionTicker` stay, tested: either design needs
+a per-contract quote at or before the trade. Four tests that pinned the dead
+poll's internals (its quote budget, its dedup, its quote-failure note) were
+removed or narrowed to what still exists; three mutations on the replacement
+guard each fail it.
+
+Evidence standing: the endpoint shape is from Massive's documentation as
+surfaced by search on 2026-10-24; the hosts are refused by the egress policy
+and no key is present in this environment, so it was not measured.
+
 ---
 
 ## Status summary
@@ -1227,5 +1255,6 @@ behind the cap) and the tests were rewritten until they bit.
 | F-19 | Unauthenticated `/api/health` checked one block, not the payload | **FIXED**, 3 tests, 3 mutations — the real router driven, every string scanned at any depth |
 | F-20 | The directive's example session conflict was the transitional encoding | **FIXED** — default identifier beside `v` is EXTENDED; CONFLICT needs an explicit non-default value; fixtures 15–16, 2 mutations |
 | F-21 | Self-audit of the phase: gate arithmetic fitted to itself, unchecked pair trades, absent quote keys read as prices, manifest dates and mode | **FIXED**, 5 tests, 8 mutations |
+| F-24 | Polygon options poll addressed a non-endpoint and read fields trades do not carry | **STOPPED** with a stated reason; replacement awaits a plan choice |
 | F-23 | Tradier stream subscribed to underlyings, dropped timesales, merged SPX/SPXW | **FIXED**, 9 tests, 13 mutations — SEARCH_ONLY until a live session runs it |
 | F-22 | Supabase store never run against a database: `in.(…)` URLs past the client's header limit at production size, a double-counted exclusion, drifted incident note | **FIXED**, 20 Postgres tests + 5 unit, 8 mutations; supersession refused by name; Supabase's own gateway still unmeasured |
