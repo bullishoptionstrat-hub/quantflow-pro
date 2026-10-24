@@ -60,6 +60,16 @@ export interface RawPrint {
    */
   receivedAt?: number;
   symbol: string;                 // underlying, e.g. "SPY"
+  /**
+   * The option root, when the source names it — `SPXW` under the underlying
+   * `SPX`. The contract's identity (its OCC symbol, the key for the NBBO book
+   * and the stats table) is built from it; absent, the root is taken to be the
+   * underlying, which is true for every equity and ETF on the watch lists and
+   * false for SPX weeklies. Building identity from the underlying alone merged
+   * an AM-settled SPX monthly with the PM-settled SPXW weekly sharing its date
+   * and strike — two contracts, one book.
+   */
+  root?: string;
   expiry: string;                 // ISO date, "2026-06-19"
   strike: number;
   right: 'C' | 'P';
@@ -525,6 +535,11 @@ export function ingestPrint(print: RawPrint): WireFlowEvent[] {
     return [];
   }
 
+  // A root the source named but this cannot read is refused rather than
+  // replaced with the underlying: substituting it is the SPX/SPXW merge the
+  // field exists to prevent.
+  if (print.root !== undefined && !/^[A-Z][A-Z0-9]{0,5}$/.test(print.root)) return [];
+
   const ts = print.ts ?? Date.now();
   // Receipt time is stamped here, at the boundary — the earliest moment this
   // process could possibly have known about the print. Distinct from `ts`,
@@ -532,7 +547,7 @@ export function ingestPrint(print: RawPrint): WireFlowEvent[] {
   // latency a forward measurement must be charged.
   const receivedAt = print.receivedAt ?? (print.replay ? undefined : Date.now());
   lastPrintTs = Math.max(lastPrintTs, ts);
-  const symbol = occSymbol(print.symbol, print.expiry, print.right, print.strike);
+  const symbol = occSymbol(print.root ?? print.symbol, print.expiry, print.right, print.strike);
 
   recordStats(symbol, print);
 

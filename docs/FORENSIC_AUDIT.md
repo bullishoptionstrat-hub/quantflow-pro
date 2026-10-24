@@ -1158,6 +1158,48 @@ Eight mutations, each failing at least one test. Two are caught only by
 encoding when sizing a chunk, which 64-hex keys never push over the budget,
 and returning to a count-based slice.
 
+## F-23 — The Tradier stream could not deliver a single options print ✅ FIXED (unverified against the vendor)
+
+ROADMAP 1.3 calls funding Tradier "the single highest-leverage act in the
+whole document" and said the connector was already written. It was written,
+and it could not work, for three independent reasons — none visible, because
+the session mint has never succeeded from this repo, so nothing past it has
+run.
+
+1. **It subscribed to the underlyings.** The frame sent `['SPY', 'QQQ', 'SPX',
+   …]`. Tradier's stream takes "equity or option" symbols and streams events
+   for the symbols subscribed, so that is SPY's own tape — and
+   `processMarketTick` dropped every event not shaped like an option symbol.
+   A funded account would have streamed equity ticks into a filter that
+   discards them, under a source reporting `connected`.
+2. **It dropped timesales and kept quote-less trades.** A timesale carries
+   `last`, not `price`, so `!data.price` rejected all of them; the `trade`
+   events that passed carry no bid or ask, so every print would have been
+   AMBIGUOUS. The timesale's `cancel`/`correction` flags were never read.
+3. **The root became the underlying.** An SPXW contract was filed under an
+   underlying called "SPXW", and building identity from the underlying would
+   merge an AM-settled SPX monthly with the PM-settled SPXW weekly sharing its
+   date and strike.
+
+`src/ingestion/tradierStream.ts` subscribes to a stated universe (two nearest
+expirations, strikes within 5% of the last price, at most 100 contracts per
+underlying, nearest first), published on `/api/health` as `tradierUniverse`
+because a contract outside it is never observed and the record describes the
+universe and nothing wider. Timesales become prints carrying their own quote.
+Cancels and corrections are **refused and counted** rather than ingested: this
+path enters through `ingestPrint`, which cannot withdraw an earlier print, and
+routing it through Event Model V2 is its own change. `RawPrint.root` carries
+the root into contract identity, and a root the seam cannot read is refused
+rather than replaced.
+
+**Evidence standing.** Tradier's documentation was surfaced by search on
+2026-10-24 — the hosts are refused by the egress policy — so every payload and
+chain-field mapping is SEARCH_ONLY. Nothing here has run against Tradier. The
+tests drive the documented shapes; the first live session is the measurement.
+Thirteen mutations, each caught; two survived the first draft (a refusal
+asserted on a return value that is empty either way, and a strike band hidden
+behind the cap) and the tests were rewritten until they bit.
+
 ---
 
 ## Status summary
@@ -1185,4 +1227,5 @@ and returning to a count-based slice.
 | F-19 | Unauthenticated `/api/health` checked one block, not the payload | **FIXED**, 3 tests, 3 mutations — the real router driven, every string scanned at any depth |
 | F-20 | The directive's example session conflict was the transitional encoding | **FIXED** — default identifier beside `v` is EXTENDED; CONFLICT needs an explicit non-default value; fixtures 15–16, 2 mutations |
 | F-21 | Self-audit of the phase: gate arithmetic fitted to itself, unchecked pair trades, absent quote keys read as prices, manifest dates and mode | **FIXED**, 5 tests, 8 mutations |
+| F-23 | Tradier stream subscribed to underlyings, dropped timesales, merged SPX/SPXW | **FIXED**, 9 tests, 13 mutations — SEARCH_ONLY until a live session runs it |
 | F-22 | Supabase store never run against a database: `in.(…)` URLs past the client's header limit at production size, a double-counted exclusion, drifted incident note | **FIXED**, 20 Postgres tests + 5 unit, 8 mutations; supersession refused by name; Supabase's own gateway still unmeasured |

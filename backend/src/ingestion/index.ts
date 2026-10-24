@@ -15,6 +15,11 @@ import WebSocket from 'ws';
 import { fetchCboeChain, getCboeSnapshot, getCboeSymbols } from './connectors/cboeOptions';
 import { fetchOccVolume, getOccVolume } from './connectors/occ';
 import { describeHttpError } from './httpError';
+import {
+  buildUniverse, subscriptionFrame, timesaleToPrint,
+  type TimesaleRefusal, type UniverseContract, type UniverseReport,
+} from './tradierStream';
+import { marketDateOf } from '../market/civil';
 import { probeAll, type EntitlementResult } from './entitlement';
 import { resolveMark, markSourceStandings, markRightsClass } from './markSources';
 import {
@@ -444,6 +449,9 @@ export function getIngestionStatus() {
     notes[source] = notes[source] ? `${notes[source]}; ${note}` : note;
   }
 
+  const tradierNote = tradierStreamNote();
+  if (tradierNote) notes['tradier'] = notes['tradier'] ? `${notes['tradier']}; ${tradierNote}` : tradierNote;
+
   mergeEntitlementNotes(notes, entitlement);
 
   return {
@@ -467,6 +475,13 @@ export function getIngestionStatus() {
      * single refusal still grades nothing.
      */
     markSources: markSourceStandings(),
+    /**
+     * Which option contracts the Tradier stream is subscribed to, by rule.
+     * A signal on a contract outside it is never observed, so the record
+     * describes this universe and no other — published so that is visible.
+     * `null` until a universe has been built.
+     */
+    tradierUniverse: tradierUniverseReport,
     // Listed even before the connector loop has run, so a refusal is visible
     // on a cold /api/health rather than only after the first poll tick. Every
     // string here is a quoted public restriction and a terms URL — nothing
@@ -835,6 +850,36 @@ const WATCHED_SYMBOLS = [
 
 let tradierWs: WebSocket | null = null;
 
+/** How often the subscribed contract universe is rebuilt while the stream is open. */
+const TRADIER_UNIVERSE_REFRESH_MS = 30 * 60_000;
+let tradierUniverse: Map<string, UniverseContract> = new Map();
+let tradierUniverseReport: UniverseReport | null = null;
+let tradierUniverseTimer: ReturnType<typeof setInterval> | null = null;
+/** Streamed events that did not become prints, by reason. Counted, never silent. */
+const tradierRefusals: Partial<Record<TimesaleRefusal, number>> = {};
+
+/** Tradier REST, production host — a sandbox token is refused before the stream opens. */
+const tradierGet = async (path: string, params: Record<string, string>) => {
+  const res = await axios.get(`https://api.tradier.com${path}`, {
+    params,
+    headers: { Authorization: `Bearer ${TRADIER_TOKEN}`, Accept: 'application/json' },
+    timeout: 10_000,
+  });
+  return res.data;
+};
+
+/**
+ * What the stream refused, for `sourceNotes`. NOT_TIMESALE is left out: with
+ * the subscription filtered to timesales it is only heartbeats and session
+ * frames, and a count of those on a status board is noise.
+ */
+function tradierStreamNote(): string | undefined {
+  const parts = (['CANCEL', 'CORRECTION', 'NOT_SUBSCRIBED', 'MALFORMED'] as const)
+    .filter((k) => (tradierRefusals[k] ?? 0) > 0)
+    .map((k) => `${tradierRefusals[k]} ${k.toLowerCase().replace('_', ' ')}`);
+  return parts.length > 0 ? `timesales not ingested: ${parts.join(', ')}` : undefined;
+}
+
 /**
  * What the profile probe concluded about `TRADIER_TOKEN`.
  *
@@ -972,29 +1017,55 @@ function startTradierIngestion(): void {
         headers: { Authorization: `Bearer ${TRADIER_TOKEN}` },
       });
 
+      // Subscribed to option CONTRACTS, chosen by a stated rule. This sent the
+      // underlyings — `['SPY', 'QQQ', 'SPX', …]` — which is a subscription to
+      // SPY's own trades; every one was then dropped for not being shaped like
+      // an option symbol. See `tradierStream.ts` for the three defects that
+      // made this path unable to deliver a single options print.
+      const subscribe = async () => {
+        try {
+          const built = await buildUniverse(tradierGet, WATCHED_SYMBOLS, marketDateOf(Date.now()) ?? '');
+          tradierUniverse = built.contracts;
+          tradierUniverseReport = built.report;
+        } catch (err) {
+          console.error('[tradier] universe build failed:', (err as Error).message);
+        }
+        if (tradierUniverse.size === 0) {
+          // Connected and subscribed to nothing is not `connected`: no option
+          // print can arrive. Said in the errors, where an operator looks first.
+          sources['tradier'] = 'error';
+          sourceErrors['tradier'] =
+            'stream open, but no option contracts could be selected to subscribe to: '
+            + JSON.stringify(tradierUniverseReport?.failures ?? {});
+          return;
+        }
+        tradierWs?.send(subscriptionFrame([...tradierUniverse.keys()], sessionid));
+        console.log(`[tradier] subscribed to ${tradierUniverse.size} option contracts`);
+      };
+
       tradierWs.on('open', () => {
         sources['tradier'] = 'connected';
         delete sourceErrors['tradier'];
         retryDelayMs = BASE_RETRY_MS; // a real connection clears the backoff
-        const msg = JSON.stringify({
-          symbols: WATCHED_SYMBOLS,
-          sessionid,
-          linebreak: true,
-          filter: ['quote', 'trade', 'timesale'],
-        });
-        tradierWs?.send(msg);
         console.log('[tradier] WebSocket connected');
+        void subscribe();
+        // The universe moves with the underlying and with expirations rolling
+        // off. Tradier modifies a subscription in place when the same
+        // sessionid sends a new frame, so no reconnect is needed.
+        tradierUniverseTimer = setInterval(() => { void subscribe(); }, TRADIER_UNIVERSE_REFRESH_MS).unref();
       });
 
       tradierWs.on('message', (raw: Buffer) => {
+        let data: any;
         try {
-          const data = JSON.parse(raw.toString());
-          if (data.type === 'timesale' || data.type === 'trade') {
-            processMarketTick(data, 'tradier');
-          }
+          data = JSON.parse(raw.toString());
         } catch {
           noteUnparsedFrame('tradier');
+          return;
         }
+        const out = timesaleToPrint(data, tradierUniverse);
+        if ('print' in out) emitSignals(ingestPrint(out.print));
+        else tradierRefusals[out.refused] = (tradierRefusals[out.refused] ?? 0) + 1;
       });
 
       tradierWs.on('error', (err) => {
@@ -1004,6 +1075,8 @@ function startTradierIngestion(): void {
       });
 
       tradierWs.on('close', () => {
+        if (tradierUniverseTimer) clearInterval(tradierUniverseTimer);
+        tradierUniverseTimer = null;
         sources['tradier'] = 'error';
         console.log('[tradier] WS closed — reconnecting in 5s');
         setTimeout(() => { void connect(); }, 5000);
@@ -1044,38 +1117,6 @@ function startTradierIngestion(): void {
   }
 
   void connect();
-}
-
-function processMarketTick(data: any, source: string): void {
-  if (!data.symbol || !data.price || !data.size) return;
-
-  const match = String(data.symbol).match(/^([A-Z]+)(\d{6})([CP])(\d+)$/);
-  if (!match) return; // equity print, not an option
-
-  const [, sym, dateStr, cpFlag, strikeStr] = match;
-  if (!sym || !dateStr || !cpFlag || !strikeStr) return;
-
-  const expiry = `20${dateStr.slice(0, 2)}-${dateStr.slice(2, 4)}-${dateStr.slice(4, 6)}`;
-  const price = parseFloat(data.price);
-  const size = parseInt(data.size, 10);
-  if (!(price > 0) || !(size > 0)) return;
-
-  emitSignals(ingestPrint({
-    id: `${source}-${data.seq ?? `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`}`,
-    ts: data.date ? Number(data.date) : Date.now(),
-    symbol: sym,
-    expiry,
-    strike: parseInt(strikeStr, 10) / 1000,
-    right: cpFlag as 'C' | 'P',
-    price,
-    size,
-    exchange: data.exch ?? 'UNKNOWN',
-    // Quoted NBBO when the feed carries it; without it the engine correctly
-    // refuses to infer a side rather than guessing one.
-    bid: data.bid !== undefined ? parseFloat(data.bid) : undefined,
-    ask: data.ask !== undefined ? parseFloat(data.ask) : undefined,
-    source,
-  }));
 }
 
 // ─── Polygon REST polling ────────────────────────────────────────────────────
