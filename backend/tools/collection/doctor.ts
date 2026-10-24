@@ -537,6 +537,21 @@ export function liveChecks(live: LiveState): Check[] {
          'at all, which is not a fault), or `error` (the vendor answered, badly).',
   });
 
+  // A connected Tradier stream records nothing until its own prints validate
+  // it. Said separately from "a source delivering" because the remedy differs:
+  // AWAITING_DATA needs a market session, FAILING needs the named check fixed.
+  if (live.tradierLive && live.tradierLive.recording !== 'ADMITTED') {
+    const failingNow = live.tradierLive.state === 'FAILING';
+    checks.push({
+      name: 'Tradier live validation',
+      status: failingNow ? 'blocked' : 'warn',
+      detail: failingNow
+        ? `Tradier is connected but its prints fail: ${live.tradierLive.failing.join(', ')}. Its signals are held out of the record.`
+        : `Tradier is connected and ${live.tradierLive.state}; its signals are held out of the record until its own prints validate it.`,
+      fix: 'Read /api/health `ingestion.tradierLive.checks` for what was observed against what is required.',
+    });
+  }
+
   // Not a separate condition — a restated one, with the number that proves it.
   // Synthetic rows are counted where a reader can see them and never enter a
   // published rate, so a recorder busily writing them is not progress.
@@ -559,6 +574,12 @@ export function liveChecks(live: LiveState): Check[] {
 
 export interface LiveState {
   connectedRecordable: string[];
+  /**
+   * Tradier's own live validation, when the backend publishes it. A connected
+   * stream is not evidence of working market data, and a held source records
+   * nothing — so `connectedRecordable` excludes a held Tradier.
+   */
+  tradierLive?: { state: string; recording: string; failing: string[] };
   storeKind: string;
   durable: boolean;
   recorded: number;
@@ -574,8 +595,18 @@ export async function readLive(base: string): Promise<LiveState> {
   const h: any = await res.json();
 
   const sources: Record<string, string> = h?.ingestion?.sources ?? {};
+  const tl = h?.ingestion?.tradierLive;
+  const tradierLive = tl && typeof tl.state === 'string'
+    ? {
+        state: tl.state as string,
+        recording: String(tl.recording),
+        failing: Array.isArray(tl.checks) ? tl.checks.filter((c: any) => c && c.pass === false).map((c: any) => String(c.name)) : [],
+      }
+    : undefined;
+  const heldTradier = tradierLive !== undefined && tradierLive.recording !== 'ADMITTED';
   return {
-    connectedRecordable: RECORDABLE_SOURCES.filter((s) => sources[s] === 'connected'),
+    connectedRecordable: RECORDABLE_SOURCES.filter((s) => sources[s] === 'connected' && !(s === 'tradier' && heldTradier)),
+    tradierLive: sources['tradier'] === 'connected' ? tradierLive : undefined,
     storeKind: h?.history?.store ?? 'unknown',
     durable: Boolean(h?.history?.durable),
     recorded: h?.history?.recorder?.recorded ?? 0,

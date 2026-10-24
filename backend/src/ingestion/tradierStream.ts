@@ -53,13 +53,66 @@ import { describeHttpError } from './httpError';
  * the underlying's last price, and at most 100 contracts per underlying,
  * nearest-to-spot first.
  */
-export const UNIVERSE_RULE = Object.freeze({
+export const UNIVERSE_RULE: UniverseRule = Object.freeze({
   expirationsPerUnderlying: 2,
   strikeBand: 0.05,
   maxPerUnderlying: 100,
 });
 
-export type UniverseRule = typeof UNIVERSE_RULE;
+export interface UniverseRule {
+  readonly expirationsPerUnderlying: number;
+  readonly strikeBand: number;
+  readonly maxPerUnderlying: number;
+}
+
+/**
+ * The rule as the deployment configured it, or the problems that stop it.
+ *
+ * Each field has an environment variable (declared in `render.yaml`) and the
+ * default above when unset. A value that is set and unreadable — `0`, `ten`,
+ * a band of `5` meaning five percent — is a PROBLEM, not a fallback: the
+ * universe decides what the record can ever contain, so a typo silently
+ * replaced with the default would change the study's coverage with nothing on
+ * any surface saying so. The caller refuses to subscribe while there are
+ * problems, and says why on `/api/health`.
+ */
+export function universeRuleFromEnv(env: NodeJS.ProcessEnv): { rule: UniverseRule; problems: string[] } {
+  const problems: string[] = [];
+  // Each variable is read by its literal name (`env.X`) so the Blueprint drift
+  // check can see that the code reads what `render.yaml` declares.
+  const read = (name: string, raw: string | undefined, fallback: number, ok: (n: number) => boolean, what: string): number => {
+    if (raw === undefined || raw.trim() === '') return fallback;
+    const n = Number(raw.trim());
+    if (!Number.isFinite(n) || !ok(n)) {
+      problems.push(`${name}=${JSON.stringify(raw)} is not ${what}`);
+      return fallback;
+    }
+    return n;
+  };
+  const rule: UniverseRule = {
+    expirationsPerUnderlying: read('TRADIER_UNIVERSE_EXPIRATIONS', env.TRADIER_UNIVERSE_EXPIRATIONS, UNIVERSE_RULE.expirationsPerUnderlying,
+      (n) => Number.isInteger(n) && n >= 1 && n <= 12, 'a whole number of expirations from 1 to 12'),
+    strikeBand: read('TRADIER_UNIVERSE_STRIKE_BAND', env.TRADIER_UNIVERSE_STRIKE_BAND, UNIVERSE_RULE.strikeBand,
+      (n) => n > 0 && n <= 0.5, 'a fraction of spot above 0 and at most 0.5 (0.05 is 5%)'),
+    maxPerUnderlying: read('TRADIER_UNIVERSE_MAX_PER_UNDERLYING', env.TRADIER_UNIVERSE_MAX_PER_UNDERLYING, UNIVERSE_RULE.maxPerUnderlying,
+      (n) => Number.isInteger(n) && n >= 1 && n <= 1000, 'a whole number of contracts from 1 to 1000'),
+  };
+  return { rule, problems };
+}
+
+/**
+ * What the universe does NOT cover, in words, published beside it. A record
+ * built from this stream describes this subset of the options market and
+ * nothing wider; a hit rate computed from it is not a statement about options
+ * flow in general.
+ */
+export function coverageStatement(rule: UniverseRule, underlyings: readonly string[]): string {
+  return `Observes only ${underlyings.join(', ')}; for each, only the ${rule.expirationsPerUnderlying} nearest `
+    + `listed expiration(s) and strikes within ${(rule.strikeBand * 100).toFixed(1)}% of the last price, `
+    + `at most ${rule.maxPerUnderlying} contracts nearest that price. Longer-dated contracts, far `
+    + `out-of-the-money strikes and every other underlying are never observed, so a signal on them `
+    + `cannot appear in the record. The universe is rebuilt every 30 minutes, so it follows the price.`;
+}
 
 export interface UniverseContract {
   /** The OCC symbol Tradier streams under, e.g. `SPXW261016C05500000`. */
@@ -266,4 +319,135 @@ export function timesaleToPrint(
 /** The subscription frame: option contracts, timesales only. */
 export function subscriptionFrame(symbols: readonly string[], sessionid: string): string {
   return JSON.stringify({ symbols: [...symbols], sessionid, linebreak: true, filter: ['timesale'] });
+}
+
+// ─── Live validation ─────────────────────────────────────────────────────────
+
+/**
+ * Whether the stream is delivering what it claims to, judged on what arrived.
+ *
+ * A connected socket is not evidence of working market data: F-23 was a
+ * stream that would have reported `connected` while delivering nothing usable.
+ * So before a single Tradier signal enters the append-only record, the prints
+ * themselves are checked — over a rolling window, so a feed that degrades
+ * mid-session loses its standing rather than keeping one it earned earlier.
+ *
+ * The thresholds are stated rather than tuned: they are the first cut, chosen
+ * to catch a broken mapping (no quotes, crossed books, prices nowhere near the
+ * quote, timestamps in the wrong unit or a different day) rather than to grade
+ * a feed's quality. Every one is published with what was observed.
+ */
+export const VALIDATION_RULE = Object.freeze({
+  /** Prints needed before any verdict other than AWAITING_DATA. */
+  minPrints: 50,
+  /** Rolling window the checks are computed over. */
+  window: 500,
+  /** Share of prints that must carry a two-sided quote (side inference needs one). */
+  minQuoted: 0.8,
+  /** Share of quoted prints whose book may be crossed (bid > ask). */
+  maxCrossed: 0.01,
+  /** Share of quoted prints whose price must sit in [bid/2, ask*2] — a broken mapping lands far outside. */
+  minPlausiblePrice: 0.95,
+  /** Share of prints whose trade time must be within this of receipt. */
+  minTimely: 0.95,
+  maxClockSkewMs: 5 * 60_000,
+  /** Refused records (unsubscribed or malformed) as a share of all timesales. */
+  maxRefusedShare: 0.05,
+});
+
+export type ValidationState = 'NOT_STARTED' | 'AWAITING_DATA' | 'VALIDATED' | 'FAILING';
+
+export interface ValidationCheck {
+  name: string;
+  pass: boolean;
+  observed: string;
+  required: string;
+}
+
+export interface ValidationReport {
+  state: ValidationState;
+  /** Why a Tradier signal is or is not admitted to the record right now. */
+  recording: 'ADMITTED' | 'HELD';
+  printsSeen: number;
+  checks: ValidationCheck[];
+  universe: { contracts: number; problems: string[] };
+  basis: string;
+}
+
+interface Sample { quoted: boolean; crossed: boolean; plausible: boolean; timely: boolean }
+
+export class TradierValidator {
+  private samples: Sample[] = [];
+  private refused = 0;
+  private total = 0;
+  private universeProblems: string[] = ['no universe has been built'];
+  private universeSize = 0;
+
+  constructor(private readonly rule = VALIDATION_RULE) {}
+
+  /** The universe itself must be sane before any print is judged. */
+  observeUniverse(contracts: ReadonlyMap<string, UniverseContract>, today: string): void {
+    const problems: string[] = [];
+    if (contracts.size === 0) problems.push('the universe is empty');
+    for (const [sym, c] of contracts) {
+      if (sym !== c.symbol || contractFromRow({
+        symbol: c.symbol, underlying: c.underlying, root_symbol: c.root, strike: c.strike,
+        option_type: c.right === 'C' ? 'call' : 'put', expiration_date: c.expiry,
+      }) === null) problems.push(`${sym} is not a well-formed contract`);
+      else if (c.expiry < today) problems.push(`${sym} expired before ${today}`);
+      if (problems.length >= 5) break;
+    }
+    this.universeProblems = problems;
+    this.universeSize = contracts.size;
+  }
+
+  observeRefusal(kind: TimesaleRefusal): void {
+    if (kind === 'NOT_TIMESALE') return;
+    this.total++;
+    if (kind === 'NOT_SUBSCRIBED' || kind === 'MALFORMED') this.refused++;
+  }
+
+  observePrint(p: RawPrint, receivedAt: number): void {
+    this.total++;
+    const quoted = p.bid !== undefined && p.ask !== undefined && p.ask > 0;
+    const crossed = quoted && p.bid! > p.ask!;
+    const plausible = quoted && p.price >= p.bid! / 2 && p.price <= p.ask! * 2;
+    const timely = p.ts !== undefined && Math.abs(receivedAt - p.ts) <= this.rule.maxClockSkewMs;
+    this.samples.push({ quoted, crossed, plausible, timely });
+    if (this.samples.length > this.rule.window) this.samples.shift();
+  }
+
+  report(): ValidationReport {
+    const r = this.rule;
+    const n = this.samples.length;
+    const share = (k: keyof Sample, of = this.samples) => (of.length ? of.filter((x) => x[k]).length / of.length : 0);
+    const quoted = this.samples.filter((x) => x.quoted);
+    const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
+    const refusedShare = this.total ? this.refused / this.total : 0;
+    const checks: ValidationCheck[] = [
+      { name: 'universe', pass: this.universeProblems.length === 0,
+        observed: this.universeProblems.length ? this.universeProblems.join('; ') : `${this.universeSize} well-formed, unexpired contracts`,
+        required: 'a non-empty universe of well-formed, unexpired contracts' },
+      { name: 'quoted', pass: share('quoted') >= r.minQuoted, observed: pct(share('quoted')), required: `>= ${pct(r.minQuoted)} of prints carry bid and ask` },
+      { name: 'uncrossed', pass: quoted.length > 0 && share('crossed', quoted) <= r.maxCrossed, observed: pct(share('crossed', quoted)), required: `<= ${pct(r.maxCrossed)} of quoted prints have bid > ask` },
+      { name: 'plausible-price', pass: quoted.length > 0 && share('plausible', quoted) >= r.minPlausiblePrice, observed: pct(share('plausible', quoted)), required: `>= ${pct(r.minPlausiblePrice)} of quoted prints priced within [bid/2, ask*2]` },
+      { name: 'timely', pass: share('timely') >= r.minTimely, observed: pct(share('timely')), required: `>= ${pct(r.minTimely)} of prints stamped within ${r.maxClockSkewMs / 60_000} min of receipt` },
+      { name: 'identities', pass: refusedShare <= r.maxRefusedShare, observed: pct(refusedShare), required: `<= ${pct(r.maxRefusedShare)} of timesales unsubscribed or malformed` },
+    ];
+    let state: ValidationState;
+    if (this.universeSize === 0 && this.total === 0) state = 'NOT_STARTED';
+    else if (!checks[0]!.pass) state = 'FAILING';
+    else if (n < r.minPrints) state = 'AWAITING_DATA';
+    else state = checks.every((c) => c.pass) ? 'VALIDATED' : 'FAILING';
+    return {
+      state,
+      recording: state === 'VALIDATED' ? 'ADMITTED' : 'HELD',
+      printsSeen: n,
+      checks,
+      universe: { contracts: this.universeSize, problems: this.universeProblems },
+      basis: `Judged on the last ${r.window} prints; no verdict before ${r.minPrints}. A connected stream is not `
+        + `evidence of working market data, so Tradier signals are held out of the append-only record until `
+        + `this reads VALIDATED, and held again if it stops doing so.`,
+    };
+  }
 }

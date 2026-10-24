@@ -19,7 +19,7 @@ import { computeDecisionAt, signalContentHash } from './identity';
 import type { SignalRecord, SignalStore, StoredLeg } from './types';
 
 export interface RecordOutcome {
-  status: 'RECORDED' | 'REPLAY' | 'COLLISION' | 'REFUSED_RIGHTS' | 'ERROR';
+  status: 'RECORDED' | 'REPLAY' | 'COLLISION' | 'REFUSED_RIGHTS' | 'HELD_UNVALIDATED' | 'ERROR';
   signalKey?: string;
   reason?: string;
 }
@@ -34,15 +34,28 @@ export interface RecorderStats {
   syntheticRecorded: number;
   /** datasetId → count of refusals, so the operator sees *which* source. */
   refusalsByDataset: Record<string, number>;
+  /**
+   * Signals not recorded because a contributing source is permitted but has
+   * not yet shown, on its own prints, that it delivers working market data.
+   * Counted per source. Distinct from a rights refusal: the remedy is to wait
+   * for (or fix) the feed, not to read a publisher's terms.
+   */
+  heldUnvalidated: number;
+  heldBySource: Record<string, number>;
   lastError?: string;
 }
+
+const NONE_HELD: ReadonlySet<string> = new Set();
 
 export class SignalRecorder {
   private stats: RecorderStats = {
     seen: 0, recorded: 0, replays: 0, collisions: 0,
     refusedRights: 0, errors: 0, syntheticRecorded: 0,
-    refusalsByDataset: {},
+    refusalsByDataset: {}, heldUnvalidated: 0, heldBySource: {},
   };
+
+  /** Sources whose prints are not yet admitted. Empty unless a validator says otherwise. */
+  private held: () => ReadonlySet<string> = () => NONE_HELD;
 
   constructor(
     private readonly store: SignalStore,
@@ -50,7 +63,26 @@ export class SignalRecorder {
   ) {}
 
   getStats(): RecorderStats {
-    return { ...this.stats, refusalsByDataset: { ...this.stats.refusalsByDataset } };
+    return {
+      ...this.stats,
+      refusalsByDataset: { ...this.stats.refusalsByDataset },
+      heldBySource: { ...this.stats.heldBySource },
+    };
+  }
+
+  /**
+   * Hold back signals from sources a live validator has not yet passed.
+   *
+   * The record is append-only: a signal written from a feed whose mapping is
+   * broken — a print with no quote, a price from the wrong contract, a
+   * timestamp in the wrong unit — cannot be taken back out, and would be
+   * graded and published like any other. So a source the ingestion layer is
+   * still validating is held: displayed live, not persisted. Holding loses
+   * those signals from the record, deliberately, and the coverage ledger
+   * marks the window as not collected rather than as a quiet tape.
+   */
+  holdUntilValidated(held: () => ReadonlySet<string>): void {
+    this.held = held;
   }
 
   /**
@@ -86,6 +118,17 @@ export class SignalRecorder {
         reason: sources.length > 1
           ? `Signal formed from sources [${sources.join(', ')}]; ${refused.reason}`
           : refused.reason,
+      };
+    }
+    const held = this.held();
+    const unvalidated = sources.filter((s) => held.has(s));
+    if (unvalidated.length > 0) {
+      this.stats.heldUnvalidated++;
+      for (const s of unvalidated) this.stats.heldBySource[s] = (this.stats.heldBySource[s] ?? 0) + 1;
+      return {
+        status: 'HELD_UNVALIDATED',
+        reason: `Not recorded: ${unvalidated.join(', ')} has not yet passed live validation, so its prints `
+          + 'are displayed but kept out of the append-only record.',
       };
     }
     const decision = decisions[0]!;

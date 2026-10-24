@@ -34,6 +34,16 @@ services:
         value: "30"
       - key: TRADIER_TOKEN
         sync: false
+      # Which option contracts the Tradier stream subscribes to. The record
+      # describes this subset and nothing wider; see `tradierCoverage` on
+      # /api/health. A malformed value refuses to subscribe rather than
+      # falling back silently. Defaults: 2 expirations, 5% band, 100 per name.
+      - key: TRADIER_UNIVERSE_EXPIRATIONS
+        value: "2"
+      - key: TRADIER_UNIVERSE_STRIKE_BAND
+        value: "0.05"
+      - key: TRADIER_UNIVERSE_MAX_PER_UNDERLYING
+        value: "100"
       - key: POLYGON_API_KEY
         sync: false
       # Spot quotes for the display board only. Finnhub's terms forbid sharing
