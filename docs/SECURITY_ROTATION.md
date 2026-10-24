@@ -22,6 +22,16 @@ SHA-256 **fingerprint**, how many places it appears, and where it first did.
 **Values are never printed.** Two names sharing one fingerprint are one key.
 Fixtures fabricated as a run of consecutive characters are skipped.
 
+Findings come in two grades. **Key-shaped** values (16+ characters with letters
+and digits, or a vendor prefix) are listed first. **Low-confidence** values are
+listed separately: a value under a `SECRET` or `PASSWORD` name that is 6–15
+characters long or letters-only. A person chose those, so they can be real
+secrets — a session-signing secret, an admin password — but they also look like
+ordinary configuration. Read each one before rotating on it. Still excluded at
+both grades: template defaults (`change-me`, `your-…`), a value that only names
+its role (`secret`), dotted code paths (`os.environ.get`), and an unquoted
+`NAME: identifier` reference.
+
 Credentials that reached somewhere other than git — a chat transcript, a
 screenshot, a support ticket — are not in this report and must be added to the
 rotation list by hand.
