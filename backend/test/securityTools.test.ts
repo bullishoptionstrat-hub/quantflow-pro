@@ -9,14 +9,28 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { deflateRawSync } from 'node:zlib';
 import {
-  findAssignments, fingerprint, isSyntheticSequence, referencesIn, scanHistory, zipEntries,
+  classifyAssignments, displayFingerprint, findAssignments, fingerprint, formatReport, isSyntheticSequence,
+  newSkipped, referencesIn, scanHistory, zipEntries,
 } from '../tools/security/exposure';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PROBES, verify } from '../tools/security/verifyRevoked';
 
 // Built at run time: no credential-shaped literal sits in this file.
 /** A fabricated run, assembled so the vendor prefix and the body never sit together in source. */
 const SEQ = '0123456789abcdef0123456789';
 const fake = (seed: string) => `${seed}${'k7Q2pX9mR4tW8vL3'}${seed.length}Zc`;
+/** A one-entry deflated zip, built by hand: local header + data. */
+function zipOf(path: string, text: string): Buffer {
+  const name = Buffer.from(path);
+  const data = deflateRawSync(Buffer.from(text));
+  const h = Buffer.alloc(30);
+  h.writeUInt32LE(0x04034b50, 0); h.writeUInt16LE(8, 8);
+  h.writeUInt32LE(data.length, 18); h.writeUInt16LE(name.length, 26);
+  return Buffer.concat([h, name, data]);
+}
 
 test('all three ways a key is written are found, and documentation is not', () => {
   const v = fake('a');
@@ -61,7 +75,7 @@ test('remaining references are reported by path, by fingerprint, never by value'
 test('verdicts follow each vendor\'s refusal, and a non-answer is UNKNOWN rather than either claim', async () => {
   const v = fake('e');
   const fp = fingerprint(v);
-  const exposure = (name: string) => [{ names: [name], kind: 'x', fingerprint: fp, seenAt: [] }];
+  const exposure = (name: string) => [{ names: [name], kind: 'x', fingerprint: fp, seenAt: [], confidence: 'high' as const }];
   const values = new Map([[fp, v]]);
   const answering = (status: number, body = '') => (async () => new Response(body, { status })) as unknown as typeof fetch;
 
@@ -81,7 +95,7 @@ test('no result a verifier returns carries the value it tested', async () => {
   const fp = fingerprint(v);
   const echo = (async (url: string) => new Response(`you sent ${url}`, { status: 401 })) as unknown as typeof fetch;
   for (const name of Object.keys(PROBES)) {
-    const [r] = await verify([{ names: [name], kind: 'x', fingerprint: fp, seenAt: [] }], new Map([[fp, v]]), echo);
+    const [r] = await verify([{ names: [name], kind: 'x', fingerprint: fp, seenAt: [], confidence: 'high' }], new Map([[fp, v]]), echo);
     assert.ok(!JSON.stringify(r).includes(v), `${name}: the result carries the value`);
   }
 });
@@ -92,8 +106,301 @@ test('every credential name in this repository\'s history has a probe or a state
   const UNPROBEABLE: Record<string, string> = {
     NEXT_PUBLIC_SUPABASE_ANON_KEY:
       'public by design — shipped to every browser — and revoked by rotating the project JWT secret, not by a request',
+    NEXTAUTH_SECRET:
+      'a session-signing secret the application chose, with no vendor to ask; it is retired by changing it wherever it is deployed',
+    SUPABASE_SERVICE_KEY:
+      'a privileged service-role key: probing it means using write access to the database, so it is checked in the Supabase dashboard instead',
   };
   const names = new Set(scanHistory(`${__dirname}/../..`).flatMap((e) => e.names));
   const unmapped = [...names].filter((n) => !PROBES[n] && !UNPROBEABLE[n]);
   assert.deepEqual(unmapped, []);
+});
+
+
+// ─── Low-confidence findings: values the key-shape rule cannot see ──────────
+//
+// The inventory used to require 16+ characters of letters and digits, so a
+// 15-character letters-only NEXTAUTH_SECRET in a public archive was never
+// reported. Nothing under a credential name is now dropped for its length:
+// 6–15 characters is LOW and listed; 1–5 is TRIVIAL and counted; template
+// defaults and empty values are counted too. Every value below is assembled at
+// run time and every line built through `line()`, so this file holds no
+// assignment the scanner would report from this repository's own history.
+
+const line = (name: string, value: string, sep = '=', quote = '') => `${name}${sep}${quote}${value}${quote}`;
+const word = (...parts: string[]) => parts.join('');
+const SHORT15 = word('qmzrh', 'vbkdl', 'wptxa');   // 15 letters, no digits
+const SHORT9 = word('kfwq', 'zjtnb');              // 9 letters
+const cats = (text: string) => classifyAssignments(text).map((a) => [a.name, a.category]);
+
+test('a short or letters-only value under any credential name is listed, at low confidence', () => {
+  assert.deepEqual(cats([
+    line('NEXTAUTH_SECRET', SHORT15),
+    line('ML_WEBHOOK_SECRET', SHORT9),
+    line('ADMIN_PASSWORD', SHORT9, ': ', '"'),
+    line('FMP_API_KEY', SHORT9),
+    line('MARKETDATA_TOKEN', SHORT15),
+  ].join('\n')), [
+    ['NEXTAUTH_SECRET', 'low'], ['ML_WEBHOOK_SECRET', 'low'], ['ADMIN_PASSWORD', 'low'],
+    ['FMP_API_KEY', 'low'], ['MARKETDATA_TOKEN', 'low'],
+  ]);
+});
+
+test('nothing is dropped for its length alone: 1–5 characters is counted as trivial', () => {
+  assert.deepEqual(cats([line('SESSION_SECRET', word('ab', 'cde')), line('TRADIER_TOKEN', 'x')].join('\n')),
+    [['SESSION_SECRET', 'trivial'], ['TRADIER_TOKEN', 'trivial']]);
+  // …and trivial values are not listed as findings.
+  assert.deepEqual(findAssignments(line('SESSION_SECRET', word('ab', 'cde'))), []);
+});
+
+test('a key-shaped value keeps its high grade, and a short prefixed value does not gain one', () => {
+  const v = fake('h');
+  assert.equal(findAssignments(line('NEXTAUTH_SECRET', v))[0]!.confidence, 'high');
+  assert.equal(classifyAssignments(line('OPENAI_API_KEY', word('sk', '-', 'ab12')))[0]!.category, 'low');
+});
+
+test('an empty value is counted as empty — and does not borrow the next line', () => {
+  // The separator used to accept a newline, so this reported the most
+  // privileged name in the stack as exposed, carrying the next line's text.
+  const text = [line('SUPABASE_SERVICE_ROLE_KEY', ''), word('webhook-url-for-', 'the-ml-service-ab12c')].join('\n');
+  assert.deepEqual(cats(text), [['SUPABASE_SERVICE_ROLE_KEY', 'empty']]);
+  assert.deepEqual(findAssignments(text), []);
+  assert.deepEqual(cats(line('NEXTAUTH_SECRET', '', '=', '"')), [['NEXTAUTH_SECRET', 'empty']]);
+});
+
+test('template defaults are recognised as such, distinct from both findings and empty values', () => {
+  assert.deepEqual(cats([
+    line('ML_WEBHOOK_SECRET', word('change', '-me')),
+    line('NEXTAUTH_SECRET', word('change-me-to-a-', '32-char-random-v9')),
+    line('ADMIN_PASSWORD', word('your', '-password')),
+    line('SCHWAB_APP_SECRET', word('sec', 'ret'), ': ', "'"),       // a value that only names its role
+  ].join('\n')), [
+    ['ML_WEBHOOK_SECRET', 'template'], ['NEXTAUTH_SECRET', 'template'],
+    ['ADMIN_PASSWORD', 'template'], ['SCHWAB_APP_SECRET', 'template'],
+  ]);
+});
+
+test('harmless values and code are not classified as credentials at all', () => {
+  assert.deepEqual(cats([
+    `WEBHOOK_SECRET = ${word('os', '.environ', '.get')}("x")`,                  // dotted code
+    line('TRADIER_API_KEY', word('zod_1', '.z', '.string'), ': ') + '()',        // compiled schema call
+    line('SUPABASE_SERVICE_KEY', word('REQUIRED', '.SUPABASE_SERVICE_KEY')),     // dotted constant path
+    line('PGRST_JWT_SECRET', word('jwt', 'Secret'), ': ') + ',',                // unquoted identifier reference
+    line('MAX_TOKENS', '4096'),                                                   // digits only: a count
+    line('TOKEN_TTL_SECONDS', '3600'),
+    line('API_KEY', word('process', '.env', '.API_KEY')),
+  ].join('\n')), []);
+});
+
+test('a JWT is not mistaken for dotted code', () => {
+  const jwt = [word('eyJ', 'hbGciOiJIUzI1NiJ9'), word('eyJ', 'yb2xlIjoiYW5vbiJ9'), word('k7Q2pX9mR4', 'tW8vL3Zc11')].join('.');
+  assert.equal(classifyAssignments(line('NEXT_PUBLIC_SUPABASE_ANON_KEY', jwt))[0]!.category, 'high');
+});
+
+test('one value under several names is one finding; one name with different values is several', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'qf-exposure-'));
+  try {
+    const git = (...a: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { cwd: repo });
+    git('init', '-q');
+    // Same value under two names, and in two "deployments".
+    writeFileSync(join(repo, '.env'), [line('NEXTAUTH_SECRET', SHORT15), line('AUTH_SECRET', SHORT15)].join('\n'));
+    mkdirSync(join(repo, 'deploy', 'render'), { recursive: true });
+    writeFileSync(join(repo, 'deploy', 'render', 'service.env'), line('NEXTAUTH_SECRET', SHORT15));
+    // …and once more inside a committed archive, the form the original exposure took.
+    writeFileSync(join(repo, 'backup.zip'), zipOf('app/.env.local', line('NEXTAUTH_SECRET', SHORT15)));
+    // Same name, a different value, in another file.
+    writeFileSync(join(repo, 'vercel.env'), line('NEXTAUTH_SECRET', SHORT9));
+    writeFileSync(join(repo, 'other.env'), line('FMP_API_KEY', fake('g')));
+    git('add', '.'); git('commit', '-qm', 'fixture');
+
+    const report = scanHistory(repo);
+    const low = report.filter((e) => e.confidence === 'low');
+    assert.equal(low.length, 2, 'two distinct values, two findings');
+    const shared = low.find((e) => e.fingerprint === fingerprint(SHORT15))!;
+    assert.deepEqual([...shared.names].sort(), ['AUTH_SECRET', 'NEXTAUTH_SECRET']);
+    assert.deepEqual(shared.seenAt.map((at) => at.split(':').slice(1).join(':')).sort(),
+      ['.env', 'backup.zip!app/.env.local', 'deploy/render/service.env'], 'every place the shared value sits');
+    assert.ok(low.some((e) => e.fingerprint === fingerprint(SHORT9) && e.names.join() === 'NEXTAUTH_SECRET'));
+    assert.equal(report.filter((e) => e.confidence === 'high').length, 1);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('the printed report carries no value, and withholds the fingerprint of a short one', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'qf-exposure-'));
+  try {
+    const git = (...a: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { cwd: repo });
+    git('init', '-q');
+    writeFileSync(join(repo, '.env'), [
+      line('NEXTAUTH_SECRET', SHORT15), line('FMP_API_KEY', fake('j')),
+      line('SESSION_SECRET', word('ab', 'cde')), line('ML_WEBHOOK_SECRET', word('change', '-me')),
+      line('SUPABASE_SERVICE_ROLE_KEY', ''),
+    ].join('\n'));
+    git('add', '.'); git('commit', '-qm', 'fixture');
+
+    const skipped = newSkipped();
+    const report = scanHistory(repo, undefined, skipped);
+    const printed = formatReport(report, skipped).join('\n');
+    for (const v of [SHORT15, fake('j'), word('ab', 'cde')]) assert.ok(!printed.includes(v), 'the printed report carries a value');
+    // A 10-hex prefix of a 15-letter value can be brute-forced; of a key-shaped one it cannot.
+    assert.ok(!printed.includes(fingerprint(SHORT15)), 'a short value\'s fingerprint is printed');
+    assert.ok(printed.includes(fingerprint(fake('j'))), 'a key-shaped value\'s fingerprint is missing');
+    assert.equal(displayFingerprint(report.find((e) => e.confidence === 'low')!), 'withheld');
+    assert.ok(printed.indexOf('NEXTAUTH_SECRET') > printed.indexOf('Low confidence'), 'low findings sit in their own section');
+    // The three skipped kinds are counted by name, distinguishable from each other.
+    assert.match(printed, /1–5 characters \(1\): SESSION_SECRET×1/);
+    assert.match(printed, /template default or placeholder \(1\): ML_WEBHOOK_SECRET×1/);
+    assert.match(printed, /empty or not a literal[^\n]*SUPABASE_SERVICE_ROLE_KEY×1/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('the verifier never probes a low-confidence value and never prints its fingerprint', async () => {
+  const fp = fingerprint(SHORT9);
+  let called = false;
+  const spy = (async () => { called = true; return new Response('', { status: 200 }); }) as unknown as typeof fetch;
+  const [r] = await verify([{ names: ['FMP_API_KEY'], kind: 'x', fingerprint: fp, seenAt: [], confidence: 'low' }],
+    new Map([[fp, SHORT9]]), spy);
+  assert.equal(called, false, 'a low-confidence value was sent to a vendor');
+  assert.equal(r!.verdict, 'NOT_PROBED');
+  assert.equal(r!.fingerprint, 'withheld');
+});
+
+// ─── Whole values: the parser used to cut a value at its first `+`, `/` or `@` ─
+//
+// The value alphabet was `[A-Za-z0-9_-.]`, so a base64 secret came out as the
+// two characters before its first `+` and was counted as a trivial fixture. A
+// value is now read whole — to its closing quote, or to the first character
+// that ends an unquoted value — and these fixtures hold it there.
+
+/** The same assignment unquoted, double-quoted, as single-quoted YAML, and as JSON. */
+const forms = (name: string, value: string) => [
+  line(name, value), line(name, value, '=', '"'), line(name, value, ': ', "'"), `{"${name}": "${value}"}`,
+];
+const B64 = word('Qw', '+9xLmP2rT7', '/vK4nB8sD1fG6hJ3kZ0', '=');   // openssl rand -base64 shape
+const AT = word('ab', '@cd7Kq2', '#mN9!x%Lp');        // 18 characters: key-shaped
+const PUNCT = word('tok', '~k7*Q$2&p?X^9', '=R4!m%');  // 19
+const AT_SHORT = word('ab', '@cd7', 'Kq2');            // 9: low
+const read = (text: string) => classifyAssignments(text).map((a) => ({ name: a.name, category: a.category, value: a.value }));
+
+test('a base64 secret is read whole, in every assignment form, and graded on its whole length', () => {
+  for (const text of forms('NEXTAUTH_SECRET', B64)) {
+    const [a] = read(text);
+    assert.equal(a?.value.length, B64.length, `cut short in: ${text.replace(B64, '<value>')}`);
+    assert.equal(a?.value === B64, true);
+    assert.equal(a?.category, 'high');
+  }
+});
+
+test('values with @ and other punctuation are read whole, quoted or not', () => {
+  for (const [v, grade] of [[AT, 'high'], [PUNCT, 'high'], [AT_SHORT, 'low']] as const) {
+    for (const text of forms('SESSION_TOKEN', v)) {
+      const [a] = read(text);
+      assert.equal(a?.value === v, true, `cut short in: ${text.replace(v, '<value>')}`);
+      assert.equal(a?.category, grade, `graded on ${a?.value.length} characters`);
+    }
+  }
+  // A connection string keeps its user, password and host.
+  const dsn = word('postgres://app:', 'Hk7', 'q2Wz9@db.internal:5432/main');
+  assert.equal(read(line('DATABASE_DSN', dsn))[0]!.value === dsn, true);
+  // A bcrypt hash opens with `$` and is a literal, not an interpolation.
+  const bcrypt = word('$2b$10$', 'Rk4vQ8', 'zT2mW7', 'pL9xN3', 'cB6hJ1', 'sD5fG0', 'aK8eY4', 'uI7oP2', 'qM3nV6', 'w');
+  assert.deepEqual(read(line('ADMIN_PASSWORD_HASH', bcrypt, '=', "'")).map((a) => a.category), ['high']);
+});
+
+test('a trailing comment, a closing delimiter or the next assignment ends a value; nothing runs on', () => {
+  const v = word('Hk7q2Wz9', 'Lp4R8m');
+  // Shell/YAML comment after whitespace is not part of the value; `#` inside one is.
+  assert.equal(read(`${line('API_TOKEN', v)}   # rotate quarterly`)[0]!.value === v, true);
+  assert.equal(read(line('API_TOKEN', word('ab#', v)))[0]!.value === word('ab#', v), true);
+  // An empty value followed by a comment is empty, and does not take the comment.
+  assert.deepEqual(read(`${line('NEXTAUTH_SECRET', '')} # set in the dashboard`).map((a) => a.category), ['empty']);
+  // Two assignments on one line, then one on the next: three values, none borrowed.
+  const w = word('Zt5Ux', '3Vb8Nc');
+  const text = [`${line('A_TOKEN', v)} ${line('B_SECRET', w)}`, line('C_KEY', B64)].join('\n');
+  assert.deepEqual(read(text).map((a) => [a.name, a.value.length]), [['A_TOKEN', v.length], ['B_SECRET', w.length], ['C_KEY', B64.length]]);
+  // JSON: the closing quote and the comma end the value; the next key is its own assignment.
+  const json = `{"${'A_KEY'}": "${v}", "${'B_KEY'}": "${w}"}`;
+  assert.deepEqual(read(json).map((a) => a.value.length), [v.length, w.length]);
+  // An escaped quote inside a double-quoted value belongs to the value.
+  assert.equal(read(`{"${'A_KEY'}": "${word('ab', '\\"', 'cd')}"}`)[0]!.value, word('ab', '"', 'cd'));
+  // A quoted value is one value: an assignment-shaped substring inside it is not a second one.
+  assert.deepEqual(read(line('NOTE_TOKEN', word('ab ', 'DEF_SECRET', '=gh9'), '=', '"')).map((a) => a.name), ['NOTE_TOKEN']);
+  // An unterminated quote reads to the end of its own line, never into the next.
+  assert.deepEqual(read([`${'API_KEY'}="${v}`, line('NEXT_SECRET', w)].join('\n')).map((a) => [a.name, a.value.length]),
+    [['API_KEY', v.length], ['NEXT_SECRET', w.length]]);
+  // …including when the next line has a quote of its own for the open one to close on.
+  assert.deepEqual(read([`${'API_KEY'}="${v}`, line('NEXT_SECRET', w, '=', '"')].join('\n')).map((a) => [a.name, a.value.length]),
+    [['API_KEY', v.length], ['NEXT_SECRET', w.length]]);
+});
+
+test('code, interpolation and templates are still not read as credential values', () => {
+  assert.deepEqual(cats([
+    `const ${'PATTERN_SECRET'} = ${word('/SEC', 'RET|PASS', 'WORD/;')}`,                 // a regex literal in source
+    `let ${'API_KEY'} = ${word('a', ' + b;')}`,                                          // an expression
+    line('WEBHOOK_SECRET', word('os', '.environ', '.get')) + '("X")',                   // dotted code
+    `{ ${'JWT_SECRET'}: ${word('jwt', 'Secret')}, ${'ANON_KEY'}: ${word('anon', 'Key')} }`, // identifier references
+  ].join('\n')), []);
+  assert.deepEqual(cats([
+    line('SUPABASE_ANON_KEY', word('${', '{ secrets.SUPABASE_ANON_KEY }}'), ': '),   // GitHub Actions
+    line('API_TOKEN', word('$', 'OTHER_TOKEN')),
+    line('API_TOKEN', word('${', 'OTHER_TOKEN}'), '=', '"'),
+    line('API_TOKEN', '...'),
+  ].join('\n')).map(([, c]) => c), ['empty', 'empty', 'empty', 'empty']);
+  assert.deepEqual(cats([
+    line('TRADIER_TOKEN', word('<your-', 'tradier-token>')),          // not a literal: counted, as before
+    line('API_KEY', word('your-', 'api-key-here'), '=', '"'),
+  ].join('\n')).map(([, c]) => c), ['empty', 'template']);
+});
+
+// ─── Numbers under credential names ──────────────────────────────────────────
+//
+// Digits with no letter used to be dropped without a count, on the assumption
+// that they are always ports and TTLs. Under a credential name they can be a
+// PIN or a numeric password, so they are COUNTED — never listed as a finding,
+// never fingerprinted — unless the name says the number is a setting.
+
+test('a number under a credential name is counted as numeric, not dropped and not listed', () => {
+  const pin = word('8472', '6193');
+  const text = [line('ADMIN_PASSWORD', pin), line('BROKER_API_KEY', pin, ': ', '"'), line('SESSION_SECRET', word('12-', '34-56'))].join('\n');
+  assert.deepEqual(cats(text), [['ADMIN_PASSWORD', 'numeric'], ['BROKER_API_KEY', 'numeric'], ['SESSION_SECRET', 'numeric']]);
+  assert.deepEqual(findAssignments(text), [], 'a number is never listed as a finding');
+});
+
+test('a number under a name that says setting is not counted as a credential', () => {
+  assert.deepEqual(cats([
+    line('MAX_TOKENS', '4096'), line('TOKEN_TTL_SECONDS', '3600'), line('PASSWORD_MIN_LENGTH', '12'),
+    line('SESSION_SECRET_ROUNDS', '10'), line('API_KEY_LIMIT', '800'), line('JWT_SECRET_VERSION', '2'),
+  ].join('\n')), []);
+});
+
+test('the report counts every kind by name, consistently, and prints no value or short fingerprint', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'qf-exposure-'));
+  try {
+    const git = (...a: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { cwd: repo });
+    git('init', '-q');
+    const pin = word('8472', '6193');
+    writeFileSync(join(repo, '.env'), [
+      line('NEXTAUTH_SECRET', B64), line('SESSION_TOKEN', AT_SHORT), line('ADMIN_PASSWORD', pin),
+      line('MAX_TOKENS', '4096'), `${line('API_TOKEN', '')} # todo`,
+    ].join('\n'));
+    git('add', '.'); git('commit', '-qm', 'fixture');
+    const skipped = newSkipped();
+    const report = scanHistory(repo, undefined, skipped);
+    const printed = formatReport(report, skipped).join('\n');
+    for (const v of [B64, AT_SHORT, pin, B64.slice(0, 6), AT_SHORT.slice(0, 5)]) assert.ok(!printed.includes(v), 'the printed report carries a value or a piece of one');
+    for (const v of [AT_SHORT, pin]) assert.ok(!printed.includes(fingerprint(v)), 'a short value\'s fingerprint is printed');
+    assert.ok(printed.includes(fingerprint(B64)), 'the key-shaped finding keeps its fingerprint');
+    assert.match(printed, /digits only[^\n]*\(1\): ADMIN_PASSWORD×1/);
+    assert.ok(!printed.includes('MAX_TOKENS'), 'a setting is reported as a credential');
+    assert.match(printed, /empty or not a literal[^\n]*API_TOKEN×1/);
+    assert.match(printed, /1 key-shaped and 1 low-confidence/);
+    // Every assignment is accounted for exactly once: listed, or counted under one kind.
+    const counted = Object.values(skipped).reduce((n, m) => n + [...m.values()].reduce((a, b) => a + b, 0), 0);
+    assert.equal(report.length + counted, 4, 'listed + counted = the four credential assignments that are not settings');
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
 });
