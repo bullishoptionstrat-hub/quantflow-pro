@@ -30,6 +30,7 @@ const alert = (o: Partial<PowerAlert> = {}): PowerAlert => ({
   heat_score: 88,
   created_at: new Date().toISOString(),
   flow_event_id: 'e1',
+  trigger: { heat_score: 88, unusual_threshold: 75, spoken: false, speak_above: 80, pushed: false, push_above: 85 },
   ...o,
 })
 
@@ -49,9 +50,11 @@ describe('the page describes the trigger it has', () => {
     // It said "flags a signal unusual **and** scores it 75 or above" — true,
     // and misleading: the backend sets `is_unusual` to exactly
     // `heat_score >= 75`, so the pair is one condition and stating two implied
-    // a test that does not exist.
+    // a test that does not exist. The number itself is no longer in the copy
+    // either: it is the backend's, and each row names the one that applied.
     const { container } = render(<PowerAlertsPage />)
-    expect(container.textContent).toMatch(/scores a signal 75 or above/i)
+    expect(container.textContent).toMatch(/score reaches its unusual threshold/i)
+    expect(container.textContent).not.toMatch(/\b75\b/)
     expect(container.textContent).not.toMatch(/unusual and scores/i)
     // The three claims that were never true.
     expect(container.textContent).not.toMatch(/SWEEP \+ Block/i)
@@ -128,5 +131,34 @@ describe('alert types are the ones that exist', () => {
     // `DARK_POOL`, `GEX_FLIP` and `ML_SIGNAL` were in the colour map and are
     // produced by nothing; `ML_SIGNAL` was the deleted service's slot.
     expect(container.innerHTML).not.toMatch(/ML_SIGNAL|GEX_FLIP|DARK_POOL/)
+  })
+})
+
+describe('every alert names the rule that raised it (ROADMAP 5.3)', () => {
+  test('the threshold on the row is the one the backend published, not a constant', () => {
+    useStore.setState({ connected: true, powerAlerts: [
+      alert({ id: 'x', heat_score: 91, trigger: { heat_score: 91, unusual_threshold: 82, spoken: false, speak_above: 80, pushed: false, push_above: 85 } }),
+    ] } as never)
+    const { container } = render(<PowerAlertsPage />)
+    expect(container.textContent).toMatch(/RAISED BY heat 91 ≥ 82 unusual threshold/)
+  })
+
+  test('channels are what actually happened, and in-app only is said when nothing else fired', () => {
+    useStore.setState({ connected: true, powerAlerts: [
+      alert({ id: 'a', trigger: { heat_score: 90, unusual_threshold: 75, spoken: true, speak_above: 80, pushed: true, push_above: 85 } }),
+      alert({ id: 'b', trigger: { heat_score: 90, unusual_threshold: 75, spoken: false, speak_above: 80, pushed: false, push_above: 85 } }),
+    ] } as never)
+    const { container } = render(<PowerAlertsPage />)
+    expect(container.textContent).toMatch(/spoken \(heat > 80\) · pushed \(heat > 85\)/)
+    expect(container.textContent).toMatch(/in-app only/)
+  })
+
+  test('an event that carried no threshold says so rather than borrowing one', () => {
+    useStore.setState({ connected: true, powerAlerts: [
+      alert({ trigger: { heat_score: 88, unusual_threshold: null, spoken: false, speak_above: 80, pushed: false, push_above: 85 } }),
+    ] } as never)
+    const { container } = render(<PowerAlertsPage />)
+    expect(container.textContent).toMatch(/threshold not published/)
+    expect(container.textContent).not.toMatch(/≥ 75/)
   })
 })

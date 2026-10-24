@@ -1058,3 +1058,22 @@ test('the unusual threshold has exactly one home', () => {
   assert.ok(!/heat_score >= 75/.test(filter), 'the frontend must not restate the threshold');
   assert.match(filter, /return e\.is_unusual/, 'it reads the flag the backend publishes');
 });
+
+test('the threshold an alert names is the one the backend published (ROADMAP 5.3)', () => {
+  // A power alert row states the rule that raised it. The number in that rule
+  // must arrive on the event — `unusual_threshold` — rather than be restated
+  // in the browser, which is the second home the test above exists to stop.
+  const adapter = readFileSync(ADAPTER, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  assert.match(adapter, /unusual_threshold: UNUSUAL_SCORE/, 'published through its name, not a literal');
+  const rows = load('flow').data as Array<Record<string, unknown>>;
+  assert.ok(rows.every((r) => r.unusual_threshold === 75), 'every recorded event carries the threshold');
+  assert.ok(rows.every((r) => r.is_unusual === ((r.heat_score as number) >= (r.unusual_threshold as number))),
+    'and is_unusual is exactly the test it names');
+
+  // No alert surface restates it. Comments stripped first: the prose recording
+  // what the copy used to say would otherwise trip the scan that forbids it.
+  for (const f of ['hooks/useFlowFeed.ts', 'lib/alertTrigger.ts', 'app/power-alerts/page.tsx']) {
+    const src = readFileSync(join(FRONTEND, f), 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+    assert.ok(!/\b75\b/.test(src), `${f} restates the unusual threshold`);
+  }
+});

@@ -31,8 +31,9 @@ import type { FlowEvent } from '@/lib/types'
  * honest form. With nothing arriving, the feed is empty and says why.
  */
 
-function speakAlert(event: FlowEvent) {
-  if (typeof window === 'undefined' || !window.speechSynthesis) return
+/** Returns whether anything was spoken, so the alert row can record it. */
+function speakAlert(event: FlowEvent): boolean {
+  if (typeof window === 'undefined' || !window.speechSynthesis) return false
   const premium = event.total_premium >= 1_000_000
     ? `${(event.total_premium / 1_000_000).toFixed(1)} million`
     : `${Math.round(event.total_premium / 1000)}K`
@@ -53,16 +54,18 @@ function speakAlert(event: FlowEvent) {
   utt.rate = 1.1
   utt.pitch = 1
   window.speechSynthesis.speak(utt)
+  return true
 }
 
-function pushNotification(event: FlowEvent) {
+/** Returns whether a notification was created, so the alert row can record it. */
+function pushNotification(event: FlowEvent): boolean {
   // `typeof window === 'undefined' || Notification.permission !== 'granted'`
   // was the guard, and it throws a ReferenceError wherever the Notifications
   // API is absent but `window` is not — iOS Safari, any embedded webview, and
   // jsdom. The throw lands inside the socket's batch handler, so one heat-86
   // print took the whole feed down on those browsers.
-  if (typeof window === 'undefined' || typeof Notification === 'undefined') return
-  if (Notification.permission !== 'granted') return
+  if (typeof window === 'undefined' || typeof Notification === 'undefined') return false
+  if (Notification.permission !== 'granted') return false
   // Same rule as the speech, and the same reason: the badge in the terminal
   // does not travel with an OS notification. `SWEEP` was hardcoded in the
   // title while the event carries its own `order_type`, so a BLOCK arrived on
@@ -75,6 +78,7 @@ function pushNotification(event: FlowEvent) {
     tag: event.id,
     silent: false,
   })
+  return true
 }
 
 /** Spoken aloud above this heat, when voice is on. */
@@ -104,29 +108,44 @@ export function useFlowFeed() {
   const handleEvent = useCallback((event: FlowEvent) => {
     addFlowEvent(event)
 
-    if (voiceEnabled && event.heat_score > SPEAK_ABOVE) speakAlert(event)
-    if (event.heat_score > PUSH_ABOVE) pushNotification(event)
+    // Nothing is announced that does not get a row. Speech and push ran on
+    // their own heat tests, independent of the alert rule, and agreed with it
+    // only because 80 and 85 happen to sit above the backend's 75: raise that
+    // threshold past 80 and the terminal would speak a trade the alerts page
+    // never lists. Every out-of-band announcement is now an alert first, so
+    // the rule that fired it is on a row a reader can find (ROADMAP 5.3).
+    if (!isPowerAlert(event)) return
 
-    if (isPowerAlert(event)) {
-      addPowerAlert({
-        id: `alert-${event.id}`,
-        underlying: event.underlying,
-        // Was `event.order_type as any`. `PowerAlert.alert_type` declared
-        // SWEEP/BLOCK/DARK_POOL/GEX_FLIP/ML_SIGNAL while the values arriving
-        // are `OrderType` — SPLIT, MULTI_LEG and LARGE were not in the union
-        // and three of the union's members were produced by nothing. The cast
-        // was what let the two disagree; the type now says what arrives.
-        alert_type: event.order_type,
-        message: `${event.underlying} ${event.option_type === 'C' ? 'CALL' : 'PUT'} ${event.order_type} — $${event.total_premium >= 1e6 ? (event.total_premium / 1e6).toFixed(1) + 'M' : Math.round(event.total_premium / 1000) + 'K'} premium`,
+    const spoken = voiceEnabled && event.heat_score > SPEAK_ABOVE ? speakAlert(event) : false
+    const pushed = event.heat_score > PUSH_ABOVE ? pushNotification(event) : false
+
+    addPowerAlert({
+      id: `alert-${event.id}`,
+      underlying: event.underlying,
+      // Was `event.order_type as any`. `PowerAlert.alert_type` declared
+      // SWEEP/BLOCK/DARK_POOL/GEX_FLIP/ML_SIGNAL while the values arriving
+      // are `OrderType` — SPLIT, MULTI_LEG and LARGE were not in the union
+      // and three of the union's members were produced by nothing. The cast
+      // was what let the two disagree; the type now says what arrives.
+      alert_type: event.order_type,
+      message: `${event.underlying} ${event.option_type === 'C' ? 'CALL' : 'PUT'} ${event.order_type} — $${event.total_premium >= 1e6 ? (event.total_premium / 1e6).toFixed(1) + 'M' : Math.round(event.total_premium / 1000) + 'K'} premium`,
+      heat_score: event.heat_score,
+      created_at: event.created_at,
+      flow_event_id: event.id,
+      // Carried through so the alert can be marked, spoken and pushed as
+      // what it is. The signal has always known; the alert did not.
+      synthetic: event.synthetic,
+      score_breakdown: event.score_breakdown,
+      // The rule, as the backend published it, and what actually happened
+      // on each channel. `?? null`, not a default: the threshold's home is
+      // the backend, and a number filled in here would be its second copy.
+      trigger: {
         heat_score: event.heat_score,
-        created_at: event.created_at,
-        flow_event_id: event.id,
-        // Carried through so the alert can be marked, spoken and pushed as
-        // what it is. The signal has always known; the alert did not.
-        synthetic: event.synthetic,
-        score_breakdown: event.score_breakdown,
-      })
-    }
+        unusual_threshold: event.unusual_threshold ?? null,
+        spoken, speak_above: SPEAK_ABOVE,
+        pushed, push_above: PUSH_ABOVE,
+      },
+    })
   }, [voiceEnabled, addFlowEvent, addPowerAlert])
 
   useEffect(() => {

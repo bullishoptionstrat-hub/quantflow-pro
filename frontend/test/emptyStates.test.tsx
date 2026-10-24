@@ -78,6 +78,7 @@ describe('power alerts', () => {
       id: 'a1', underlying: 'NVDA', alert_type: 'SWEEP',
       message: 'NVDA CALL SWEEP — $2.0M premium',
       heat_score: 88, created_at: new Date().toISOString(),
+      trigger: { heat_score: 88, unusual_threshold: 75, spoken: false, speak_above: 80, pushed: false, push_above: 85 },
     }] })
     render(<PowerAlertsPage />)
     expect(screen.getByText(/NVDA CALL SWEEP/)).toBeDefined()

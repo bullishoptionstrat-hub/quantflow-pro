@@ -48,6 +48,13 @@ export interface FlowEvent {
    * Read this field; the threshold lives in `flowEngineAdapter.ts`.
    */
   is_unusual: boolean
+  /**
+   * The threshold `is_unusual` was decided against, published by the backend
+   * with the event. Optional: a backend older than the field does not send
+   * it, and an alert raised from such an event says the threshold was not
+   * published rather than assuming one.
+   */
+  unusual_threshold?: number
   exchange_count: number
   /**
    * Every venue the contributing records named, and whether the size at each
@@ -185,6 +192,40 @@ export interface PowerAlert {
    * the resolution `ml_score` got: an opaque number is the thing to avoid.
    */
   score_breakdown?: Record<string, number>
+  /**
+   * The rule that raised this alert, and the channels it actually reached
+   * (ROADMAP 5.3).
+   *
+   * The page once described a trigger the code did not implement and credited
+   * a model that did not exist; the answer to that is not better prose about
+   * the rule but the rule itself on every row. Required, so an alert cannot
+   * be constructed without saying why it exists.
+   */
+  trigger: AlertTrigger
+}
+
+/** Why an alert was raised and where it went — recorded when it fired. */
+export interface AlertTrigger {
+  /** The score that crossed the line. */
+  heat_score: number
+  /**
+   * The backend's unusual threshold as published on the event, or `null`
+   * when the event did not carry one. Never filled in by the browser: the
+   * threshold's home is the backend, and a guessed number here is a second
+   * copy that is right until it is not.
+   */
+  unusual_threshold: number | null
+  /** Spoken aloud — voice on and heat above `speak_above`. */
+  spoken: boolean
+  speak_above: number
+  /**
+   * A desktop notification was created — heat above `push_above` **and** the
+   * browser granted permission. Recorded as what happened, not what was
+   * eligible: a row claiming a push the OS never showed is the same defect
+   * as a status claiming more than it checked.
+   */
+  pushed: boolean
+  push_above: number
 }
 
 /**
