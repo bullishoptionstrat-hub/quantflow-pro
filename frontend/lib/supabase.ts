@@ -1,4 +1,5 @@
-import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { type SupabaseClient } from '@supabase/supabase-js'
+import { createBrowserClient } from '@supabase/ssr'
 
 /**
  * The browser Supabase client, or an honest stand-in when none is configured.
@@ -61,17 +62,14 @@ function unconfiguredClient(): SupabaseClient {
   } as unknown as SupabaseClient
 }
 
+// createBrowserClient, not supabase-js's createClient: the session must live in
+// cookies, because middleware.ts gates every page with @supabase/ssr reading
+// cookies. createClient kept it in localStorage, which the middleware never
+// sees, so a successful sign-in was bounced from /flow straight back to /login.
 export const supabase: SupabaseClient = isSupabaseConfigured
-  ? createClient(
+  ? createBrowserClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        auth: {
-          autoRefreshToken: true,
-          persistSession: true,
-          detectSessionInUrl: true,
-        },
-      },
     )
   : unconfiguredClient()
 
