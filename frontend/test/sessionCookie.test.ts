@@ -75,3 +75,31 @@ test('the middleware reads that cookie and lets a signed-in request through', as
   // And it did not bounce the request to /login.
   expect(res.headers.get('location') ?? '').not.toContain('/login')
 })
+
+test('without a session cookie the middleware still sends a gated page to /login', async () => {
+  const { NextRequest } = await import('next/server')
+  const { middleware } = await import('../middleware')
+  const res = await middleware(new NextRequest('https://app.example/flow/'))
+  expect(res.status).toBe(307)
+  expect(res.headers.get('location')).toBe('https://app.example/login')
+})
+
+test('a cookie Supabase does not accept is not a session', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(
+    JSON.stringify({ code: 401, msg: 'invalid JWT' }),
+    { status: 401, headers: { 'Content-Type': 'application/json' } },
+  )))
+  const now = Math.floor(Date.now() / 1000)
+  const forged = {
+    access_token: 'forged.token.value', token_type: 'bearer', expires_in: 3600,
+    expires_at: now + 3600, refresh_token: 'x',
+    user: { id: '00000000-0000-0000-0000-000000000002', aud: 'authenticated', role: 'authenticated', email: 'x@y.z' },
+  }
+  const { NextRequest } = await import('next/server')
+  const { middleware } = await import('../middleware')
+  const res = await middleware(new NextRequest('https://app.example/flow/', {
+    headers: { cookie: `sb-abcdefghijklmnopqrst-auth-token=${encodeURIComponent(JSON.stringify(forged))}` },
+  }))
+  // The middleware trusts Supabase's verdict, not the cookie's own claims.
+  expect(res.headers.get('location')).toBe('https://app.example/login')
+})
