@@ -45,3 +45,33 @@ test('a successful sign-in writes the session to a cookie the middleware reads',
   // what middleware.ts reads, whatever the ref.
   expect(document.cookie).toMatch(/(^|; )sb-[a-z0-9]+-auth-token(\.0)?=/)
 })
+
+test('the middleware reads that cookie and lets a signed-in request through', async () => {
+  // Built here in the format the browser client writes (the name carries the
+  // project ref, the value is the URL-encoded session JSON) rather than by
+  // signing in: @supabase/ssr caches one browser client per test run, so a
+  // client another file built would name the cookie after a different project.
+  const now = Math.floor(Date.now() / 1000)
+  const session = {
+    access_token: 'header.payload.signature', token_type: 'bearer', expires_in: 3600,
+    expires_at: now + 3600, refresh_token: 'refresh-token',
+    user: { id: '00000000-0000-0000-0000-000000000001', aud: 'authenticated', role: 'authenticated', email: 'a@b.co' },
+  }
+  const cookie = `sb-abcdefghijklmnopqrst-auth-token=${encodeURIComponent(JSON.stringify(session))}`
+
+  const { NextRequest } = await import('next/server')
+  const { middleware } = await import('../middleware')
+  const userCalls: string[] = []
+  vi.stubGlobal('fetch', vi.fn(async (url: string | URL) => {
+    userCalls.push(String(url))
+    return new Response(JSON.stringify({
+      id: '00000000-0000-0000-0000-000000000001', aud: 'authenticated', role: 'authenticated', email: 'a@b.co',
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }))
+
+  const res = await middleware(new NextRequest('https://app.example/flow/', { headers: { cookie } }))
+  // The middleware asked Supabase who the session belongs to, so it read the cookie.
+  expect(userCalls.some((u) => u.includes('/auth/v1/user'))).toBe(true)
+  // And it did not bounce the request to /login.
+  expect(res.headers.get('location') ?? '').not.toContain('/login')
+})
