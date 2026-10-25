@@ -3,11 +3,9 @@
 import { useState } from 'react';
 import { isDemoModeEnabled } from '@/lib/demo'
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 
 export default function LoginPage() {
-  const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -20,8 +18,10 @@ export default function LoginPage() {
     try {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
-      router.push('/flow');
-      router.refresh();
+      // A full page load, not router.push: the sidebar links were prefetched
+      // while signed out, and the client router reuses those cached
+      // redirects to /login, so a push lands right back on this page.
+      window.location.assign('/flow/');
     } catch (err: any) {
       setError(err.message || 'Login failed');
     } finally {
