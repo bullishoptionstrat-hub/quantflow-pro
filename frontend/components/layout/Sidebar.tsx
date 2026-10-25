@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useMarketSession, describeSession } from '@/lib/marketSession'
 import { useStore } from '@/store/useStore'
+import { SignOutButton } from './SignOutButton'
 
 const NAV = [
   // No static `LIVE` badge: it sat two lines under the connection dot and
@@ -180,6 +181,7 @@ export function Sidebar() {
 
       {/* Bottom */}
       <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)' }}>
+        <SignOutButton />
         {/* 13 sources indicator */}
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 }}>
           {['CBOE','FRED','CRYPTO','REDDIT','NEWS','STOOQ'].map(s => (

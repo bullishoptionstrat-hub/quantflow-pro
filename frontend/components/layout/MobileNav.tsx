@@ -1,6 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { SignOutButton } from './SignOutButton'
 
 const ITEMS = [
   { href: '/flow',         icon: '⚡', label: 'Flow' },
@@ -23,6 +24,7 @@ export function MobileNav() {
           </Link>
         )
       })}
+      <SignOutButton variant="mobile" />
     </nav>
   )
 }
