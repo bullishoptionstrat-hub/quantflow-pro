@@ -98,12 +98,6 @@ const NOT_A_READING: Array<{ pattern: RegExp; kind: string }> = [
       'configuration — a variable this deployment did not set. The fallback ' +
       'is the documented default, not a claim about the market.',
   },
-  {
-    pattern: /\breq\.query\b/,
-    kind:
-      'a request parameter the caller omitted. The route chooses a page size; ' +
-      'no source failed to report one.',
-  },
 ];
 
 const exemption = (operand: string) =>
@@ -352,12 +346,15 @@ test('an exemption does not exempt a vendor reading', () => {
       `${operand} would be waved through by a shape exemption`);
   }
 
-  // And the two that are exempt, in the forms they actually appear in — both
+  // And the one that is exempt, in the forms it actually appears in —
   // wrapped in a parse, which is why the patterns look for the source of the
   // value and not for the whole expression.
   assert.ok(exemption('Number(process.env.PORT)'));
   assert.ok(exemption("parseInt(process.env.TRUST_PROXY_HOPS || '1', 10)"));
-  assert.ok(exemption('parseFloat(req.query.minPremium as string)'));
+  // `req.query` was exempt too, until `routes/queryParams.ts` took every
+  // route's defaults out of `|| <number>` form; nothing matched it any more,
+  // so it was deleted as the load-bearing test below asks.
+  assert.equal(exemption('parseFloat(req.query.minPremium as string)'), undefined);
 });
 
 test('the scanner recognises the forms this audit actually found', () => {

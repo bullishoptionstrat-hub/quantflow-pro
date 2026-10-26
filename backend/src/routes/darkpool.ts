@@ -1,13 +1,14 @@
 import { Router, Request, Response } from 'express';
+import { queryInt, queryNonNegative, queryString } from './queryParams';
 import { getDarkPoolPrints, DarkPoolPrint } from '../ingestion/index';
 
 const router = Router();
 
 // GET /api/darkpool — paginated dark pool prints (24-hour delay)
 router.get('/', (req: Request, res: Response) => {
-  const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
-  const symbol = (req.query.symbol as string)?.toUpperCase() || '';
-  const minSize = parseFloat(req.query.minSize as string) || 0;
+  const limit = queryInt(req.query.limit, 50, 1, 200);
+  const symbol = queryString(req.query.symbol)?.toUpperCase() ?? '';
+  const minSize = queryNonNegative(req.query.minSize, 0);
 
   let prints: DarkPoolPrint[] = getDarkPoolPrints();
 

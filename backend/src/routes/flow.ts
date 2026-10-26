@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { queryInt, queryNonNegative, queryString } from './queryParams';
 import { getRecentFlow, getFlowStats, getUnusualActivity, FlowEvent } from '../ingestion/index';
 
 const router = Router();
@@ -8,8 +9,8 @@ const router = Router();
 // this is a daily volume aggregate, so each row carries its own asOf and
 // delayedMinutes rather than pretending to be real time.
 router.get('/unusual', (req: Request, res: Response) => {
-  const symbol = (req.query.symbol as string)?.toUpperCase() || undefined;
-  const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+  const symbol = queryString(req.query.symbol)?.toUpperCase();
+  const limit = queryInt(req.query.limit, 50, 1, 200);
   const rows = getUnusualActivity(symbol).slice(0, limit);
   res.json({
     contracts: rows,
@@ -22,15 +23,15 @@ router.get('/unusual', (req: Request, res: Response) => {
 
 // GET /api/flow — paginated recent flow events
 router.get('/', (req: Request, res: Response) => {
-  const limit = Math.min(parseInt(req.query.limit as string) || 100, 500);
-  const page = Math.max(parseInt(req.query.page as string) || 1, 1);
-  const symbol = (req.query.symbol as string)?.toUpperCase() || '';
-  const type = (req.query.type as string)?.toUpperCase() || '';
-  const sentiment = (req.query.sentiment as string)?.toUpperCase() || '';
-  const minPremium = parseFloat(req.query.minPremium as string) || 0;
-  const minHeat = parseFloat(req.query.minHeat as string) || 0;
+  const limit = queryInt(req.query.limit, 100, 1, 500);
+  const page = queryInt(req.query.page, 1, 1, Number.MAX_SAFE_INTEGER);
+  const symbol = queryString(req.query.symbol)?.toUpperCase() ?? '';
+  const type = queryString(req.query.type)?.toUpperCase() ?? '';
+  const sentiment = queryString(req.query.sentiment)?.toUpperCase() ?? '';
+  const minPremium = queryNonNegative(req.query.minPremium, 0);
+  const minHeat = queryNonNegative(req.query.minHeat, 0);
   const unusualOnly = req.query.unusualOnly === 'true';
-  const side = (req.query.side as string)?.toUpperCase() || '';
+  const side = queryString(req.query.side)?.toUpperCase() ?? '';
 
   let events: FlowEvent[] = getRecentFlow();
 

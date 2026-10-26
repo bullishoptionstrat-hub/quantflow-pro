@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { queryString } from './queryParams';
 import {
   getGEXLevels, getRealGexSymbols, getZeroDteLevels, GEXLevel,
 } from '../ingestion/index';
@@ -83,7 +84,7 @@ function extremesOf(levels: GEXLevel[], key: 'gex' | 'dex') {
 
 // GET /api/gex — gamma and delta exposure by strike
 router.get('/', (req: Request, res: Response) => {
-  const symbol = ((req.query.symbol as string) || 'SPX').toUpperCase();
+  const symbol = (queryString(req.query.symbol) ?? 'SPX').toUpperCase();
   const levels: GEXLevel[] = getGEXLevels(symbol);
   const zeroDte = getZeroDteLevels(symbol);
 
