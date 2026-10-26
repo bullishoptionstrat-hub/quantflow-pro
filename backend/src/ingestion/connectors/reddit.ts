@@ -5,6 +5,7 @@
  * Sign up: https://reddit.com/prefs/apps → create "script" app
  */
 import axios from 'axios';
+import { singleFlight } from '../singleFlight';
 
 const CLIENT_ID = process.env.REDDIT_CLIENT_ID || '';
 const CLIENT_SECRET = process.env.REDDIT_CLIENT_SECRET || '';
@@ -156,6 +157,6 @@ export async function startReddit(): Promise<void> {
   }
 
   await analyzeSentiment();
-  setInterval(analyzeSentiment, 15 * 60_000).unref(); // every 15 min
+  setInterval(singleFlight('reddit', analyzeSentiment), 15 * 60_000).unref(); // every 15 min
   console.log('[reddit] Started — WSB/options sentiment every 15min');
 }

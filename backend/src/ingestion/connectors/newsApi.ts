@@ -6,6 +6,7 @@
  */
 import axios from 'axios';
 import { scheduleDailyReset } from '../dailyReset';
+import { singleFlight } from '../singleFlight';
 
 const API_KEY = process.env.NEWS_API_KEY || '';
 const BASE = 'https://newsapi.org/v2';
@@ -117,12 +118,12 @@ export async function startNewsAPI(): Promise<void> {
   }
 
   // Refresh every 30 min (4 queries × 2 refreshes = 8 req/h, ~192/day — within 100/day free limit with batching)
-  setInterval(async () => {
+  setInterval(singleFlight('newsapi', async () => {
     for (let i = 0; i < QUERIES.length; i++) {
       await new Promise(r => setTimeout(r, i * 3000));
       await fetchHeadlines(QUERIES[i]);
     }
-  }, 30 * 60_000).unref();
+  }), 30 * 60_000).unref();
 
   console.log('[newsapi] Started — financial headlines every 30min');
 }

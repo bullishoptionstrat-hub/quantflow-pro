@@ -6,6 +6,7 @@
  */
 import axios from 'axios';
 import { describeHttpError, redactSecrets } from '../httpError';
+import { singleFlight } from '../singleFlight';
 
 const API_KEY = process.env.FRED_API_KEY || '';
 const BASE = 'https://api.stlouisfed.org/fred/series/observations';
@@ -178,6 +179,6 @@ export async function startFRED(): Promise<void> {
   // FRED data updates daily — refresh every 4 hours. `unref`'d so a poll timer
   // is never the reason a process cannot exit; the server is held open by its
   // HTTP listener.
-  setInterval(fetchAll, 4 * 60 * 60_000).unref();
+  setInterval(singleFlight('fred', fetchAll), 4 * 60 * 60_000).unref();
   console.log('[fred] Started — VIX, yields, CPI, GDP, oil, gold loaded');
 }

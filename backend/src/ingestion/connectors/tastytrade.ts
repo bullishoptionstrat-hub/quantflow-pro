@@ -11,6 +11,7 @@ import { LegacyFlowEvent as FlowEvent } from '../index';
 import { computeHeatScore } from '../heatScore';
 import { classifySweep } from '../sweepDetector';
 import { numeric, orUndefined } from '../optionalNumber';
+import { singleFlight } from '../singleFlight';
 
 const USER = process.env.TASTYTRADE_USER || '';
 const PASS = process.env.TASTYTRADE_PASS || '';
@@ -150,7 +151,7 @@ export async function startTastytrade(): Promise<void> {
   if (!ok) return;
 
   // Re-login every 23h (session expires in 24h)
-  setInterval(login, 23 * 60 * 60_000).unref();
+  setInterval(singleFlight('tastytrade:login', login), 23 * 60 * 60_000).unref();
 
   startWebSocket();
 
@@ -161,6 +162,6 @@ export async function startTastytrade(): Promise<void> {
     }
   }
   await poll();
-  setInterval(poll, 5 * 60_000).unref();
+  setInterval(singleFlight('tastytrade', poll), 5 * 60_000).unref();
   console.log('[tastytrade] Started — streaming + polling every 5min');
 }
