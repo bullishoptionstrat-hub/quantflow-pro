@@ -79,9 +79,25 @@ export class FlowEngine {
     const key = t.contract.underlying;
     const burst = this.bursts.get(key);
 
-    if (burst && t.ts - burst.lastTs <= this.cfg.sweepWindowMs) {
+    // A print joins the open burst only if it falls within the window of the
+    // burst's span on either side. The test used to be `t.ts - lastTs <=
+    // window` alone, which a late print passes however late it is, because the
+    // difference is negative; it then set `lastTs` to that earlier time.
+    // Measured: a print stamped an hour before the open burst's print joined
+    // it as a two-venue SWEEP, and the rewound `lastTs` split the next real
+    // print off as a separate BLOCK.
+    const w = this.cfg.sweepWindowMs;
+    if (burst && t.ts >= burst.firstTs - w && t.ts - burst.lastTs <= w) {
       burst.trades.push(annotated);
-      burst.lastTs = t.ts;
+      burst.firstTs = Math.min(burst.firstTs, t.ts);
+      burst.lastTs = Math.max(burst.lastTs, t.ts);
+    } else if (burst && t.ts < burst.firstTs - w) {
+      // Too late to belong to the open burst. It is classified on its own and
+      // the open burst is left as it was, rather than closed early by a print
+      // that is not part of it.
+      out.push(...this.finalizeBurst({
+        underlying: key, firstTs: t.ts, lastTs: t.ts, trades: [annotated],
+      }));
     } else {
       if (burst) out.push(...this.finalizeBurst(burst));
       this.bursts.set(key, {
@@ -125,7 +141,9 @@ export class FlowEngine {
   // -------------------------------------------------------------------------
 
   private finalizeBurst(burst: Burst): ClassifiedSignal[] {
-    this.bursts.delete(burst.underlying);
+    // Only the burst being finalized: a late print is finalized on its own
+    // while the open burst for the same underlying stays open.
+    if (this.bursts.get(burst.underlying) === burst) this.bursts.delete(burst.underlying);
     const out: ClassifiedSignal[] = [];
 
     // Group prints by contract+sideBucket.
