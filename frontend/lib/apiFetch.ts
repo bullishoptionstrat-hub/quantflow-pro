@@ -9,6 +9,9 @@ import { DEMO_HEADER, isDemoModeEnabled } from './demo'
  * session cookie is scoped to this origin and never reaches Render through the
  * rewrite, so the token has to be forwarded explicitly.
  */
+/** How long a backend request may take before it counts as unanswered. */
+export const API_TIMEOUT_MS = 60_000
+
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const { data: { session } } = await supabase.auth.getSession()
 
@@ -22,5 +25,25 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
     headers.set(DEMO_HEADER, '1')
   }
 
-  return fetch(path, { ...init, headers })
+  // A request the network swallows never settles, and a panel waiting on it
+  // stays "loading" for good. The limit is longer than a Render free-tier cold
+  // start (well under a minute), so a waking backend still answers. A signal
+  // the caller passes is kept as well as the limit.
+  const ctl = new AbortController()
+  const timer = setTimeout(
+    () => ctl.abort(new Error(`${path} did not answer within ${API_TIMEOUT_MS / 1000}s`)),
+    API_TIMEOUT_MS,
+  )
+  const caller = init.signal
+  const onAbort = () => ctl.abort(caller?.reason)
+  if (caller) {
+    if (caller.aborted) ctl.abort(caller.reason)
+    else caller.addEventListener('abort', onAbort, { once: true })
+  }
+  try {
+    return await fetch(path, { ...init, headers, signal: ctl.signal })
+  } finally {
+    clearTimeout(timer)
+    caller?.removeEventListener('abort', onAbort)
+  }
 }
