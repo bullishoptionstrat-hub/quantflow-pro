@@ -229,9 +229,24 @@ router.get('/context', requireAuth, async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * The allowlist entry for a slug, or undefined. An own-property check, not an
+ * index: `REGULATORY_SOURCES['constructor']` is the inherited `Object` function,
+ * which is truthy, so an indexed lookup let `/regulatory/constructor` (and
+ * `toString`, `__proto__`, ...) past the allowlist with `url: undefined`. That
+ * sent Firecrawl a scrape with no URL and, when it failed, set the enrichment
+ * state on the public `/api/health` to `error` for every reader — one signed-in
+ * request flipping a shared status board.
+ */
+export function regulatorySource(slug: string): { url: string; label: string } | undefined {
+  return Object.prototype.hasOwnProperty.call(REGULATORY_SOURCES, slug)
+    ? REGULATORY_SOURCES[slug]
+    : undefined;
+}
+
 // GET /api/sentiment/regulatory/:slug — an allowlisted regulatory page as markdown
 router.get('/regulatory/:slug', requireAuth, async (req: Request, res: Response) => {
-  const entry = REGULATORY_SOURCES[req.params.slug];
+  const entry = regulatorySource(req.params.slug);
   if (!entry) {
     res.status(404).json({
       error: 'unknown regulatory source',
