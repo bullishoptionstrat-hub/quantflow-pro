@@ -211,11 +211,14 @@ test('`tick` does not retire a horizon on the failure path', () => {
     join(__dirname, '..', 'src', 'persistence', 'grader.ts'),
     'utf8',
   );
-  const tick = /async tick\(\)[\s\S]*?\n  \}/.exec(src);
-  assert.ok(tick, 'tick() is still a method by that name');
+  // The loop lives in `runTick`; `tick()` only keeps two from overlapping.
+  const tick = /private async runTick\([\s\S]*?\n  \}/.exec(src);
+  assert.ok(tick, 'runTick() is still a method by that name');
   const body = tick[0];
   const catchAt = body.indexOf('} catch (err) {');
-  const deleteAt = body.indexOf('p.remaining.delete(horizon);');
+  // The success-path delete is the last one. The catch has its own, and it
+  // must sit behind the store confirming the row exists.
+  const deleteAt = body.lastIndexOf('p.remaining.delete(horizon);');
   assert.ok(catchAt >= 0 && deleteAt >= 0, 'both landmarks are present');
   const between = body.slice(catchAt, deleteAt);
   assert.match(
@@ -224,4 +227,12 @@ test('`tick` does not retire a horizon on the failure path', () => {
     'the catch block leaves the iteration before the delete can run',
   );
   assert.match(between, /writeFailures\+\+/, 'and counts the failure on the way out');
+  const early = between.indexOf('p.remaining.delete(horizon);');
+  if (early >= 0) {
+    assert.match(
+      between.slice(0, early),
+      /if \(await this\.landedAnyway\(/,
+      'a horizon leaves the failure path only when the store holds its row',
+    );
+  }
 });

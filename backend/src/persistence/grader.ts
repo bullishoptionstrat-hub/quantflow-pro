@@ -279,6 +279,29 @@ export interface GraderStats {
    */
   entryMarksPersisted: number;
   entryMarkWriteFailures: number;
+  /**
+   * Failed writes whose row turned out to be in the store anyway.
+   *
+   * A write can reach the database and still fail from here: the response is
+   * lost to a timeout or a reset after the commit. The horizon used to stay
+   * pending, and every retry was then refused by the one-live-outcome rule,
+   * so a checkpoint that had been recorded read as a permanent write failure
+   * and was retried for the life of the process. After a failure the grader
+   * now asks the store, by the same rule `recover()` uses: a row for that
+   * horizon means it is done.
+   */
+  writesReconciled: number;
+  /**
+   * Timer ticks that found the previous tick still running and did nothing.
+   *
+   * `tick()` runs on a 60s timer and awaits each write, so a slow store can
+   * make one tick outlast the interval. Two ticks would then grade the same
+   * due horizon twice, at two instants with two exit marks, and the store
+   * would keep whichever insert arrived first.
+   */
+  ticksSkippedInFlight: number;
+  /** When the tick now running started; absent while none is. */
+  tickInFlightSince?: number;
   lastTickAt?: number;
   lastError?: string;
 }
@@ -289,7 +312,10 @@ export class SignalGrader {
   private stats: GraderStats = {
     tracked: 0, graded: 0, ungraded: 0, positive: 0, negative: 0, flat: 0,
     writeFailures: 0, writeRetrying: 0, entryMarksPersisted: 0, entryMarkWriteFailures: 0,
+    writesReconciled: 0, ticksSkippedInFlight: 0,
   };
+  /** The tick in progress, if any. One at a time; see `ticksSkippedInFlight`. */
+  private inFlight: Promise<number> | null = null;
   /** Entry-mark writes in flight. `settle()` awaits them; nothing else waits on them. */
   private readonly entryWrites = new Set<Promise<void>>();
 
@@ -528,7 +554,22 @@ export class SignalGrader {
    * Returns the number of outcomes written.
    */
   async tick(): Promise<number> {
-    const now = this.now();
+    if (this.inFlight) {
+      this.stats.ticksSkippedInFlight++;
+      return 0;
+    }
+    const started = this.now();
+    this.stats.tickInFlightSince = started;
+    this.inFlight = this.runTick(started);
+    try {
+      return await this.inFlight;
+    } finally {
+      this.inFlight = null;
+      delete this.stats.tickInFlightSince;
+    }
+  }
+
+  private async runTick(now: number): Promise<number> {
     this.stats.lastTickAt = now;
     let written = 0;
 
@@ -581,6 +622,11 @@ export class SignalGrader {
           // way to lose a checkpoint silently, and `recover()` already bounds
           // the set to what the *store* still reports ungraded, so a restart
           // re-derives this from durable state rather than from this map.
+          if (await this.landedAnyway(p.signalKey, horizon)) {
+            this.stats.writesReconciled++;
+            p.remaining.delete(horizon);
+            continue;
+          }
           this.logWriteFailure(p.signalKey, horizon);
           continue;
         }
@@ -589,6 +635,22 @@ export class SignalGrader {
       if (p.remaining.size === 0) this.pending.delete(p.signalKey);
     }
     return written;
+  }
+
+  /**
+   * Whether the store already holds a row for this checkpoint.
+   *
+   * Asked only after a write fails. A lookup that fails too answers no, so
+   * the horizon stays pending: an unanswered question is not evidence the row
+   * exists, and dropping the checkpoint on that basis would lose it.
+   */
+  private async landedAnyway(signalKey: string, horizon: OutcomeHorizon): Promise<boolean> {
+    try {
+      const outs = await this.store.listOutcomes(signalKey);
+      return outs.some((o) => o.horizon === horizon);
+    } catch {
+      return false;
+    }
   }
 
   private grade(
