@@ -457,6 +457,20 @@ export function getIngestionStatus() {
     notes[source] = notes[source] ? `${notes[source]}; ${note}` : note;
   }
 
+  // A skipped or failed poller cycle goes where the Settings page already
+  // reads, under the source the poller belongs to ("coingecko:prices" is
+  // coingecko's). A health field nothing renders is how `sourceNotes` itself
+  // sat unread for weeks.
+  for (const [poller, p] of Object.entries(pollerHealth())) {
+    const source = poller.split(':')[0]!;
+    const parts: string[] = [];
+    if (p.skipped > 0) parts.push(`${p.skipped} poll cycle(s) skipped while the previous one was still running`);
+    if (p.failed > 0) parts.push(`${p.failed} poll cycle(s) failed outright`);
+    if (parts.length === 0) continue;
+    const note = `${poller}: ${parts.join(', ')}`;
+    notes[source] = notes[source] ? `${notes[source]}; ${note}` : note;
+  }
+
   const tradierNote = tradierStreamNote();
   if (tradierNote) notes['tradier'] = notes['tradier'] ? `${notes['tradier']}; ${tradierNote}` : tradierNote;
 

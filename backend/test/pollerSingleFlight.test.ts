@@ -105,3 +105,21 @@ test('/api/health publishes poller health', () => {
   const src = readFileSync(join(__dirname, '../src/ingestion/index.ts'), 'utf8');
   assert.match(src, /pollers: pollerHealth\(\)/);
 });
+
+test('a skipped or failed cycle reaches sourceNotes under its source', async () => {
+  const { getIngestionStatus } = await import('../src/ingestion/index');
+  resetPollerHealth();
+  const gate = deferred();
+  const slow = singleFlight('coingecko:prices', async () => { await gate.promise; });
+  const first = slow();
+  await slow();
+  await singleFlight('fred', async () => { throw new Error('x'); })();
+
+  const notes = getIngestionStatus().sourceNotes as Record<string, string>;
+  assert.match(notes['coingecko'] ?? '', /coingecko:prices: 1 poll cycle\(s\) skipped/);
+  assert.match(notes['fred'] ?? '', /fred: 1 poll cycle\(s\) failed outright/);
+
+  gate.resolve();
+  await first;
+  resetPollerHealth();
+});
