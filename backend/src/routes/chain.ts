@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { queryString } from './queryParams';
 import axios from 'axios';
 import { describeHttpError } from '../ingestion/httpError';
 
@@ -64,8 +65,8 @@ function vendorFailed(res: Response, err: unknown): void {
 
 // GET /api/chain?symbol=SPY&expiration=2025-01-17
 router.get('/', async (req: Request, res: Response) => {
-  const symbol = ((req.query.symbol as string) || 'SPY').toUpperCase();
-  const expiration = (req.query.expiration as string) || '';
+  const symbol = (queryString(req.query.symbol) ?? 'SPY').toUpperCase();
+  const expiration = queryString(req.query.expiration) ?? '';
 
   if (!TRADIER_TOKEN) return noCredentials(res);
 
@@ -93,7 +94,7 @@ router.get('/', async (req: Request, res: Response) => {
 
 // GET /api/chain/expirations?symbol=SPY
 router.get('/expirations', async (req: Request, res: Response) => {
-  const symbol = ((req.query.symbol as string) || 'SPY').toUpperCase();
+  const symbol = (queryString(req.query.symbol) ?? 'SPY').toUpperCase();
 
   if (!TRADIER_TOKEN) return noCredentials(res);
 
