@@ -554,6 +554,11 @@ function ingestInto(S: IngestorState, print: RawPrint): WireFlowEvent[] {
   // gets it without knowing about it.
   if (!print.symbol || !print.expiry || !(print.price > 0) || !(print.size > 0)) return [];
   if (!(print.strike > 0)) return [];
+  // `> 0` admits Infinity. No producer sends one today (each connector reads
+  // its numbers through a finite-only helper), but this is the seam every
+  // source converges on, and an infinite price is published as a premium of
+  // Infinity, which JSON turns into null on the wire.
+  if (!Number.isFinite(print.price) || !Number.isFinite(print.size) || !Number.isFinite(print.strike)) return [];
   // `expiry` was the sixth field, and it was checked for TRUTHINESS only —
   // which is exactly what `strike` was before the line above, and produced the
   // same class of outcome. Measured through this function, one print at
@@ -640,8 +645,17 @@ function ingestInto(S: IngestorState, print: RawPrint): WireFlowEvent[] {
   // comparison with NaN is false, so it read as perfectly fresh. Without the
   // quote the side is AMBIGUOUS, which is the honest answer.
   const quoteTsOk = print.quoteTs === undefined || stampFault(print.quoteTs, receivedAt) === null;
-  if (bid !== undefined && ask !== undefined && ask > 0 && ask >= bid
-      && !print.tradeTimeUnknown && quoteTsOk) {
+  // A quote is a finite, non-negative bid at or below a finite, positive ask.
+  // Measured before this check: an ask of Infinity passed `ask > 0 && ask >=
+  // bid`, became the NBBO, and put the print below an infinite midpoint, so it
+  // was published SELL_LEAN and BEARISH, a direction read off a number that is
+  // not a price. The engine's own book (`nbbo.ts`) already drops a negative
+  // bid and a non-positive ask, but not an infinite one; the finite test is
+  // the part this adds, and `bid >= 0` restates the engine's rule here so the
+  // seam's condition is complete on its own.
+  const quoteOk = bid !== undefined && ask !== undefined
+    && Number.isFinite(bid) && Number.isFinite(ask) && bid >= 0 && ask > 0 && ask >= bid;
+  if (quoteOk && !print.tradeTimeUnknown && quoteTsOk) {
     S.engine.onQuote({ ts: print.quoteTs ?? ts, contractSymbol: symbol, bid, ask });
   }
 
