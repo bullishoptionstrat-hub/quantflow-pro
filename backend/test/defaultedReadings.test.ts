@@ -171,6 +171,10 @@ const LEDGER: Record<string, string> = {
     'The same counter on the same rule, for prints refused at the seam for an ' +
     'unreadable expiry. This module owns and increments it, so absent really ' +
     'does mean none have been refused — it is not a reading a vendor omitted.',
+  'ingestion/flowEngineAdapter.ts: S.unreadableTradeTimes[source] ?? 0':
+    'The same owned counter again, for prints refused at the seam for a trade ' +
+    'time that is not epoch milliseconds. This module increments it, so absent ' +
+    'means none have been refused; no vendor reading is defaulted here.',
   'research/h001Analysis.ts: tally[why] ?? 0':
     'A tally the composer owns, initialised on its first increment: how many ' +
     'signals the as-known study admitted for one reason. An absent key means ' +

@@ -446,6 +446,61 @@ function noteUnreadableExpiry(S: IngestorState, source: string, expiry: string):
   }
 }
 
+/**
+ * Epoch milliseconds a trade or quote stamp may take: 2000-01-01 to 2100-01-01.
+ *
+ * Wide on purpose. It is not a freshness rule; it is a units rule. A stamp in
+ * seconds lands in 1970 and one in micro- or nanoseconds lands tens of
+ * thousands of years ahead, and both are outside it by orders of magnitude.
+ */
+const EPOCH_MS_MIN = Date.UTC(2000, 0, 1);
+const EPOCH_MS_MAX = Date.UTC(2100, 0, 1);
+
+/**
+ * How far ahead of its own receipt a stamp may be: the clock skew the Tradier
+ * validator already tolerates (`maxClockSkewMs`). A trade cannot happen after
+ * it was received; beyond skew, the clock or the units are wrong.
+ */
+export const MAX_STAMP_AHEAD_OF_RECEIPT_MS = 5 * 60_000;
+
+/**
+ * Why a stamp cannot be read as the moment something happened, or null if it
+ * can. `receivedAt` is undefined for replay, which has no receipt to bound by.
+ */
+export function stampFault(ts: number, receivedAt: number | undefined): string | null {
+  if (typeof ts !== 'number' || !Number.isFinite(ts)) return 'is not a number';
+  if (ts < EPOCH_MS_MIN || ts > EPOCH_MS_MAX) {
+    return 'is not epoch milliseconds (seconds, micro- or nanoseconds?)';
+  }
+  if (receivedAt !== undefined && ts > receivedAt + MAX_STAMP_AHEAD_OF_RECEIPT_MS) {
+    return 'is more than 5 min after the print was received';
+  }
+  return null;
+}
+
+function noteUnreadableTradeTime(S: IngestorState, source: string, ts: unknown, why: string): void {
+  const n = (S.unreadableTradeTimes[source] ?? 0) + 1;
+  S.unreadableTradeTimes[source] = n;
+  if (S.unreadableTradeTimeSample[source] === undefined) {
+    S.unreadableTradeTimeSample[source] = `${String(ts).slice(0, 24)} ${why}`;
+  }
+  if (n === 1 || n % 500 === 0) {
+    console.warn(
+      `[${source}] ${n} print(s) refused: trade time ${S.unreadableTradeTimeSample[source]}. ` +
+      `The print is dropped rather than published with a fabricated date.`,
+    );
+  }
+}
+
+/** Per source: prints refused for an unreadable trade time, and an example. */
+function unreadableTradeTimeCountsOf(S: IngestorState): Record<string, { count: number; sample: string }> {
+  const out: Record<string, { count: number; sample: string }> = {};
+  for (const [source, count] of Object.entries(S.unreadableTradeTimes)) {
+    out[source] = { count, sample: S.unreadableTradeTimeSample[source] ?? '' };
+  }
+  return out;
+}
+
 /** Per source: how many prints were refused, and an example of the value. */
 function unreadableExpiryCountsOf(S: IngestorState): Record<string, { count: number; sample: string }> {
   const out: Record<string, { count: number; sample: string }> = {};
@@ -512,12 +567,33 @@ function ingestInto(S: IngestorState, print: RawPrint): WireFlowEvent[] {
   // field exists to prevent.
   if (print.root !== undefined && !/^[A-Z][A-Z0-9]{0,5}$/.test(print.root)) return [];
 
-  const ts = print.ts ?? S.now();
   // Receipt time is stamped here, at the boundary — the earliest moment this
   // process could possibly have known about the print. Distinct from `ts`,
   // which is when it happened at the venue; the gap between them is the feed
   // latency a forward measurement must be charged.
   const receivedAt = print.receivedAt ?? (print.replay ? undefined : S.now());
+  // The trade time was the one field of a print nothing checked. Measured
+  // through this function, one SPY print against a November expiry:
+  //
+  //     ts in ms (control)  -> dte 25
+  //     ts in seconds       -> dte 20757, trade dated 1970
+  //     ts in microseconds  -> dte 0 (published as 0DTE), dated ~year 58000
+  //     ts in nanoseconds   -> threw "Invalid time value" out of ingestPrint
+  //     ts NaN              -> threw "Invalid time value"
+  //
+  // A unit mix-up is the likely vendor change (Polygon sends nanoseconds,
+  // Tradier milliseconds), and the microsecond row is the expiry finding again:
+  // a wrong date that reads as the loudest bucket rather than as unknown. An
+  // absent `ts` still means "now", because a source that sends none is
+  // stamping receipt, which is honest.
+  if (print.ts !== undefined) {
+    const why = stampFault(print.ts, receivedAt);
+    if (why) {
+      noteUnreadableTradeTime(S, print.source, print.ts, why);
+      return [];
+    }
+  }
+  const ts = print.ts ?? S.now();
   S.lastPrintTs = Math.max(S.lastPrintTs, ts);
   const symbol = occSymbol(print.root ?? print.symbol, print.expiry, print.right, print.strike);
 
@@ -533,8 +609,13 @@ function ingestInto(S: IngestorState, print: RawPrint): WireFlowEvent[] {
   // judge. A quote from after the trade is refused outright by `inferSide`.
   const bid = print.bid;
   const ask = print.ask;
+  // A quote stamp nobody can read is withheld rather than trusted: NaN passes
+  // both the staleness test and the after-the-trade test, because every
+  // comparison with NaN is false, so it read as perfectly fresh. Without the
+  // quote the side is AMBIGUOUS, which is the honest answer.
+  const quoteTsOk = print.quoteTs === undefined || stampFault(print.quoteTs, receivedAt) === null;
   if (bid !== undefined && ask !== undefined && ask > 0 && ask >= bid
-      && !print.tradeTimeUnknown) {
+      && !print.tradeTimeUnknown && quoteTsOk) {
     S.engine.onQuote({ ts: print.quoteTs ?? ts, contractSymbol: symbol, bid, ask });
   }
 
@@ -661,6 +742,9 @@ interface IngestorState {
   readonly unreadableExpiries: Record<string, number>;
   /** The first malformed value seen per source, so the note can name the shape. */
   readonly unreadableExpirySample: Record<string, string>;
+  /** Prints refused at the seam for a trade time that is not epoch ms, per source. */
+  readonly unreadableTradeTimes: Record<string, number>;
+  readonly unreadableTradeTimeSample: Record<string, string>;
   /** Stamps receipt time, a missing trade time, `emittedAt`, and the idle-drain clock. */
   readonly now: () => number;
 }
@@ -685,6 +769,7 @@ export interface Ingestor {
   onSignal(fn: SignalObserver): void;
   clearSignalObservers(): void;
   unreadableExpiryCounts(): Record<string, { count: number; sample: string }>;
+  unreadableTradeTimeCounts(): Record<string, { count: number; sample: string }>;
   /** The configuration this instance's engine runs under, resolved against the defaults. */
   readonly config: Readonly<FlowEngineConfig>;
 }
@@ -701,6 +786,8 @@ export function createIngestor(opts: IngestorOptions = {}): Ingestor {
     observers: [],
     unreadableExpiries: {},
     unreadableExpirySample: {},
+    unreadableTradeTimes: {},
+    unreadableTradeTimeSample: {},
     now,
   };
   return {
@@ -711,6 +798,7 @@ export function createIngestor(opts: IngestorOptions = {}): Ingestor {
     onSignal: (fn) => { S.observers.push(fn); },
     clearSignalObservers: () => { S.observers.length = 0; },
     unreadableExpiryCounts: () => unreadableExpiryCountsOf(S),
+    unreadableTradeTimeCounts: () => unreadableTradeTimeCountsOf(S),
     config: Object.freeze({ ...DEFAULT_CONFIG, ...opts.engineConfig }),
   };
 }
@@ -755,6 +843,11 @@ export function __clearSignalObservers(): void { live.clearSignalObservers(); }
  */
 export function unreadableExpiryCounts(): Record<string, { count: number; sample: string }> {
   return live.unreadableExpiryCounts();
+}
+
+/** Prints the live pipeline refused for an unreadable trade time, per source. */
+export function unreadableTradeTimeCounts(): Record<string, { count: number; sample: string }> {
+  return live.unreadableTradeTimeCounts();
 }
 
 /**

@@ -32,6 +32,7 @@ import {
   ingestPrint, drainIdle, resetDaily, onSignal,
   type RawPrint, type WireFlowEvent,
   unreadableExpiryCounts,
+  unreadableTradeTimeCounts,
 } from './flowEngineAdapter';
 import {
   initPersistence, describePersistence, SignalGrader,
@@ -445,6 +446,10 @@ export function getIngestionStatus() {
     const note =
       `${count} print(s) refused: expiry ${JSON.stringify(sample)} is not a ` +
       `readable calendar date`;
+    notes[source] = notes[source] ? `${notes[source]}; ${note}` : note;
+  }
+  for (const [source, { count, sample }] of Object.entries(unreadableTradeTimeCounts())) {
+    const note = `${count} print(s) refused: trade time ${sample}`;
     notes[source] = notes[source] ? `${notes[source]}; ${note}` : note;
   }
 
