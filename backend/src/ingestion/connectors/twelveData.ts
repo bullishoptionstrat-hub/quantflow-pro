@@ -5,6 +5,8 @@
  */
 import axios from 'axios';
 import WebSocket from 'ws';
+import { noteUnparsedFrame } from '../frameHealth';
+import { watchLiveness } from '../wsLiveness';
 import { numeric } from '../optionalNumber';
 import { describeHttpError } from '../httpError';
 import { scheduleDailyReset } from '../dailyReset';
@@ -431,10 +433,17 @@ function startWebSocket(): void {
         lastDeliveryBySymbol.set(msg.symbol, lastCacheWriteAt);
         onSpotUpdate?.(quote);
       }
-    } catch {}
+    } catch {
+      noteUnparsedFrame('twelvedata');
+    }
   });
 
   ws.on('error', () => {});
+  // A socket whose path dies without a FIN never closes, so the reconnect on
+  // `close` never runs. Silence past the bound terminates it. See wsLiveness.ts.
+  watchLiveness(ws, (silentMs) => {
+    console.error(`[twelvedata] no message or pong for ${Math.round(silentMs / 1000)}s — terminating to reconnect`);
+  });
   ws.on('close', () => { setTimeout(startWebSocket, 5000).unref(); });
 }
 

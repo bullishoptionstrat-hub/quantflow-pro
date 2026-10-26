@@ -148,7 +148,7 @@ const LEDGER: Record<string, string> = {
     'or the difference is wrong rather than merely unknown — real = recorded ' +
     '- synthetic, and defaulting one operand but not the other would report ' +
     'every recorded signal as real.',
-  'ingestion/index.ts: unparsedFrames[source] ?? 0':
+  'ingestion/frameHealth.ts: unparsedFrames[source] ?? 0':
     'Initialising a counter on first increment. Counting from zero is what a ' +
     'counter does.',
   'persistence/recorder.ts: this.stats.heldBySource[s] ?? 0':

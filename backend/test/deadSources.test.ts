@@ -267,15 +267,17 @@ test('unparsable frames reach /api/health as a source note', () => {
   // is the same shape of problem and belongs in the same place.
   const code = readFileSync(INGESTION, 'utf8');
   const status = code.slice(code.indexOf('export function getIngestionStatus'));
-  assert.match(status.slice(0, 1200), /unparsedFrames/,
+  assert.match(status.slice(0, 1200), /unparsedFrameCounts\(\)/,
     'the count must be visible on the health endpoint, not just in a log');
 });
 
 test('the frame counter does not log once per frame', () => {
   // A vendor that changes its envelope produces one failure per frame, and a
   // log line per frame is its own outage.
-  const code = readFileSync(INGESTION, 'utf8');
+  // The counter moved to frameHealth.ts so connectors can reach it.
+  const code = readFileSync(join(__dirname, '..', 'src', 'ingestion', 'frameHealth.ts'), 'utf8');
   const fn = code.slice(code.indexOf('function noteUnparsedFrame'));
+  assert.ok(fn.length > 0, 'noteUnparsedFrame is still defined there');
   assert.match(fn.slice(0, 400), /n === 1 \|\| n % \d+ === 0/,
     'log the first and then sparsely');
 });
