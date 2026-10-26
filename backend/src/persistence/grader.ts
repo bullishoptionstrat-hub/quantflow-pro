@@ -199,6 +199,11 @@ export interface RecoveryReport {
   /** Of those resumed, how many recovered a usable entry mark. */
   withEntryMark: number;
   failed: number;
+  /**
+   * Signals whose stored entry mark could not be read. Each was either resumed
+   * from an outcome row's mark or, with none, left for the next boot.
+   */
+  entryMarkReadFailures: number;
 }
 
 /**
@@ -502,6 +507,7 @@ export class SignalGrader {
   ): Promise<RecoveryReport> {
     const report: RecoveryReport = {
       examined: 0, resumed: 0, alreadyComplete: 0, withEntryMark: 0, failed: 0,
+      entryMarkReadFailures: 0,
     };
 
     // The window: how far back a checkpoint can be and still be worth
@@ -534,7 +540,23 @@ export class SignalGrader {
         // copy is the fallback for signals registered before that table
         // existed. Either way it is a mark observed at the time, never one
         // taken now.
-        const stored = await this.store.getEntryMark(rec.signalKey);
+        //
+        // A failed read is not "no mark". If the outcome rows carry one, that
+        // mark was also observed at the time, so the signal resumes from it.
+        // If they do not, the read failure is thrown on, so the signal stays
+        // pending for the next boot instead of grading UNGRADED for good over
+        // what may be a brief outage. Before this, any read error took the
+        // second path even when an outcome row held the mark; with the
+        // `signal_entry_marks` migration unapplied that was every signal.
+        let stored: Awaited<ReturnType<SignalStore['getEntryMark']>>;
+        try {
+          stored = await this.store.getEntryMark(rec.signalKey);
+        } catch (err) {
+          report.entryMarkReadFailures++;
+          if (!recoverEntryMark(outs, rightsFor)) throw err;
+          this.stats.lastError = err instanceof Error ? err.message : String(err);
+          stored = undefined;
+        }
         const entryMark = (stored && recoverEntryMark([{
           entryMark: stored.price, entryMarkSource: stored.source, entryMarkAt: stored.asOf,
         }], rightsFor)) ?? recoverEntryMark(outs, rightsFor);
