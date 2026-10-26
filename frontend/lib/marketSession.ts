@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { loadPanel, type Panel } from './panel'
+import { summariseSources, type SourceSummary } from './sourceSummary'
 
 /**
  * The one place the terminal learns whether the EXCHANGE'S REGULAR SESSION is
@@ -127,19 +128,32 @@ function pick(body: unknown): MarketSession | null {
   return s as MarketSession
 }
 
-export function useMarketSession(): { panel: Panel<MarketSession | null> } {
+export function useMarketSession(): {
+  panel: Panel<MarketSession | null>
+  sources: Panel<SourceSummary | null>
+} {
   const [panel, setPanel] = useState<Panel<MarketSession | null>>({ status: 'loading' })
+  const [sources, setSources] = useState<Panel<SourceSummary | null>>({ status: 'loading' })
 
   useEffect(() => {
     let live = true
     const read = async () => {
-      const p = await loadPanel<MarketSession | null>('/api/health', pick)
-      if (live) setPanel(p)
+      // One request feeds both: the sidebar's source summary rides on the
+      // poll this hook already makes rather than adding a second one.
+      const p = await loadPanel<unknown>('/api/health', (body) => body)
+      if (!live) return
+      if (p.status === 'ok') {
+        setPanel({ status: 'ok', data: pick(p.data) })
+        setSources({ status: 'ok', data: summariseSources(p.data) })
+      } else {
+        setPanel(p)
+        setSources(p)
+      }
     }
     void read()
     const t = setInterval(() => void read(), POLL_MS)
     return () => { live = false; clearInterval(t) }
   }, [])
 
-  return { panel }
+  return { panel, sources }
 }
