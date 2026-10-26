@@ -4,6 +4,7 @@ import { usePathname } from 'next/navigation'
 import { useMarketSession, describeSession } from '@/lib/marketSession'
 import { useStore } from '@/store/useStore'
 import { SignOutButton } from './SignOutButton'
+import { SourceStatus } from './SourceStatus'
 
 const NAV = [
   // No static `LIVE` badge: it sat two lines under the connection dot and
@@ -31,7 +32,7 @@ const GROUP_LABELS: Record<string, string> = {
 export function Sidebar() {
   const pathname = usePathname()
   const { powerAlerts, connected, flowEvents } = useStore()
-  const { panel: sessionPanel } = useMarketSession()
+  const { panel: sessionPanel, sources: sourcesPanel } = useMarketSession()
   const session = describeSession(
     sessionPanel.status === 'ok' ? sessionPanel.data : null,
   )
@@ -182,14 +183,10 @@ export function Sidebar() {
       {/* Bottom */}
       <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)' }}>
         <SignOutButton />
-        {/* 13 sources indicator */}
-        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 }}>
-          {['CBOE','FRED','CRYPTO','REDDIT','NEWS','STOOQ'].map(s => (
-            <span key={s} style={{ fontSize: 8, fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, background: 'rgba(34,197,94,0.1)', color: '#86efac', borderRadius: 2, padding: '1px 4px' }}>
-              {s}
-            </span>
-          ))}
-        </div>
+        {/* These were six hardcoded green tags (CBOE, FRED, CRYPTO, REDDIT,
+            NEWS, STOOQ) shown whatever the backend said. The counts now come
+            from /api/health on the request this sidebar already makes. */}
+        <SourceStatus panel={sourcesPanel} />
         <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>QUANTUM EDGE CAPITAL LLC</div>
         <div style={{ marginTop: 2, fontSize: 9, color: 'var(--text-muted)' }}>Not investment advice</div>
       </div>
