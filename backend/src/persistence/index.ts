@@ -7,6 +7,7 @@
  * exists to make impossible to have by accident.
  */
 import { createClient } from '@supabase/supabase-js';
+import { boundedFetch } from './boundedFetch';
 import { InMemorySignalStore } from './memoryStore';
 import { SupabaseSignalStore } from './supabaseStore';
 import { SignalRecorder } from './recorder';
@@ -60,6 +61,9 @@ export function initPersistence(env: NodeJS.ProcessEnv = process.env): {
     // prevent. What changes is the claim made about it.
     store = new SupabaseSignalStore(createClient(url, key, {
       auth: { persistSession: false, autoRefreshToken: false },
+      // Bounded, so a request the network swallows fails instead of stalling
+      // grading forever. See boundedFetch.ts.
+      global: { fetch: boundedFetch() },
     }));
     // `durable: true` used to follow from two non-empty strings, with the
     // reason "history survives restarts" — a capability read off configuration,

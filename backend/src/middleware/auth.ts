@@ -1,12 +1,25 @@
 import { Request, Response, NextFunction } from 'express';
 import { createClient } from '@supabase/supabase-js';
 import { createHash } from 'node:crypto';
+import { boundedFetch } from '../persistence/boundedFetch';
 
 const supabaseUrl = process.env.SUPABASE_URL || '';
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY || '';
 
+/**
+ * How long a session check may take before it counts as failed.
+ *
+ * supabase-js uses plain `fetch`, which has no timeout, so a request the
+ * network swallowed left every signed-in API request and socket handshake
+ * waiting forever. A timeout makes `getUser` return an error, which this file
+ * already treats as "not signed in": the request is refused, never admitted.
+ */
+export const AUTH_REQUEST_TIMEOUT_MS = 5_000;
+
 const supabase = supabaseUrl && supabaseServiceKey
-  ? createClient(supabaseUrl, supabaseServiceKey)
+  ? createClient(supabaseUrl, supabaseServiceKey, {
+      global: { fetch: boundedFetch(AUTH_REQUEST_TIMEOUT_MS) },
+    })
   : null;
 
 export interface AuthenticatedRequest extends Request {
