@@ -2,11 +2,10 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { isDemoModeEnabled } from '@/lib/demo';
 import { supabase } from '@/lib/supabase';
 
 export default function RegisterPage() {
-  const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -125,14 +124,22 @@ export default function RegisterPage() {
                 </Link>
               </div>
 
-              <div className="mt-4 pt-4 border-t border-white/5">
-                <button
-                  onClick={() => router.push('/flow')}
-                  className="w-full bg-white/5 hover:bg-white/10 text-zinc-300 font-mono text-xs rounded-lg py-2 transition-colors"
-                >
-                  Continue as Guest (Demo Mode)
-                </button>
-              </div>
+              {/* The same control as the login page: a real form POST that
+                  sets the demo cookie server-side, rendered only when this
+                  deployment opted into demo mode. It was a router.push to
+                  /flow, which middleware.ts bounced straight back to /login. */}
+              {isDemoModeEnabled() && (
+                <div className="mt-4 pt-4 border-t border-white/5">
+                  <form action="/demo/enter/" method="POST">
+                    <button
+                      type="submit"
+                      className="w-full bg-white/5 hover:bg-white/10 text-zinc-300 font-mono text-xs rounded-lg py-2 transition-colors"
+                    >
+                      Continue as Guest (Demo Mode)
+                    </button>
+                  </form>
+                </div>
+              )}
             </>
           )}
         </div>
