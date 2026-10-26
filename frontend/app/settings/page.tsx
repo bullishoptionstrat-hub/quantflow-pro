@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { apiFetch } from '@/lib/apiFetch'
+import { formatTime } from '@/lib/utils'
 import { BuildIdentity } from '@/components/settings/BuildIdentity'
 
 /**
@@ -44,6 +45,13 @@ interface Health {
      * `✓ LIVE` to that.
      */
     sourceNotes?: Record<string, string>
+    /**
+     * Prints accepted at the backend's adapter seam, per source, with the
+     * receipt time of the last. Only print sources appear, and only once one
+     * has arrived; a source missing here is not shown as zero, because FRED or
+     * CoinGecko never send prints at all. Older backends omit the key.
+     */
+    printActivity?: Record<string, { accepted: number; lastAcceptedAt: string }>
     rightsRefusals?: Array<{
       source: string
       datasetId?: string
@@ -115,6 +123,7 @@ export default function SettingsPage() {
   const sources = health?.ingestion?.sources ?? {}
   const sourceErrors = health?.ingestion?.sourceErrors ?? {}
   const sourceNotes = health?.ingestion?.sourceNotes ?? {}
+  const printActivity = health?.ingestion?.printActivity ?? {}
   const refusals = health?.ingestion?.rightsRefusals ?? []
 
   // Live first, then the ones needing attention, then refusals — and
@@ -179,6 +188,7 @@ export default function SettingsPage() {
                   }
                   const st = sources[name] === 'connected' && note ? DEGRADED : base
                   const why = sourceErrors[name]
+                  const activity = printActivity[name]
                   return (
                     <div key={name} style={{ padding: '10px 16px', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
@@ -204,6 +214,17 @@ export default function SettingsPage() {
                         an error is why nothing is arriving, a note is a
                         qualification on what is. A source can have both.
                       */}
+                      {/*
+                        `connected` says the connector ran; this says whether
+                        prints arrived, and when the last one did. No verdict is
+                        drawn from the age here: how old is too old depends on
+                        the source and on whether the market is open.
+                      */}
+                      {activity && (
+                        <div style={{ marginTop: 4, fontSize: 10, color: 'var(--text-muted)', fontFamily: mono }}>
+                          {activity.accepted.toLocaleString()} print(s) accepted · last {formatTime(activity.lastAcceptedAt)} ET
+                        </div>
+                      )}
                       {note && (
                         <div style={{ marginTop: 4, fontSize: 10, color: '#fde68a', lineHeight: 1.55, wordBreak: 'break-word' }}>
                           {note}

@@ -33,6 +33,7 @@ import {
   type RawPrint, type WireFlowEvent,
   unreadableExpiryCounts,
   unreadableTradeTimeCounts,
+  printActivity,
 } from './flowEngineAdapter';
 import {
   initPersistence, describePersistence, SignalGrader,
@@ -463,6 +464,12 @@ export function getIngestionStatus() {
     sources,
     sourceErrors,
     sourceNotes: notes,
+    /**
+     * Per source: prints accepted at the adapter seam and the receipt time of
+     * the last one. `sources` says a connector is running; this says whether
+     * prints are arriving. Absent means none have been accepted since boot.
+     */
+    printActivity: printActivity(),
     /**
      * What the vendor said, per source, and when. Distinct from `sources`:
      * that is "is data arriving?", this is "would it be allowed to?".

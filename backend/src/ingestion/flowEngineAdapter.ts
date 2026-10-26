@@ -492,6 +492,31 @@ function noteUnreadableTradeTime(S: IngestorState, source: string, ts: unknown, 
   }
 }
 
+/**
+ * Per source: how many prints passed every check above, and when the last one
+ * did, on this process's clock.
+ *
+ * `sources` on /api/health says whether a connector ran and its last cycle
+ * succeeded. It cannot say whether anything is arriving: a stream can be
+ * connected and deliver nothing usable (F-23 was exactly that). This is the
+ * fact underneath, recorded rather than inferred: receipt time, never the
+ * vendor's stamp, because the vendor's stamp is last session's close
+ * off-hours and would make a live stream look stale. No threshold is applied
+ * here; how old is too old depends on the source and the session.
+ */
+function notePrintAccepted(S: IngestorState, source: string): void {
+  const prev = S.acceptedPrints[source];
+  S.acceptedPrints[source] = { count: (prev ? prev.count : 0) + 1, lastAt: S.now() };
+}
+
+function printActivityOf(S: IngestorState): Record<string, { accepted: number; lastAcceptedAt: string }> {
+  const out: Record<string, { accepted: number; lastAcceptedAt: string }> = {};
+  for (const [source, { count, lastAt }] of Object.entries(S.acceptedPrints)) {
+    out[source] = { accepted: count, lastAcceptedAt: new Date(lastAt).toISOString() };
+  }
+  return out;
+}
+
 /** Per source: prints refused for an unreadable trade time, and an example. */
 function unreadableTradeTimeCountsOf(S: IngestorState): Record<string, { count: number; sample: string }> {
   const out: Record<string, { count: number; sample: string }> = {};
@@ -595,6 +620,7 @@ function ingestInto(S: IngestorState, print: RawPrint): WireFlowEvent[] {
   }
   const ts = print.ts ?? S.now();
   S.lastPrintTs = Math.max(S.lastPrintTs, ts);
+  notePrintAccepted(S, print.source);
   const symbol = occSymbol(print.root ?? print.symbol, print.expiry, print.right, print.strike);
 
   recordStats(S, symbol, print);
@@ -745,6 +771,8 @@ interface IngestorState {
   /** Prints refused at the seam for a trade time that is not epoch ms, per source. */
   readonly unreadableTradeTimes: Record<string, number>;
   readonly unreadableTradeTimeSample: Record<string, string>;
+  /** Prints that passed the seam's checks, per source, with receipt time of the last. */
+  readonly acceptedPrints: Record<string, { count: number; lastAt: number }>;
   /** Stamps receipt time, a missing trade time, `emittedAt`, and the idle-drain clock. */
   readonly now: () => number;
 }
@@ -770,6 +798,7 @@ export interface Ingestor {
   clearSignalObservers(): void;
   unreadableExpiryCounts(): Record<string, { count: number; sample: string }>;
   unreadableTradeTimeCounts(): Record<string, { count: number; sample: string }>;
+  printActivity(): Record<string, { accepted: number; lastAcceptedAt: string }>;
   /** The configuration this instance's engine runs under, resolved against the defaults. */
   readonly config: Readonly<FlowEngineConfig>;
 }
@@ -787,6 +816,7 @@ export function createIngestor(opts: IngestorOptions = {}): Ingestor {
     unreadableExpiries: {},
     unreadableExpirySample: {},
     unreadableTradeTimes: {},
+    acceptedPrints: {},
     unreadableTradeTimeSample: {},
     now,
   };
@@ -799,6 +829,7 @@ export function createIngestor(opts: IngestorOptions = {}): Ingestor {
     clearSignalObservers: () => { S.observers.length = 0; },
     unreadableExpiryCounts: () => unreadableExpiryCountsOf(S),
     unreadableTradeTimeCounts: () => unreadableTradeTimeCountsOf(S),
+    printActivity: () => printActivityOf(S),
     config: Object.freeze({ ...DEFAULT_CONFIG, ...opts.engineConfig }),
   };
 }
@@ -848,6 +879,11 @@ export function unreadableExpiryCounts(): Record<string, { count: number; sample
 /** Prints the live pipeline refused for an unreadable trade time, per source. */
 export function unreadableTradeTimeCounts(): Record<string, { count: number; sample: string }> {
   return live.unreadableTradeTimeCounts();
+}
+
+/** Prints the live pipeline accepted, per source, and when the last one arrived. */
+export function printActivity(): Record<string, { accepted: number; lastAcceptedAt: string }> {
+  return live.printActivity();
 }
 
 /**
