@@ -9,6 +9,7 @@ import { computeHeatScore } from '../heatScore';
 import { classifySweep } from '../sweepDetector';
 import { num, orUndefined } from '../optionalNumber';
 import { scheduleDailyReset } from '../dailyReset';
+import { singleFlight } from '../singleFlight';
 
 const TOKEN = process.env.MARKETDATA_TOKEN || '';
 const BASE = 'https://api.marketdata.app/v1';
@@ -160,6 +161,6 @@ export async function startMarketData(): Promise<void> {
   }
 
   await poll();
-  setInterval(poll, 15 * 60_000).unref(); // every 15 min — preserve credits
+  setInterval(singleFlight('marketdata', poll), 15 * 60_000).unref(); // every 15 min — preserve credits
   console.log('[marketdata] Started — polling every 15min (100 credits/day)');
 }

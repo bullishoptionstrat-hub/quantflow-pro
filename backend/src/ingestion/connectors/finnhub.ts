@@ -28,6 +28,7 @@ import axios from 'axios';
 import { quoteTimestamp, type SpotQuote } from './twelveData';
 import { describeHttpError } from '../httpError';
 import { num } from '../optionalNumber';
+import { singleFlight } from '../singleFlight';
 
 const API_KEY = process.env.FINNHUB_API_KEY || '';
 const BASE = 'https://finnhub.io/api/v1';
@@ -123,6 +124,6 @@ export async function startFinnhub(): Promise<void> {
   await fetchAll();
   // `.unref()` so a poller never holds the event loop open — see the guard in
   // `missingIsNotZero.test.ts`.
-  setInterval(fetchAll, POLL_MS).unref();
+  setInterval(singleFlight('finnhub', fetchAll), POLL_MS).unref();
   console.log(`[finnhub] Started — spot quotes for ${WATCHED.length} symbols every 60s`);
 }

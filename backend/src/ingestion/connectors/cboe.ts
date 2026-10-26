@@ -6,6 +6,7 @@
 import axios from 'axios';
 import { describeHttpError } from '../httpError';
 import { numeric } from '../optionalNumber';
+import { singleFlight } from '../singleFlight';
 
 export interface CBOEData {
   vix: number;
@@ -220,6 +221,6 @@ async function fetchAll(): Promise<void> {
 export async function startCBOE(): Promise<void> {
   await fetchAll();
   // See the note in stooq.ts: the listener keeps the server alive, not this.
-  setInterval(fetchAll, 5 * 60_000).unref(); // every 5 min
+  setInterval(singleFlight('cboe', fetchAll), 5 * 60_000).unref(); // every 5 min
   console.log('[cboe] Started — VIX + put/call ratios (no key required)');
 }

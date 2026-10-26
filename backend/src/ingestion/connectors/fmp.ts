@@ -5,6 +5,7 @@
  */
 import axios from 'axios';
 import { scheduleDailyReset } from '../dailyReset';
+import { singleFlight } from '../singleFlight';
 
 const API_KEY = process.env.FMP_API_KEY || '';
 const BASE = 'https://financialmodelingprep.com/api/v3';
@@ -130,8 +131,8 @@ export async function startFMP(): Promise<void> {
   await fetchInsiderTrades();
   await fetchNews();
 
-  setInterval(fetchEarningsCalendar, 6 * 60 * 60_000).unref(); // every 6h
-  setInterval(fetchInsiderTrades, 60 * 60_000).unref();          // every 1h
-  setInterval(fetchNews, 15 * 60_000).unref();                    // every 15min
+  setInterval(singleFlight('fmp:earnings', fetchEarningsCalendar), 6 * 60 * 60_000).unref(); // every 6h
+  setInterval(singleFlight('fmp:insider', fetchInsiderTrades), 60 * 60_000).unref();          // every 1h
+  setInterval(singleFlight('fmp:news', fetchNews), 15 * 60_000).unref();                    // every 15min
   console.log('[fmp] Started — earnings, insider trades, news');
 }

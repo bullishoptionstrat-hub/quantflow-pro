@@ -6,6 +6,7 @@
 import axios from 'axios';
 import { describeHttpError } from '../httpError';
 import { num } from '../optionalNumber';
+import { singleFlight } from '../singleFlight';
 
 const API_KEY = process.env.COINGECKO_API_KEY || '';
 const BASE = API_KEY
@@ -177,7 +178,7 @@ export async function startCoinGecko(): Promise<void> {
   await fetchGlobal();
 
   // Free tier: 100 calls/min — poll every 2 min to stay well under
-  setInterval(fetchPrices, 2 * 60_000).unref();
-  setInterval(fetchGlobal, 5 * 60_000).unref();
+  setInterval(singleFlight('coingecko:prices', fetchPrices), 2 * 60_000).unref();
+  setInterval(singleFlight('coingecko:global', fetchGlobal), 5 * 60_000).unref();
   console.log(`[coingecko] Started — ${API_KEY ? 'Demo API key' : 'public endpoint'} polling every 2min`);
 }

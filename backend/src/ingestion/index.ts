@@ -36,6 +36,7 @@ import {
   printActivity,
 } from './flowEngineAdapter';
 import { noteUnparsedFrame, unparsedFrameCounts } from './frameHealth';
+import { singleFlight, pollerHealth } from './singleFlight';
 import { watchLiveness } from './wsLiveness';
 import {
   initPersistence, describePersistence, SignalGrader,
@@ -456,6 +457,20 @@ export function getIngestionStatus() {
     notes[source] = notes[source] ? `${notes[source]}; ${note}` : note;
   }
 
+  // A skipped or failed poller cycle goes where the Settings page already
+  // reads, under the source the poller belongs to ("coingecko:prices" is
+  // coingecko's). A health field nothing renders is how `sourceNotes` itself
+  // sat unread for weeks.
+  for (const [poller, p] of Object.entries(pollerHealth())) {
+    const source = poller.split(':')[0]!;
+    const parts: string[] = [];
+    if (p.skipped > 0) parts.push(`${p.skipped} poll cycle(s) skipped while the previous one was still running`);
+    if (p.failed > 0) parts.push(`${p.failed} poll cycle(s) failed outright`);
+    if (parts.length === 0) continue;
+    const note = `${poller}: ${parts.join(', ')}`;
+    notes[source] = notes[source] ? `${notes[source]}; ${note}` : note;
+  }
+
   const tradierNote = tradierStreamNote();
   if (tradierNote) notes['tradier'] = notes['tradier'] ? `${notes['tradier']}; ${tradierNote}` : tradierNote;
 
@@ -472,6 +487,7 @@ export function getIngestionStatus() {
      * prints are arriving. Absent means none have been accepted since boot.
      */
     printActivity: printActivity(),
+    pollers: pollerHealth(),
     /**
      * What the vendor said, per source, and when. Distinct from `sources`:
      * that is "is data arriving?", this is "would it be allowed to?".
@@ -1107,7 +1123,7 @@ function startTradierIngestion(): void {
         // The universe moves with the underlying and with expirations rolling
         // off. Tradier modifies a subscription in place when the same
         // sessionid sends a new frame, so no reconnect is needed.
-        tradierUniverseTimer = setInterval(() => { void subscribe(); }, TRADIER_UNIVERSE_REFRESH_MS).unref();
+        tradierUniverseTimer = setInterval(singleFlight('tradier:universe', subscribe), TRADIER_UNIVERSE_REFRESH_MS).unref();
       });
 
       tradierWs.on('message', (raw: Buffer) => {
@@ -1944,8 +1960,9 @@ function startCboeOptions(): void {
       sourceErrors['cboe_options'] = describeHttpError(err);
     }
   }
-  void tick();
-  setInterval(() => { void tick(); }, 20_000).unref();
+  const cycle = singleFlight('cboe_options', tick);
+  void cycle();
+  setInterval(cycle, 20_000).unref();
 }
 
 // ─── OCC cleared volume ──────────────────────────────────────────────────────
@@ -1963,6 +1980,7 @@ function startOcc(): void {
       sourceErrors['occ'] = describeHttpError(err);
     }
   }
-  void tick();
-  setInterval(() => { void tick(); }, 300_000).unref();
+  const cycle = singleFlight('occ', tick);
+  void cycle();
+  setInterval(cycle, 300_000).unref();
 }

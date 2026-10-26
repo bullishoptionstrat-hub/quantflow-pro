@@ -4,6 +4,7 @@
  * Endpoint: https://stooq.com/q/d/l/?s={symbol}&i=d
  */
 import axios from 'axios';
+import { singleFlight } from '../singleFlight';
 
 const ENABLED = process.env.STOOQ_ENABLED !== 'false';
 
@@ -175,6 +176,6 @@ export async function startStooq(): Promise<void> {
   // `unref` so a poll timer is never the reason a process cannot exit. The
   // server is held open by its HTTP listener; a test or a one-shot script that
   // starts this connector should be free to finish.
-  setInterval(fetchAll, 10 * 60_000).unref(); // every 10 min
+  setInterval(singleFlight('stooq', fetchAll), 10 * 60_000).unref(); // every 10 min
   console.log('[stooq] Started — global indices, commodities, futures (no key required)');
 }

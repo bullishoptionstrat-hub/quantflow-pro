@@ -10,6 +10,7 @@ import { watchLiveness } from '../wsLiveness';
 import { numeric } from '../optionalNumber';
 import { describeHttpError } from '../httpError';
 import { scheduleDailyReset } from '../dailyReset';
+import { singleFlight } from '../singleFlight';
 
 const API_KEY = process.env.TWELVE_DATA_API_KEY || '';
 const BASE = 'https://api.twelvedata.com';
@@ -691,7 +692,7 @@ export async function startTwelveData(): Promise<void> {
   startWebSocket();
   scheduleDailyReset(() => { dailyCreditsUsed = 0; });
   await tick();
-  setInterval(() => { void tick(); }, REST_TICK_MS).unref();
+  setInterval(singleFlight('twelvedata', tick), REST_TICK_MS).unref();
   console.log(
     '[twelvedata] Started — WebSocket streaming + REST rotation every ' +
     `${Math.round(rotationIntervalMs(restSymbols().length) / 60_000)} min`,

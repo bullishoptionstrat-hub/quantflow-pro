@@ -9,6 +9,7 @@ import { LegacyFlowEvent as FlowEvent } from '../index';
 import { computeHeatScore } from '../heatScore';
 import { classifySweep } from '../sweepDetector';
 import { num } from '../optionalNumber';
+import { singleFlight } from '../singleFlight';
 
 const APP_KEY = process.env.SCHWAB_APP_KEY || '';
 const APP_SECRET = process.env.SCHWAB_APP_SECRET || '';
@@ -138,7 +139,7 @@ export async function startSchwab(): Promise<void> {
   if (!ok) return;
 
   // Refresh token every 28 min
-  setInterval(refreshAccessToken, 28 * 60_000).unref();
+  setInterval(singleFlight('schwab:token', refreshAccessToken), 28 * 60_000).unref();
 
   async function poll(): Promise<void> {
     for (const sym of WATCHED) {
@@ -148,6 +149,6 @@ export async function startSchwab(): Promise<void> {
   }
 
   await poll();
-  setInterval(poll, 60_000).unref(); // every minute during market hours
+  setInterval(singleFlight('schwab', poll), 60_000).unref(); // every minute during market hours
   console.log('[schwab] Started — polling options chains every 60s');
 }

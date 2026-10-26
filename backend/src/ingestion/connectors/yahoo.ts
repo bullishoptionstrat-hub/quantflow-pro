@@ -7,6 +7,7 @@ import { LegacyFlowEvent as FlowEvent } from '../index';
 import { computeHeatScore } from '../heatScore';
 import { classifySweep } from '../sweepDetector';
 import { num, orUndefined } from '../optionalNumber';
+import { singleFlight } from '../singleFlight';
 
 const ENABLED = process.env.YAHOO_ENABLED !== 'false';
 const WATCHED = ['SPY', 'QQQ', 'NVDA', 'AAPL', 'TSLA', 'MSFT', 'AMD', 'META', 'AMZN', 'MSTR', 'GLD', 'SLV'];
@@ -140,7 +141,7 @@ export async function startYahoo(): Promise<void> {
   if (!ENABLED) { console.log('[yahoo] Disabled'); return; }
 
   await fetchQuotes();
-  setInterval(fetchQuotes, 30_000).unref();
+  setInterval(singleFlight('yahoo', fetchQuotes), 30_000).unref();
 
   // Fetch options for top symbols every 3 min (stagger to avoid rate limiting)
   let idx = 0;

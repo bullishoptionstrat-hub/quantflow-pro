@@ -24,6 +24,7 @@
 import axios from 'axios';
 import { describeHttpError } from '../httpError';
 import { num } from '../optionalNumber';
+import { singleFlight } from '../singleFlight';
 
 const API_KEY = process.env.EVENT_REGISTRY_API_KEY || '';
 const ENDPOINT = 'https://eventregistry.org/api/v1/article/getArticles';
@@ -189,6 +190,6 @@ export async function startEventRegistry(): Promise<void> {
 
   await fetchHeadlines();
   // `.unref()` so a poller never holds the event loop open.
-  setInterval(fetchHeadlines, POLL_MS).unref();
+  setInterval(singleFlight('eventregistry', fetchHeadlines), POLL_MS).unref();
   console.log('[eventregistry] Started — financial headlines hourly');
 }

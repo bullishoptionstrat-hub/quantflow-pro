@@ -173,7 +173,7 @@ test('one batched call per cycle, not one per symbol', () => {
 
 test('the poller releases the event loop and the token stays out of the URL', () => {
   const code = readFileSync(CONNECTOR, 'utf8');
-  assert.match(code, /setInterval\(fetchHeadlines, POLL_MS\)\.unref\(\)/);
+  assert.match(code, /setInterval\(singleFlight\('eventregistry', fetchHeadlines\), POLL_MS\)\.unref\(\)/);
   // This API takes its key in the POST body rather than the query string, so
   // it cannot leak through a URL echoed into a public error body.
   assert.ok(!/apiKey=\$\{API_KEY\}/.test(code));
