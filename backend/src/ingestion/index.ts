@@ -35,6 +35,7 @@ import {
   unreadableTradeTimeCounts,
   printActivity,
 } from './flowEngineAdapter';
+import { noteUnparsedFrame, unparsedFrameCounts } from './frameHealth';
 import { watchLiveness } from './wsLiveness';
 import {
   initPersistence, describePersistence, SignalGrader,
@@ -435,7 +436,7 @@ export function getIngestionStatus() {
   for (const [source, note] of Object.entries(connectorNotes)) {
     notes[source] = notes[source] ? `${notes[source]}; ${note}` : note;
   }
-  for (const [source, count] of Object.entries(unparsedFrames)) {
+  for (const [source, count] of Object.entries(unparsedFrameCounts())) {
     const existing = notes[source];
     const note = `${count} stream frame(s) could not be parsed`;
     notes[source] = existing ? `${existing}; ${note}` : note;
@@ -1194,18 +1195,7 @@ export function polygonOptionTicker(
   return `O:${underlying.toUpperCase()}${yymmdd}${right}${strike8}`;
 }
 
-/**
- * Frames a streaming source sent that this process could not parse.
- *
- * Both WebSocket handlers ended `} catch {}`. A frame that failed to parse was
- * dropped with no counter, no log and no health signal — so a vendor changing
- * its envelope, or a partial frame, produced a source that was `connected`,
- * receiving bytes, and emitting nothing, with `/api/health` reporting it as
- * working. That is the Stooq failure without even a zero to show for it: the
- * three times this repo has fixed "a source that is down must not present
- * itself as data", the source at least produced something.
- */
-const unparsedFrames: Record<string, number> = {};
+// Unparsed-frame counting lives in `frameHealth.ts`, where connectors can reach it.
 
 /**
  * "Connected, and here is what is missing."
@@ -1219,15 +1209,6 @@ const unparsedFrames: Record<string, number> = {};
  */
 const connectorNotes: Record<string, string> = {};
 
-function noteUnparsedFrame(source: string): void {
-  unparsedFrames[source] = (unparsedFrames[source] ?? 0) + 1;
-  const n = unparsedFrames[source]!;
-  // Log on the first and then sparsely: a vendor that changes its envelope
-  // produces one per frame, and a log line per frame is its own outage.
-  if (n === 1 || n % 500 === 0) {
-    console.warn(`[${source}] ${n} stream frame(s) could not be parsed`);
-  }
-}
 
 /**
  * The NBBO in force at the moment of a trade, from Polygon.
