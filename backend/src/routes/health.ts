@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { getIngestionStatus, getSignalHistoryStatus } from '../ingestion/index';
 import { getEnrichmentStatus } from '../enrichment/index';
 import { marketSessionAt } from '../market/session';
+import { buildInfo } from '../buildInfo';
 
 const router = Router();
 
@@ -9,7 +10,9 @@ router.get('/', (_req, res) => {
   const status = getIngestionStatus();
   res.json({
     status: 'ok',
-    version: '1.0.0',
+    // The commit Render built this process from, or `unknown` with the reason.
+    // Replaces a hardcoded `version: '1.0.0'` that no deploy ever changed.
+    build: buildInfo(),
     timestamp: new Date().toISOString(),
     ingestion: status,
     // Reported separately from `ingestion.sources`: enrichment is not a tape

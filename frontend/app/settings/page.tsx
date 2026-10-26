@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { apiFetch } from '@/lib/apiFetch'
+import { BuildIdentity } from '@/components/settings/BuildIdentity'
 
 /**
  * Settings — what the deployment is actually configured with.
@@ -138,6 +139,8 @@ export default function SettingsPage() {
           {checkedAt && <span style={{ marginLeft: 6 }}>Checked {checkedAt}.</span>}
         </p>
       </div>
+
+      <BuildIdentity health={health} />
 
       {error && (
         <div className="card" style={{ marginBottom: 20, borderColor: 'rgba(248,113,113,0.4)' }}>

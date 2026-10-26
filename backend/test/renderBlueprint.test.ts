@@ -71,6 +71,9 @@ const NOT_DECLARED: Record<string, string> = {
   // it, and the deleted backend/render.yaml pinned it to "3001".
   PORT: 'provided by Render',
   NODE_ENV: 'set by the Blueprint as a plain value, not a credential',
+  // Set by Render on every build to the SHA it built from. Declaring it would
+  // let a dashboard value impersonate the real commit.
+  RENDER_GIT_COMMIT: 'provided by Render at build time',
   // The rights gate refuses the Yahoo connector before `yahoo.ts` reads this,
   // so a Blueprint entry would advertise a switch that does nothing.
   YAHOO_ENABLED: 'dead — the connector is refused before it reads the flag',
