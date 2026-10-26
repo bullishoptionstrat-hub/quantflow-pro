@@ -35,6 +35,7 @@ import {
   unreadableTradeTimeCounts,
   printActivity,
 } from './flowEngineAdapter';
+import { watchLiveness } from './wsLiveness';
 import {
   initPersistence, describePersistence, SignalGrader,
   type RecoveryReport,
@@ -1085,6 +1086,17 @@ function startTradierIngestion(): void {
         console.log(`[tradier] subscribed to ${tradierUniverse.size} option contracts`);
       };
 
+      // A socket whose path dies without a FIN never closes, so the reconnect
+      // below never runs and the source reads `connected` while nothing
+      // arrives. Silence past the bound terminates it, which raises `close`.
+      watchLiveness(tradierWs, (silentMs) => {
+        sources['tradier'] = 'error';
+        sourceErrors['tradier'] =
+          `stream silent for ${Math.round(silentMs / 1000)}s (no message and no pong); ` +
+          'connection terminated and reconnecting';
+        console.error(`[tradier] no message or pong for ${Math.round(silentMs / 1000)}s — terminating`);
+      });
+
       tradierWs.on('open', () => {
         sources['tradier'] = 'connected';
         delete sourceErrors['tradier'];
@@ -1125,6 +1137,9 @@ function startTradierIngestion(): void {
         if (tradierUniverseTimer) clearInterval(tradierUniverseTimer);
         tradierUniverseTimer = null;
         sources['tradier'] = 'error';
+        // Keep a reason already recorded (an error, or the liveness verdict);
+        // otherwise say why the source is not connected.
+        sourceErrors['tradier'] ??= 'stream closed; reconnecting in 5s';
         console.log('[tradier] WS closed — reconnecting in 5s');
         setTimeout(() => { void connect(); }, 5000);
       });
