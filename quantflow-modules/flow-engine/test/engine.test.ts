@@ -407,3 +407,68 @@ test("a lean counts as its direction, and the reason is that it is priced once",
   ]);
   assert.equal(mixed.spreadGuess, "RISK_REVERSAL");
 });
+
+// ---------------------------------------------------------------------------
+// Late arrivals. Trades are fed in ARRIVAL order here, not sorted by ts: that
+// is the whole point. The join test used to be `t.ts - lastTs <= window` alone,
+// which a late print passes however late it is (the difference is negative),
+// and it then set `lastTs` back to the late print's time.
+// ---------------------------------------------------------------------------
+
+function feed(trades: ReturnType<typeof trade>[]): ClassifiedSignal[] {
+  resetSeq();
+  const engine = new FlowEngine({ syntheticSource: true }, () => undefined);
+  const out: ClassifiedSignal[] = [];
+  for (const t of trades) out.push(...engine.onTrade(t));
+  out.push(...engine.flush());
+  return out;
+}
+
+test("a print an hour late does not join the open burst as a sweep", () => {
+  const c = contract("SPY", "C", 550);
+  const signals = feed([
+    trade(c, T0, 5.0, 500, "CBOE"),
+    trade(c, T0 - 3_600_000, 5.0, 500, "ISE"),
+  ]);
+  assert.equal(signals.length, 2, "two trades an hour apart are two signals");
+  for (const s of signals) {
+    assert.notEqual(s.kind, "SWEEP", "venue diversity across an hour is not a sweep");
+    assert.equal(s.legs[0]!.exchanges.length, 1);
+  }
+});
+
+test("a late print does not close or rewind the open burst", () => {
+  const c = contract("SPY", "C", 550);
+  const signals = feed([
+    trade(c, T0, 5.0, 500, "CBOE"),
+    trade(c, T0 - 3_600_000, 5.0, 500, "ISE"),
+    trade(c, T0 + 50, 5.0, 500, "PHLX"),
+  ]);
+  const current = signals.find((s) => s.printIds.length === 2);
+  assert.ok(current, "the two current prints still form one burst");
+  assert.equal(current.kind, "SWEEP");
+  assert.equal(signals.length, 2, "and the late print is its own signal");
+});
+
+test("a print slightly out of order within the window still joins", () => {
+  const c = contract("SPY", "C", 550);
+  const signals = feed([
+    trade(c, T0, 5.0, 300, "CBOE"),
+    trade(c, T0 - 40, 5.0, 300, "ISE"),
+  ]);
+  assert.equal(signals.length, 1);
+  assert.equal(signals[0]!.kind, "SWEEP");
+});
+
+test("a slightly late print does not pull the burst's end back", () => {
+  // With lastTs rewound to T0-40, a follow-up at T0+90 is 130 ms past it and
+  // would be split off; measured from the real end, T0, it is 90 ms and joins.
+  const c = contract("SPY", "C", 550);
+  const signals = feed([
+    trade(c, T0, 5.0, 300, "CBOE"),
+    trade(c, T0 - 40, 5.0, 300, "ISE"),
+    trade(c, T0 + 90, 5.0, 300, "PHLX"),
+  ]);
+  assert.equal(signals.length, 1, "all three are one burst");
+  assert.equal(signals[0]!.printIds.length, 3);
+});
