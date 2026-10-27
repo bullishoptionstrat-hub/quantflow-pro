@@ -403,7 +403,8 @@ export interface SpotQuote {
 export interface NewsItem {
   id: string
   title: string
-  url: string
+  /** null when the vendor's value was not an http(s) URL; render no link. */
+  url: string | null
   /** The outlet that ran it. FMP's feed names none, so: null. */
   publisher: string | null
   /** Which connector carried it. */

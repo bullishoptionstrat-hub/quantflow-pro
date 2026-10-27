@@ -182,7 +182,9 @@ function NewsFeed({ panel }: { panel: Panel<NewsItem[]> }) {
         {items.map(h => (
           <a
             key={h.id}
-            href={h.url}
+            // null when the vendor's value was not an http(s) URL (the backend
+            // drops it): no href, so the row is plain text rather than a link.
+            href={h.url ?? undefined}
             target="_blank"
             rel="noopener noreferrer"
             style={{ display: 'block', padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,0.04)', textDecoration: 'none', transition: 'background 0.15s' }}
