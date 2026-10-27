@@ -53,7 +53,11 @@ function getPublishedTimestamp(item: AnyNewsItem): string {
 export interface NewsWireItem {
   id: string;
   title: string;
-  url: string;
+  /**
+   * The article's address, or null when the vendor's value is not an http(s)
+   * URL. See `webUrl`.
+   */
+  url: string | null;
   /** The outlet that ran it. FMP's feed does not name one, so: null. */
   publisher: string | null;
   /** Which of our connectors carried it. */
@@ -78,6 +82,26 @@ export interface NewsWireItem {
   sentimentBasis: 'keyword' | 'vendor';
 }
 
+/**
+ * The value as an http(s) URL, or null.
+ *
+ * The news page renders `url` as a link's `href`, and every news vendor here
+ * passes on publisher URLs it does not control. React 18 still renders a
+ * `javascript:` href (it only warns), so one such value would run script in
+ * the terminal's origin on a click, where the Supabase session is held. The
+ * scheme is checked after parsing, so case and leading whitespace cannot
+ * disguise it.
+ */
+export function webUrl(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  try {
+    const u = new URL(raw.trim());
+    return u.protocol === 'http:' || u.protocol === 'https:' ? u.href : null;
+  } catch {
+    return null;
+  }
+}
+
 export function toNewsWireItem(item: AnyNewsItem): NewsWireItem {
   // Three shapes now. `symbols` separates the single-symbol FMP record from
   // the two multi-symbol ones, and `provider` separates those two from each
@@ -90,7 +114,7 @@ export function toNewsWireItem(item: AnyNewsItem): NewsWireItem {
     // keeps it from colliding with a NewsAPI id that happens to look like one.
     id: fromNewsApi ? item.id : `fmp:${item.url}`,
     title: item.title,
-    url: item.url,
+    url: webUrl(item.url),
     // NewsAPI's own record already substitutes `'Unknown'` when an article
     // names no outlet. Carrying that through would print "Unknown" as a byline
     // in the same colour as a real one; `null` sends the UI to the connector's

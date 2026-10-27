@@ -215,3 +215,23 @@ test('the connector reads dateTimePub in preference to dateTime', () => {
   assert.match(code, /a\?\.dateTimePub === 'string'\s*\n?\s*\?/,
     'dateTimePub must be preferred over the vendor\'s discovery time');
 });
+
+test('an article URL that is not http(s) is published as null', () => {
+  for (const bad of [
+    'javascript:alert(document.cookie)',
+    '  JavaScript:alert(1)',
+    'jAvAsCrIpT:alert(1)',
+    'data:text/html,<script>alert(1)</script>',
+    'vbscript:msgbox(1)',
+    'not a url',
+    '',
+  ]) {
+    assert.equal(toNewsWireItem({ ...FROM_NEWSAPI, url: bad }).url, null, bad);
+    assert.equal(toNewsWireItem({ ...FROM_FMP, url: bad }).url, null, bad);
+  }
+});
+
+test('an http(s) article URL is published unchanged', () => {
+  assert.equal(toNewsWireItem(FROM_NEWSAPI).url, FROM_NEWSAPI.url);
+  assert.equal(toNewsWireItem({ ...FROM_NEWSAPI, url: 'http://example.test/a?b=1' }).url, 'http://example.test/a?b=1');
+});
