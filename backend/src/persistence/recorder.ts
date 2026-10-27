@@ -19,7 +19,7 @@ import { computeDecisionAt, signalContentHash } from './identity';
 import type { SignalRecord, SignalStore, StoredLeg } from './types';
 
 export interface RecordOutcome {
-  status: 'RECORDED' | 'REPLAY' | 'COLLISION' | 'REFUSED_RIGHTS' | 'HELD_UNVALIDATED' | 'ERROR';
+  status: 'RECORDED' | 'REPLAY' | 'COLLISION' | 'REFUSED_RIGHTS' | 'HELD_UNVALIDATED' | 'SYNTHETIC_SAMPLED_OUT' | 'ERROR';
   signalKey?: string;
   reason?: string;
 }
@@ -32,6 +32,12 @@ export interface RecorderStats {
   refusedRights: number;
   errors: number;
   syntheticRecorded: number;
+  /**
+   * Synthetic signals seen and deliberately not written, because one was
+   * written less than `SYNTHETIC_PERSIST_INTERVAL_MS` ago. Not an error: see
+   * the constant.
+   */
+  syntheticSampledOut: number;
   /** datasetId → count of refusals, so the operator sees *which* source. */
   refusalsByDataset: Record<string, number>;
   /**
@@ -47,19 +53,43 @@ export interface RecorderStats {
 
 const NONE_HELD: ReadonlySet<string> = new Set();
 
+/**
+ * At most one synthetic signal is written per this interval.
+ *
+ * Synthetic signals are stored so that "this deployment has produced no real
+ * signals" is a visible fact rather than an empty table. One row a minute
+ * makes that fact; every row did not. A keyless deployment's simulation emits
+ * about 1,200 signals an hour, and measured on the production project on
+ * 2026-10-27: 61,929 rows, every one synthetic, 65 MB of a 77 MB database,
+ * 16,764 of them written on a single day. At that rate a 500 MB free-tier
+ * database fills in about two weeks, with rows the track record and every
+ * backtest exclude by construction, and the first real signal would then
+ * find a store that cannot take it. Sampling bounds the synthetic share to
+ * 1,440 rows a day while still recording that simulation is running. Real
+ * signals are never sampled.
+ *
+ * Existing rows are not touched. Removing them is a change to production
+ * records and is the operator's decision.
+ */
+export const SYNTHETIC_PERSIST_INTERVAL_MS = 60_000;
+
 export class SignalRecorder {
   private stats: RecorderStats = {
     seen: 0, recorded: 0, replays: 0, collisions: 0,
-    refusedRights: 0, errors: 0, syntheticRecorded: 0,
+    refusedRights: 0, errors: 0, syntheticRecorded: 0, syntheticSampledOut: 0,
     refusalsByDataset: {}, heldUnvalidated: 0, heldBySource: {},
   };
 
   /** Sources whose prints are not yet admitted. Empty unless a validator says otherwise. */
   private held: () => ReadonlySet<string> = () => NONE_HELD;
 
+  /** When a synthetic signal was last written, on `now`'s clock. */
+  private lastSyntheticWriteAt: number | null = null;
+
   constructor(
     private readonly store: SignalStore,
     private readonly mode: BusinessMode = resolveBusinessMode(),
+    private readonly now: () => number = Date.now,
   ) {}
 
   getStats(): RecorderStats {
@@ -132,6 +162,21 @@ export class SignalRecorder {
       };
     }
     const decision = decisions[0]!;
+
+    if (synthetic) {
+      const at = this.now();
+      if (this.lastSyntheticWriteAt !== null && at - this.lastSyntheticWriteAt < SYNTHETIC_PERSIST_INTERVAL_MS) {
+        this.stats.syntheticSampledOut++;
+        return {
+          status: 'SYNTHETIC_SAMPLED_OUT',
+          reason: 'Synthetic signal not written: one was written in the last minute.',
+        };
+      }
+      // Claimed before the write, so concurrent records in the same minute do
+      // not all see the slot as free. A failed write leaves it claimed, which
+      // costs at most one minute of synthetic rows.
+      this.lastSyntheticWriteAt = at;
+    }
 
     try {
       const t = computeDecisionAt(sig);
