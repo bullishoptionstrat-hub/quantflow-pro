@@ -13,6 +13,17 @@
  * second signal exits at once.
  */
 const pending = new Set<Promise<unknown>>();
+let stopping = false;
+
+/**
+ * True once shutdown has begun. New recording and grading must not start
+ * after that: work started during the drain extends it, and a process that
+ * keeps producing writes never drains before the deadline.
+ */
+export function isShuttingDown(): boolean { return stopping; }
+
+/** Test seam. */
+export function resetLifecycleForTests(): void { stopping = false; pending.clear(); }
 
 /** Register a write that shutdown should wait for. Returns it unchanged. */
 export function trackWrite<T>(p: Promise<T>): Promise<T> {
@@ -55,6 +66,7 @@ export function makeShutdown(deps: ShutdownDeps): (signal: string) => Promise<vo
   return async (signal: string) => {
     if (started) { log(`[shutdown] second ${signal}; exiting now`); deps.exit(1); return; }
     started = true;
+    stopping = true;
     log(`[shutdown] ${signal}: closing server, waiting up to ${timeoutMs}ms for writes`);
     try { await deps.closeServer(); } catch (err) { log(`[shutdown] server close failed: ${(err as Error).message}`); }
     let drained = false;
