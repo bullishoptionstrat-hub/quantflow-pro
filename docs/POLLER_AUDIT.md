@@ -43,3 +43,7 @@ Once shutdown starts:
   `.unref()`ed and the process exits once the drain ends, which closes them.
 
 `shutdownStopsWork.test.ts` covers the first two.
+
+Render Free spin-down: **UNKNOWN**. render.com could not be reached from this session (network policy), so whether spin-down sends SIGTERM, and with what delay, is not established. The 30s default and 300s maximum come from the deploys page, read earlier. They describe deploys, not spin-down. The 10s drain is not raised. To verify: check the service's Render log at a spin-down for the `[shutdown] SIGTERM` line, or ask Render support.
+
+A Tradier universe build that finishes after shutdown begins no longer subscribes (`shutdownStopsWork.test.ts`).

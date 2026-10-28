@@ -39,3 +39,10 @@ for (const [file, re] of [
     }
   });
 }
+
+test('a Tradier universe build that finishes after shutdown does not subscribe', () => {
+  const src = readFileSync(join(__dirname, '..', 'src/ingestion/index.ts'), 'utf8');
+  const send = src.indexOf('ws.send(subscriptionFrame(');
+  assert.ok(send > 0, 'subscription send not found; the pattern is stale');
+  assert.match(src.slice(send - 200, send), /isShuttingDown\(\)/, 'subscribe after a late build is unguarded');
+});
