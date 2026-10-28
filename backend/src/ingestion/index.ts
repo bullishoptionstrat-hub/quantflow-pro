@@ -15,6 +15,7 @@ import WebSocket from 'ws';
 import { fetchCboeChain, getCboeSnapshot, getCboeSymbols } from './connectors/cboeOptions';
 import { fetchOccVolume, getOccVolume } from './connectors/occ';
 import { describeHttpError } from './httpError';
+import { classifyTradierFailure, TRADIER_FAILURE_REMEDY, type TradierFailureKind } from './tradierFailure';
 import {
   buildUniverse, coverageStatement, subscriptionFrame, timesaleToPrint, universeRuleFromEnv,
   TradierValidator,
@@ -965,14 +966,20 @@ let tradierProbe: Promise<void> = Promise.resolve();
  *
  * The token is never logged or included in any recorded message.
  */
+let lastProfileFailure: TradierFailureKind | null = null;
+
 async function probeTradierProfile(host: string): Promise<number | null> {
   try {
     const res = await axios.get(`https://${host}/v1/user/profile`, {
       headers: { Authorization: `Bearer ${TRADIER_TOKEN}`, Accept: 'application/json' },
       timeout: 10_000,
     });
+    lastProfileFailure = null;
     return res.status;
   } catch (err: any) {
+    lastProfileFailure = classifyTradierFailure(err);
+    // A proxy's 403 is not Tradier's answer, so it is not reported as a status.
+    if (lastProfileFailure === 'proxy_refused') return null;
     return err?.response?.status ?? null;
   }
 }
@@ -1015,7 +1022,8 @@ async function probeTradierToken(): Promise<void> {
 
   tradierTokenVerdict = 'unknown';
   sourceErrors['tradier_token'] = prod === null
-    ? 'profile probe could not reach api.tradier.com (network or timeout) — token status unknown'
+    ? `profile probe got no answer from api.tradier.com [${lastProfileFailure ?? 'network'}: ` +
+      `${TRADIER_FAILURE_REMEDY[lastProfileFailure ?? 'network']}] — token status unknown`
     : `profile HTTP ${prod} on api.tradier.com — unexpected; token status unknown`;
 }
 
@@ -1162,7 +1170,8 @@ function startTradierIngestion(): void {
       });
     } catch (err: any) {
       const status = err.response?.status;
-      const detail = describeHttpError(err);
+      const kind = classifyTradierFailure(err);
+      const detail = `[${kind}: ${TRADIER_FAILURE_REMEDY[kind]}] ${describeHttpError(err)}`;
       console.error('[tradier] connect failed:', detail);
       sources['tradier'] = 'error';
       sourceErrors['tradier'] = detail;
