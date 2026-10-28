@@ -78,7 +78,7 @@ test('a real server that answers pings keeps a quiet connection alive', { timeou
 
 test('the Tradier stream is watched, and a close records why', () => {
   const src = readFileSync(join(__dirname, '..', 'src', 'ingestion', 'index.ts'), 'utf8');
-  const start = src.indexOf('tradierWs = new WebSocket(');
+  const start = src.indexOf('const ws = new WebSocket(url,');
   assert.ok(start > 0);
   const body = src.slice(start, start + 6_000);
   assert.match(body, /watchLiveness\(tradierWs,/, 'the socket is handed to the liveness watcher');
