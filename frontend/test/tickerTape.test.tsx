@@ -93,6 +93,24 @@ describe('ticker tape', () => {
     await waitFor(() => expect(screen.getByText(/AS OF .* ET/)).toBeDefined())
   })
 
+  test('a stale quote is dated even when another symbol on the board is fresh', async () => {
+    // Twelve Data streams some symbols and refreshes the rest over REST every
+    // ~19 minutes. Judging staleness from the newest quote kept every stale one
+    // in live styling as long as one symbol was streaming.
+    mockApi(() => ok({ quotes: [
+      quote({ symbol: 'QQQ', timestamp: Date.now() - 5_000 }),
+      quote({ symbol: 'SPY', timestamp: Date.now() - 30 * 60_000 }),
+    ] }))
+    const { container } = await renderTape()
+    await waitFor(() => expect(screen.getByText('SPY')).toBeDefined())
+    const row = (sym: string) => screen.getByText(sym).parentElement!
+    expect(row('SPY').textContent).toMatch(/AS OF .* ET/)
+    expect(row('SPY').getAttribute('data-stale')).toBe('true')
+    expect(row('QQQ').textContent).not.toMatch(/AS OF/)
+    expect(row('QQQ').getAttribute('data-stale')).toBeNull()
+    expect(container.querySelectorAll('[data-stale]').length).toBe(1)
+  })
+
   test('fresh quotes carry no as-of stamp', async () => {
     mockApi(() => ok({ quotes: [quote({ timestamp: Date.now() - 5_000 })] }))
     await renderTape()
