@@ -9,7 +9,7 @@
  * formatter instead. It was caught by eye in a screenshot.
  */
 import { describe, expect, test } from 'vitest'
-import { fmt, pctColor, pcrColor, cryptoPrice, spotPrice, signedPct } from '@/lib/format'
+import { fmt, pctColor, pcrColor, volRegime, cryptoPrice, spotPrice, signedPct } from '@/lib/format'
 
 describe('cryptoPrice', () => {
   test('never renders a live price as zero', () => {
@@ -138,5 +138,28 @@ describe('signedPct', () => {
     expect(signedPct(undefined)).toBe('—')
     // And a real zero still reads as a real zero.
     expect(signedPct(0)).toBe('+0.00%')
+  })
+})
+
+describe('volRegime', () => {
+  // The backend sends a VIX tenor it could not fetch as 0, and the route 503s
+  // before Cboe has loaded. Neither is a calm market.
+  test.each([undefined, null, 0, -1, NaN])('%s is n/a in muted grey, not a green LOW VOL', (v) => {
+    expect(volRegime(v as number | null | undefined)).toEqual({ label: 'n/a', color: 'var(--text-muted)' })
+  })
+  test('a real level is classified', () => {
+    expect(volRegime(14.2).label).toBe('🟢 LOW VOL')
+    expect(volRegime(20).label).toBe('🟡 ELEVATED')
+    expect(volRegime(30).label).toBe('🔴 HIGH VOL')
+  })
+})
+
+describe('macro page regime tile', () => {
+  test('reads the level through volRegime, not a defaulted comparison', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const src = readFileSync(join(__dirname, '..', 'app', 'macro', 'page.tsx'), 'utf8')
+    expect(src).toMatch(/volRegime\(data\?\.vix\)/)
+    expect(src).not.toMatch(/\(data\?\.vix \?\? 0\)/)
   })
 })

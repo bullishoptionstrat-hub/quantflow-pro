@@ -5,7 +5,7 @@ import { useStore } from '@/store/useStore'
 import { apiFetch } from '@/lib/apiFetch'
 import { formatPremium } from '@/lib/utils'
 import { pctColor, spotPrice, signedPct } from '@/lib/format'
-import { POLL_MS, STALE_MS } from '@/lib/spotQuotes'
+import { POLL_MS, STALE_MS, asOf } from '@/lib/spotQuotes'
 import type { SpotQuote } from '@/lib/types'
 
 /**
@@ -93,26 +93,34 @@ export function TopBar() {
   }, [load, pathname])
 
   const quotes = tape.status === 'ok' ? tape.quotes : []
-  const newest = quotes.reduce((m, q) => Math.max(m, q.timestamp ?? 0), 0)
-  const stale = quotes.length > 0 && newest > 0 && Date.now() - newest > STALE_MS
+  // Staleness is judged per quote. It used to be judged from the NEWEST quote
+  // on the board, so one fresh symbol kept every other one in live styling:
+  // with Twelve Data streaming QQQ and AAPL and refreshing the other eight over
+  // REST every ~19 minutes, those eight were shown as current while stale.
+  // A quote with no usable clock is not dated (that would date it to 1970).
+  const now = Date.now()
+  const quoteIsStale = (q: SpotQuote) => q.timestamp > 0 && now - q.timestamp > STALE_MS
 
   return (
     <div className="topbar" style={{ justifyContent: 'space-between' }}>
       {/* Scrolling ticker */}
       <div style={{ flex: 1, overflow: 'hidden', maskImage: 'linear-gradient(90deg,transparent,black 40px,black calc(100% - 40px),transparent)' }}>
         <div style={{ display: 'flex', gap: 24, alignItems: 'center', overflowX: 'auto', scrollbarWidth: 'none' }}>
-          {stale && (
-            <span style={{ color: 'var(--text-muted)', fontSize: 11, whiteSpace: 'nowrap', fontFamily: "'JetBrains Mono', monospace" }}>
-              AS OF {new Date(newest).toLocaleTimeString('en-US', { hour12: false, timeZone: 'America/New_York' })} ET
-            </span>
-          )}
-          {quotes.map(q => (
-            <span key={q.symbol} style={{ display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, opacity: stale ? 0.6 : 1 }}>
-              <span style={{ color: '#a78bfa', fontWeight: 600 }}>{q.symbol}</span>
-              <span style={{ color: '#fafafa' }}>${spotPrice(q.price)}</span>
-              <span style={{ color: pctColor(q.changePct) }}>{signedPct(q.changePct)}</span>
-            </span>
-          ))}
+          {quotes.map(q => {
+            const stale = quoteIsStale(q)
+            return (
+              <span key={q.symbol} data-stale={stale ? 'true' : undefined} style={{ display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, opacity: stale ? 0.6 : 1 }}>
+                <span style={{ color: '#a78bfa', fontWeight: 600 }}>{q.symbol}</span>
+                <span style={{ color: '#fafafa' }}>${spotPrice(q.price)}</span>
+                <span style={{ color: pctColor(q.changePct) }}>{signedPct(q.changePct)}</span>
+                {stale && (
+                  <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>
+                    AS OF {asOf(q)} ET
+                  </span>
+                )}
+              </span>
+            )
+          })}
           {/* An unavailable tape says so once, quietly, and names no fix: the
               per-source status and the variable that turns a connector on live
               on the settings page, and a second copy of that explanation here
