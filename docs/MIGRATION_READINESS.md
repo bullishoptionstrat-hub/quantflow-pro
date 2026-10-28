@@ -77,3 +77,16 @@ writes `synthetic` (`r.synthetic !== false`), so neither applies to the
 current code. PostgREST fills a key missing from some objects in a bulk body
 with NULL unless the request sends `Prefer: missing=default`; this was not
 measured here.
+
+### 2b. Proposal B and PostgREST (2026-10-28)
+
+| Layer | Finding | Basis |
+|---|---|---|
+| What the client sends | One write path into `signal_history`: `supabaseStore.ts` `.insert(toRow(rec))`, a **single object** that always carries `synthetic: r.synthetic !== false`, a boolean. There is no bulk insert, upsert or update of this table in `src/` or `tools/`. | Source, this commit |
+| postgrest-js 2.110.8 (installed) | For an **array** body it builds `?columns=` from the union of every row's keys. With the default `defaultToNull: true`, a row missing a key is sent without it under that column list. `defaultToNull: false` adds `Prefer: missing=default`. | Installed `dist/index.cjs` |
+| What PostgREST does with a missing key under `?columns=` | Expected NULL, or the column default under `missing=default`. **UNKNOWN**: docs.postgrest.org is blocked by this session's network policy, and no PostgREST binary is available here. | Not established |
+| What PostgreSQL enforces | NOT NULL with no default refuses the row. One bad row refuses the whole statement. | Disposable PG16, §2a |
+
+Compatibility: with the current writer the change is safe, because it never omits the field and never writes in bulk. A future bulk writer would need `synthetic` on every row. Under Proposal B, `missing=default` would no longer supply `false`; it would fall back to NULL and be refused. That is the intended failure.
+
+Still unverified: PostgREST's own handling of the cases above, and Supabase's gateway in front of it.

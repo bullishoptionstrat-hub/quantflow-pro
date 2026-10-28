@@ -1114,7 +1114,7 @@ function startTradierIngestion(): void {
             + JSON.stringify(tradierUniverseReport?.failures ?? {});
           return;
         }
-        if (tradierWs !== ws) return;
+        if (tradierWs !== ws || isShuttingDown()) return;
         ws.send(subscriptionFrame([...tradierUniverse.keys()], sessionid));
         console.log(`[tradier] subscribed to ${tradierUniverse.size} option contracts`);
       };
