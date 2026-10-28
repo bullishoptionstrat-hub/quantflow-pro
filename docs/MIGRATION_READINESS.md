@@ -49,3 +49,31 @@ Neither migration below has been applied to production by this work. The checks 
 - The change takes a brief `ACCESS EXCLUSIVE` lock and rewrites no rows.
 
 **Rollback:** `alter table public.signal_history alter column synthetic set default false;`
+
+### 2a. Proposal B compatibility run (disposable PostgreSQL 16, 2026-10-28)
+
+Run on a throwaway local cluster against a table with the same column
+definition (`synthetic boolean not null default false`). This is not
+production validation.
+
+| Case | Before drop default | After drop default |
+|---|---|---|
+| Insert omitting `synthetic` | stored `false` | refused, 23502 |
+| Explicit `null` | refused (NOT NULL) | refused |
+| Explicit `true` / `false` | stored | stored |
+| Bulk insert of 3 rows, one `null` | — | **whole statement refused**; the two valid rows are not stored |
+| Bulk insert, all explicit | — | stored |
+| Upsert omitting `synthetic` that **conflicts** with an existing row | — | **refused**: NOT NULL is checked on the proposed row before `ON CONFLICT` runs |
+| Upsert with explicit value, conflicting | — | update applied |
+| `ON CONFLICT DO NOTHING`, field omitted | — | refused |
+| `UPDATE` of another column on an existing row | — | allowed |
+| Rows stored before the change | unchanged | unchanged |
+| Re-running the `alter` | — | no-op, no error |
+
+Two consequences for the writer. A batch is all-or-nothing, so one row
+missing the field loses the whole batch, not just that row. And an upsert
+must carry the field even when it only updates. `supabaseStore.toRow` always
+writes `synthetic` (`r.synthetic !== false`), so neither applies to the
+current code. PostgREST fills a key missing from some objects in a bulk body
+with NULL unless the request sends `Prefer: missing=default`; this was not
+measured here.

@@ -1174,6 +1174,7 @@ function startTradierIngestion(): void {
         // otherwise say why the source is not connected.
         sourceErrors['tradier'] ??= 'stream closed; reconnecting in 5s';
         console.log('[tradier] WS closed — reconnecting in 5s');
+        if (isShuttingDown()) return;
         setTimeout(() => { void connect(); }, 5000);
       });
     } catch (err: any) {
@@ -1208,6 +1209,7 @@ function startTradierIngestion(): void {
       const wait = retryDelayMs;
       retryDelayMs = Math.min(retryDelayMs * 2, MAX_RETRY_MS);
       console.log(`[tradier] retrying in ${Math.round(wait / 1000)}s`);
+      if (isShuttingDown()) return;
       setTimeout(() => { void connect(); }, wait);
     }
   }

@@ -26,3 +26,20 @@ Read from the code at `898a21c`; nothing here was run against a live vendor.
 
 - **Shutdown:** there is no shutdown path. Timers are `.unref()`ed and the process exits with them, so nothing is cancelled cleanly. Writes still in flight at exit are covered by the grader's reconcile-before-retry rule.
 - **Live behaviour:** no skip has been observed against a live vendor. The overlap figures above come from timeouts and intervals in the code.
+
+## Shutdown (2026-10-28)
+
+Render sends SIGTERM and then SIGKILL after the service's shutdown delay,
+default 30s and configurable up to 300s (https://render.com/docs/deploys).
+The 10s drain fits inside the default. What Render sends when a free
+instance spins down was not found in its documentation and is unverified.
+
+Once shutdown starts:
+
+- no `singleFlight` poller starts a cycle; a running cycle is left to finish;
+- the Tradier, Twelve Data and Tastytrade sockets do not schedule a reconnect
+  when they close;
+- open vendor sockets and timers are not closed explicitly. Every timer is
+  `.unref()`ed and the process exits once the drain ends, which closes them.
+
+`shutdownStopsWork.test.ts` covers the first two.
