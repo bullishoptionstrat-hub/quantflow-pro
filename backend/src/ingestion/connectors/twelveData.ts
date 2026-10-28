@@ -5,6 +5,7 @@
  */
 import axios from 'axios';
 import WebSocket from 'ws';
+import { isShuttingDown } from '../../lifecycle';
 import { noteUnparsedFrame } from '../frameHealth';
 import { watchLiveness } from '../wsLiveness';
 import { numeric } from '../optionalNumber';
@@ -445,7 +446,7 @@ function startWebSocket(): void {
   watchLiveness(ws, (silentMs) => {
     console.error(`[twelvedata] no message or pong for ${Math.round(silentMs / 1000)}s — terminating to reconnect`);
   });
-  ws.on('close', () => { setTimeout(startWebSocket, 5000).unref(); });
+  ws.on('close', () => { if (isShuttingDown()) return; setTimeout(startWebSocket, 5000).unref(); });
 }
 
 /**

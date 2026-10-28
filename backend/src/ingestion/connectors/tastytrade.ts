@@ -5,6 +5,7 @@
  */
 import axios from 'axios';
 import WebSocket from 'ws';
+import { isShuttingDown } from '../../lifecycle';
 import { noteUnparsedFrame } from '../frameHealth';
 import { watchLiveness } from '../wsLiveness';
 import { LegacyFlowEvent as FlowEvent } from '../index';
@@ -137,7 +138,7 @@ function startWebSocket(): void {
   watchLiveness(ws, (silentMs) => {
     console.error(`[tastytrade] no message or pong for ${Math.round(silentMs / 1000)}s — terminating to reconnect`);
   });
-  ws.on('close', () => { setTimeout(startWebSocket, 10000).unref(); });
+  ws.on('close', () => { if (isShuttingDown()) return; setTimeout(startWebSocket, 10000).unref(); });
 }
 
 export async function startTastytrade(): Promise<void> {

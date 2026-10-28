@@ -23,7 +23,12 @@
  * A cycle that rejects is logged and does not reach the event loop as an
  * unhandled rejection, which on Node 15+ ends the process. Most pollers catch
  * their own errors; this is the backstop for the ones that do not.
+ *
+ * Once shutdown has begun no cycle starts: work begun during the drain
+ * extends the drain it is racing.
  */
+
+import { isShuttingDown } from '../lifecycle';
 
 interface PollerState {
   skipped: number;
@@ -40,6 +45,7 @@ export function singleFlight(
 ): () => Promise<void> {
   const state: PollerState = (pollers[name] ??= { skipped: 0, failed: 0, inFlightSince: null });
   return async () => {
+    if (isShuttingDown()) return;
     if (state.inFlightSince !== null) {
       state.skipped++;
       if (state.skipped === 1 || state.skipped % 100 === 0) {
