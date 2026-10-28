@@ -583,7 +583,7 @@ export class SupabaseSignalStore implements SignalStore {
 
 // ─── Row mapping ────────────────────────────────────────────────────────────
 
-function toRow(r: SignalRecord) {
+export function toRow(r: SignalRecord) {
   return {
     signal_key: r.signalKey,
     content_hash: r.contentHash,
@@ -606,7 +606,10 @@ function toRow(r: SignalRecord) {
     source: r.source,
     dataset_id: r.datasetId,
     rights_class: r.rightsClass,
-    synthetic: r.synthetic,
+    // Fail closed. JSON drops an undefined key, and the column defaults to
+    // false, so a record missing the flag would be stored as real. Only an
+    // explicit `false` is real.
+    synthetic: r.synthetic !== false,
     recorded_at: iso(r.recordedAt),
   };
 }

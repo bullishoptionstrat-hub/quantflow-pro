@@ -266,7 +266,7 @@ test('startup actually calls recovery, and before the first tick is scheduled', 
   // Recovery has to be requested before the grading timer starts, or the first
   // tick runs against an empty schedule and the resumed signals wait a full
   // minute for a checkpoint that may already be past its lateness tolerance.
-  const tickAt = body.indexOf('grader?.tick()');
+  const tickAt = body.indexOf('grader.tick()');
   assert.ok(tickAt > 0, 'the grading tick is still here');
   assert.ok(recoverAt < tickAt, 'recovery is requested before the tick loop');
 

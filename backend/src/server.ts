@@ -49,6 +49,7 @@ import backtestRouter from './routes/backtest';
 import macroRouter from './routes/macro';
 import sentimentRouter from './routes/sentiment';
 import { rateLimiter } from './middleware/rateLimiter';
+import { makeShutdown, drainWrites } from './lifecycle';
 import {
   requireAuth, requireAuthOrDemo, isDemoModeEnabled, DEMO_HEADER,
   authenticateSocket, socketAuthConfigured,
@@ -234,6 +235,16 @@ io.on('connection', (socket) => {
 // `flow_update` — delivering every event twice to room subscribers.
 
 // ─── Start ────────────────────────────────────────────────────────────────────
+const shutdown = makeShutdown({
+  // Not awaited to completion: a keep-alive client can hold `close` open
+  // indefinitely, and the drain's own deadline is the bound that matters.
+  closeServer: async () => { io.close(); httpServer.closeIdleConnections?.(); },
+  drain: drainWrites,
+  exit: (code) => process.exit(code),
+});
+process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
+process.on('SIGINT', () => { void shutdown('SIGINT'); });
+
 const PORT = Number(process.env.PORT) || 3001;
 httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`[Backend] QuantFlow Pro running on port ${PORT}`);

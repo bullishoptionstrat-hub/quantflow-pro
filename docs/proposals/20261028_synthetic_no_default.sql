@@ -1,0 +1,15 @@
+-- PROPOSAL — NOT APPLIED. Do not move into supabase/migrations/ without approval.
+--
+-- signal_history.synthetic is `boolean not null default false`. A writer that
+-- omits the field stores the row as REAL. The only writer today
+-- (supabaseStore.toRow) always sends it, so no row has been mislabelled; the
+-- default is what would do it to the next writer.
+--
+-- Dropping the default keeps NOT NULL, so an insert that omits `synthetic` is
+-- refused (SQLSTATE 23502) instead of silently becoming real. No existing row
+-- changes: NOT NULL already guarantees every row has a value, and dropping a
+-- default rewrites nothing and takes only a brief ACCESS EXCLUSIVE lock.
+--
+-- Preflight:  select count(*) from public.signal_history where synthetic is null;  -- must be 0
+-- Rollback:   alter table public.signal_history alter column synthetic set default false;
+alter table public.signal_history alter column synthetic drop default;
