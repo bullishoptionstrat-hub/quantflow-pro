@@ -392,6 +392,7 @@ export function getSpotMark(symbol: string): { price: number; asOf: number } | n
 }
 
 function startWebSocket(): void {
+  if (isShuttingDown()) return;
   const ws = new WebSocket(`${WS_URL}?apikey=${API_KEY}`);
 
   ws.on('open', () => {

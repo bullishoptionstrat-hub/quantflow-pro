@@ -46,3 +46,28 @@ test('a Tradier universe build that finishes after shutdown does not subscribe',
   assert.ok(send > 0, 'subscription send not found; the pattern is stale');
   assert.match(src.slice(send - 200, send), /isShuttingDown\(\)/, 'subscribe after a late build is unguarded');
 });
+
+// A reconnect scheduled before shutdown fires after it. The guard at close
+// time cannot see that, so the connect function itself must refuse.
+for (const [file, head] of [
+  ['src/ingestion/index.ts', 'async function connect() {'],
+  ['src/ingestion/connectors/twelveData.ts', 'function startWebSocket(): void {'],
+  ['src/ingestion/connectors/tastytrade.ts', 'function startWebSocket(): void {'],
+] as const) {
+  test(`${file}: a reconnect already scheduled does not connect after shutdown`, () => {
+    const src = readFileSync(join(__dirname, '..', file), 'utf8');
+    const at = src.indexOf(head);
+    assert.ok(at > 0, 'connect function not found; the pattern is stale');
+    const body = src.slice(at + head.length, at + head.length + 120);
+    assert.match(body, /^\s*if \(isShuttingDown\(\)\) return;/, 'connect does not check shutdown first');
+  });
+}
+
+test('staggered one-shot fetches do not run after shutdown', () => {
+  for (const f of ['flashAlpha', 'newsApi']) {
+    const src = readFileSync(join(__dirname, '..', `src/ingestion/connectors/${f}.ts`), 'utf8');
+    const sites = [...src.matchAll(/setTimeout\(\(\) => ([^,]+), i \*/g)];
+    assert.ok(sites.length > 0, `${f}: staggered fetch not found`);
+    for (const m of sites) assert.match(m[1], /isShuttingDown\(\)/, `${f}: staggered fetch unguarded`);
+  }
+});

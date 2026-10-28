@@ -6,6 +6,7 @@
  */
 import axios from 'axios';
 import { scheduleDailyReset } from '../dailyReset';
+import { isShuttingDown } from '../../lifecycle';
 import { singleFlight } from '../singleFlight';
 
 const API_KEY = process.env.NEWS_API_KEY || '';
@@ -114,7 +115,7 @@ export async function startNewsAPI(): Promise<void> {
 
   // Initial fetch — stagger queries
   for (let i = 0; i < QUERIES.length; i++) {
-    setTimeout(() => fetchHeadlines(QUERIES[i]), i * 5000).unref();
+    setTimeout(() => isShuttingDown() || fetchHeadlines(QUERIES[i]), i * 5000).unref();
   }
 
   // Refresh every 30 min (4 queries × 2 refreshes = 8 req/h, ~192/day — within 100/day free limit with batching)

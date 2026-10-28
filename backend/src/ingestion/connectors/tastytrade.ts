@@ -106,6 +106,7 @@ async function fetchOptionChain(symbol: string): Promise<void> {
 }
 
 function startWebSocket(): void {
+  if (isShuttingDown()) return;
   if (!sessionToken) return;
   const ws = new WebSocket(`${WS_BASE}?token=${sessionToken}`);
 
