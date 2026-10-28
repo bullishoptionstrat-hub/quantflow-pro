@@ -1065,6 +1065,7 @@ function startTradierIngestion(): void {
   }
 
   async function connect() {
+    if (isShuttingDown()) return;
     try {
       const { sessionid, url } = await mintSessionId();
 

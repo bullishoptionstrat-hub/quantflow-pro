@@ -5,6 +5,7 @@
  */
 import axios from 'axios';
 import { scheduleDailyReset } from '../dailyReset';
+import { isShuttingDown } from '../../lifecycle';
 import { num } from '../optionalNumber';
 
 const API_KEY = process.env.FLASHALPHA_API_KEY || '';
@@ -122,7 +123,7 @@ async function fetchGEX(symbol: string): Promise<void> {
  */
 function fetchDailyBatch(): void {
   for (let i = 0; i < Math.min(SYMBOLS.length, MAX_DAILY); i++) {
-    setTimeout(() => fetchGEX(SYMBOLS[i]), i * 90_000).unref();
+    setTimeout(() => isShuttingDown() || fetchGEX(SYMBOLS[i]), i * 90_000).unref();
   }
 }
 
