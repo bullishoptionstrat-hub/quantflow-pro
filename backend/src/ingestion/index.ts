@@ -15,6 +15,7 @@ import WebSocket from 'ws';
 import { fetchCboeChain, getCboeSnapshot, getCboeSymbols } from './connectors/cboeOptions';
 import { fetchOccVolume, getOccVolume } from './connectors/occ';
 import { describeHttpError } from './httpError';
+import { trackWrite } from '../lifecycle';
 import { classifyTradierFailure, TRADIER_FAILURE_REMEDY, type TradierFailureKind } from './tradierFailure';
 import {
   buildUniverse, coverageStatement, subscriptionFrame, timesaleToPrint, universeRuleFromEnv,
@@ -1593,11 +1594,11 @@ function startSignalHistory(): void {
     // Fire-and-forget: recording must never add latency to the live tape or
     // take it down on a database hiccup. Failures are counted in the
     // recorder's stats and surfaced on /api/health.
-    void recorder.record(sig, origin).then(async (res) => {
+    void trackWrite(recorder.record(sig, origin).then(async (res) => {
       if (res.status !== 'RECORDED' || !res.signalKey) return;
       const rec: SignalRecord | undefined = await store.getSignal(res.signalKey);
       if (rec) grader?.register(rec);
-    }).catch(() => { /* counted in recorder stats */ });
+    })).catch(() => { /* counted in recorder stats */ });
   });
 
   // Grade due checkpoints once a minute. The shortest horizon is 15 minutes,
@@ -1647,7 +1648,7 @@ function startSignalHistory(): void {
     });
 
   setInterval(() => {
-    void grader?.tick().catch(() => { /* counted in grader stats */ });
+    if (grader) void trackWrite(grader.tick()).catch(() => { /* counted in grader stats */ });
 
     const gap = coverage?.tick(sampleCoverage(), Date.now());
     if (gap) {
