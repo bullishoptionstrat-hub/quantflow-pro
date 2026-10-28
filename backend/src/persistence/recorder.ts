@@ -12,6 +12,7 @@
 import type { ClassifiedSignal } from '../flow-engine/types';
 import {
   classifySource,
+  isSimulatedSource,
   resolveBusinessMode,
   type BusinessMode,
 } from '../provenance/rights';
@@ -131,7 +132,10 @@ export class SignalRecorder {
     origin: { source: string; sources: string[]; synthetic: boolean },
   ): Promise<RecordOutcome> {
     this.stats.seen++;
-    const { source, sources, synthetic } = origin;
+    const { source, sources } = origin;
+    // A second check, at the last point before storage: a signal any of whose
+    // sources is a simulator is synthetic whatever the caller said.
+    const synthetic = origin.synthetic || sources.some(isSimulatedSource);
 
     // EVERY contributing source must be permitted. Checking only the first
     // print's source would let one permitted print carry a whole cluster of
