@@ -48,6 +48,22 @@ export function pcrColor(v: number | null | undefined): string {
 }
 
 /**
+ * The volatility regime a VIX level reads as, or n/a without one.
+ *
+ * The backend sends a VIX tenor it could not fetch as 0 (`fetchVixTerms`), and
+ * the route answers 503 before Cboe has loaded. The REGIME tile read
+ * `(data?.vix ?? 0) >= 30 ? … : '🟢 LOW VOL'`, so both cases rendered a green
+ * LOW VOL: a calm-market reading made from nothing, the same defect `pcrColor`
+ * was written to stop. A level is a reading only when it is a positive number.
+ */
+export function volRegime(v: number | null | undefined): { label: string; color: string } {
+  if (v == null || !(v > 0)) return { label: 'n/a', color: 'var(--text-muted)' }
+  if (v >= 30) return { label: '🔴 HIGH VOL', color: '#ef4444' }
+  if (v >= 20) return { label: '🟡 ELEVATED', color: '#fbbf24' }
+  return { label: '🟢 LOW VOL', color: '#22c55e' }
+}
+
+/**
  * A crypto price, at enough precision to be a price.
  *
  * Sub-cent assets get significant digits rather than fixed decimals, because

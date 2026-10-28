@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { apiFetch } from '@/lib/apiFetch'
-import { fmt, pctColor, pcrColor, cryptoPrice, signedPct } from '@/lib/format'
+import { fmt, pctColor, pcrColor, volRegime, cryptoPrice, signedPct } from '@/lib/format'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 /**
@@ -155,7 +155,8 @@ function VIXPanel({ data }: { data: VIXData | null }) {
               {terms.map(t => {
                 const v = t.value ?? 0
                 const pct = v / maxVix
-                const color = v >= 30 ? '#ef4444' : v >= 20 ? '#fbbf24' : '#22c55e'
+                // A missing tenor (0 or absent) is grey: a green stub would read as a low level.
+                const color = volRegime(v).color
                 return (
                   <div key={t.label} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
                     <span style={{ fontSize: 10, color, fontFamily: "'JetBrains Mono', monospace", fontWeight: 700 }}>
@@ -190,8 +191,8 @@ function VIXPanel({ data }: { data: VIXData | null }) {
               <div>
                 <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 2 }}>REGIME</div>
                 <div style={{ fontSize: 11, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace",
-                  color: (data?.vix ?? 0) >= 30 ? '#ef4444' : (data?.vix ?? 0) >= 20 ? '#fbbf24' : '#22c55e' }}>
-                  {(data?.vix ?? 0) >= 30 ? '🔴 HIGH VOL' : (data?.vix ?? 0) >= 20 ? '🟡 ELEVATED' : '🟢 LOW VOL'}
+                  color: volRegime(data?.vix).color }}>
+                  {volRegime(data?.vix).label}
                 </div>
               </div>
             </div>
