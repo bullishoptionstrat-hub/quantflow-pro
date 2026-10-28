@@ -1071,9 +1071,10 @@ function startTradierIngestion(): void {
       // handshake (the sessionid in the first frame is the credential), but it
       // is kept: the session mint fails first today, so this path has never
       // been exercised and there is no way to detect a regression from removing it.
-      tradierWs = new WebSocket(url, {
+      const ws = new WebSocket(url, {
         headers: { Authorization: `Bearer ${TRADIER_TOKEN}` },
       });
+      tradierWs = ws;
 
       // Subscribed to option CONTRACTS, chosen by a stated rule. This sent the
       // underlyings — `['SPY', 'QQQ', 'SPX', …]` — which is a subscription to
@@ -1092,6 +1093,11 @@ function startTradierIngestion(): void {
         try {
           const today = marketDateOf(Date.now()) ?? '';
           const built = await buildUniverse(tradierGet, WATCHED_SYMBOLS, today, tradierRuleConfig.rule);
+          // The build takes several REST calls. If this socket closed and a
+          // reconnect opened another meanwhile, this result belongs to a dead
+          // session: writing it would replace the live universe and send the
+          // old sessionid on the new socket.
+          if (tradierWs !== ws) return;
           tradierUniverse = built.contracts;
           tradierUniverseReport = built.report;
           tradierValidator.observeUniverse(tradierUniverse, today);
@@ -1107,7 +1113,8 @@ function startTradierIngestion(): void {
             + JSON.stringify(tradierUniverseReport?.failures ?? {});
           return;
         }
-        tradierWs?.send(subscriptionFrame([...tradierUniverse.keys()], sessionid));
+        if (tradierWs !== ws) return;
+        ws.send(subscriptionFrame([...tradierUniverse.keys()], sessionid));
         console.log(`[tradier] subscribed to ${tradierUniverse.size} option contracts`);
       };
 

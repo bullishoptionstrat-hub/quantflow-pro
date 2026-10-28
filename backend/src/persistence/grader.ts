@@ -221,7 +221,7 @@ export function recoverEntryMark(
   rightsFor: (markSource: string) => string | undefined,
 ): Mark | undefined {
   for (const o of outs) {
-    if (o.entryMark === undefined || !(o.entryMark > 0)) continue;
+    if (o.entryMark === undefined || !Number.isFinite(o.entryMark) || !(o.entryMark > 0)) continue;
     if (!o.entryMarkSource) continue;
     if (o.entryMarkAt === undefined || !Number.isFinite(o.entryMarkAt) || o.entryMarkAt <= 0) {
       continue;
