@@ -1,6 +1,6 @@
 # Production migration readiness (2026-10-28)
 
-Neither migration below has been applied to production by this work. The checks were run against a disposable local PostgreSQL 16.x cluster with the Supabase roles stubbed; that is not Supabase, and passing there does not make either change safe by itself.
+**Both changes below were applied to production (project `vitnwysywkmpuaoluqom`) on 2026-10-28 with the owner's approval.** Migration A was applied without its `drop trigger if exists` line, which is a no-op on a new table. Post-migration probes, run in a block that rolls back: a valid mark inserts; a duplicate, an update, a delete and a mark with no parent signal are each refused; an insert into `signal_history` omitting `synthetic` fails with 23502 (that probe also omitted other required columns, so the 23502 is not attributed to `synthetic` alone). `signal_entry_marks` holds 0 rows afterwards, RLS is enabled and forced, and the trigger function is pinned to `search_path=""`. Not yet confirmed: `entryMarkWriteFailures` staying at 0 on a running deployment.
 
 ## 1. `supabase/migrations/20261024100000_signal_entry_marks.sql` (on disk, unapplied in production as of the last read-only check)
 
