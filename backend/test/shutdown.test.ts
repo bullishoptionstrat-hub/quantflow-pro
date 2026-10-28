@@ -70,3 +70,43 @@ test('the server installs the handler and the recorder and grader writes are tra
   assert.match(idx, /trackWrite\(recorder\.record\(/);
   assert.match(idx, /trackWrite\(grader\.tick\(\)\)/);
 });
+
+import { InMemorySignalStore } from '../src/persistence/memoryStore';
+import { SignalGrader } from '../src/persistence/grader';
+import { resetLifecycleForTests, isShuttingDown } from '../src/lifecycle';
+import type { SignalRecord } from '../src/persistence/types';
+
+test('the entry-mark write started at registration is one shutdown waits for', async () => {
+  resetLifecycleForTests();
+  const T0 = Date.UTC(2026, 9, 28, 15, 0, 0);
+  const store = new InMemorySignalStore();
+  const gate = deferred();
+  const real = store.writeEntryMark.bind(store);
+  (store as any).writeEntryMark = async (m: any) => { await gate.promise; return real(m); };
+  const rec = {
+    signalKey: 'k'.padEnd(64, '0'), engineId: 'e', underlying: 'SPY', kind: 'BLOCK', side: 'BUY',
+    score: 80, totalPremium: 1e6, totalSize: 1, firstEventAt: T0, lastEventAt: T0, receivedAt: T0,
+    decisionAt: T0, decisionBasis: 'OBSERVED', source: 'tradier', datasetId: 'TRADIER_STREAM',
+    rightsClass: 'PERMITTED', synthetic: false, printIds: ['p'],
+    legs: [{ underlying: 'SPY', expiry: '2026-12-18', strike: 550, right: 'C', side: 'BUY', totalSize: 1, totalPremium: 1e6, prints: 1 }],
+  } as unknown as SignalRecord;
+  await store.writeSignal(rec);
+  const g = new SignalGrader(store, () => ({ price: 100, source: 'twelvedata', rightsClass: 'UNVERIFIED', asOf: T0 }), {}, () => T0);
+  g.register(rec);
+  assert.equal(pendingWrites(), 1, 'the entry-mark write is not tracked');
+  assert.equal(await drainWrites(20), false, 'drain finished while the mark was still being written');
+  gate.resolve();
+  assert.equal(await drainWrites(1_000), true);
+  assert.ok(await store.getEntryMark(rec.signalKey), 'the mark was written');
+});
+
+test('once shutdown starts, recording and grading stop starting new work', async () => {
+  resetLifecycleForTests();
+  assert.equal(isShuttingDown(), false);
+  await makeShutdown({ closeServer: async () => {}, drain: async () => true, exit: () => {}, log: () => {} })('SIGTERM');
+  assert.equal(isShuttingDown(), true);
+  const idx = readFileSync(join(__dirname, '../src/ingestion/index.ts'), 'utf8');
+  assert.match(idx, /if \(isShuttingDown\(\)\) return;\s*\n\s*\/\/ Fire-and-forget/);
+  assert.match(idx, /if \(grader && !isShuttingDown\(\)\) void trackWrite\(grader\.tick\(\)\)/);
+  resetLifecycleForTests();
+});

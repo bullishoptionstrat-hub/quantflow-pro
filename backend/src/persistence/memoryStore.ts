@@ -61,7 +61,10 @@ export class InMemorySignalStore implements SignalStore {
   private readonly gaps: CollectionGap[] = [];
   private evicted = 0;
 
-  async writeSignal(rec: SignalRecord): Promise<WriteResult> {
+  async writeSignal(input: SignalRecord): Promise<WriteResult> {
+    // Same rule as supabaseStore.toRow: only an explicit false is real, so a
+    // record that lost its flag cannot be counted as real by either store.
+    const rec: SignalRecord = { ...input, synthetic: input.synthetic !== false };
     const existing = this.signals.get(rec.signalKey);
     const verdict: WriteVerdict = reconcileWrite(existing, rec);
 

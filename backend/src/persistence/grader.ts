@@ -27,6 +27,7 @@
  * never dropped: dropping the hard cases is how a hit rate drifts upward
  * without anyone editing a number.
  */
+import { trackWrite } from '../lifecycle';
 import { impliedDirectionOf } from '../flow-engine/outcome/types';
 import { GRADED_HORIZONS, HORIZON_NOMINAL_MS } from './types';
 import type { ImpliedDirection } from '../flow-engine/outcome/types';
@@ -476,6 +477,10 @@ export class SignalGrader {
       })
       .finally(() => { this.entryWrites.delete(p); });
     this.entryWrites.add(p);
+    // Shutdown waits on tracked writes. This one starts after the recorder's
+    // tracked promise has resolved, so untracked it would be cut off by a
+    // SIGTERM that lands just after a signal is recorded.
+    trackWrite(p);
   }
 
   /**

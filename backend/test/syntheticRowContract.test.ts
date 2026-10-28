@@ -36,3 +36,13 @@ test('the schema proposal drops the default and is not an applied migration', ()
   assert.match(readFileSync(p, 'utf8'), /alter column synthetic drop default/);
   assert.equal(existsSync(join(__dirname, '../../supabase/migrations/20261028_synthetic_no_default.sql')), false);
 });
+
+test('the in-memory store applies the same rule, so both stores count alike', async () => {
+  const { InMemorySignalStore } = await import('../src/persistence/memoryStore');
+  const store = new InMemorySignalStore();
+  const T = Date.UTC(2026, 0, 2);
+  for (const [i, v] of [undefined, null, false].entries()) {
+    await store.writeSignal({ ...base, signalKey: `k${i}`, contentHash: `k${i}`, firstEventAt: T, lastEventAt: T, decisionAt: T, synthetic: v as any });
+  }
+  assert.deepEqual(await store.countSignals(), { total: 3, synthetic: 2, real: 1 });
+});

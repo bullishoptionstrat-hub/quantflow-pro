@@ -15,7 +15,7 @@ import WebSocket from 'ws';
 import { fetchCboeChain, getCboeSnapshot, getCboeSymbols } from './connectors/cboeOptions';
 import { fetchOccVolume, getOccVolume } from './connectors/occ';
 import { describeHttpError } from './httpError';
-import { trackWrite } from '../lifecycle';
+import { trackWrite, isShuttingDown } from '../lifecycle';
 import { classifyTradierFailure, TRADIER_FAILURE_REMEDY, type TradierFailureKind } from './tradierFailure';
 import {
   buildUniverse, coverageStatement, subscriptionFrame, timesaleToPrint, universeRuleFromEnv,
@@ -1591,6 +1591,9 @@ function startSignalHistory(): void {
     .catch(() => { /* counted in grader stats */ });
 
   onSignal((sig, origin) => {
+    // Signals finalized during the drain are dropped, not recorded: starting a
+    // write now would extend the drain it is racing. At most the drain window.
+    if (isShuttingDown()) return;
     // Fire-and-forget: recording must never add latency to the live tape or
     // take it down on a database hiccup. Failures are counted in the
     // recorder's stats and surfaced on /api/health.
@@ -1648,7 +1651,7 @@ function startSignalHistory(): void {
     });
 
   setInterval(() => {
-    if (grader) void trackWrite(grader.tick()).catch(() => { /* counted in grader stats */ });
+    if (grader && !isShuttingDown()) void trackWrite(grader.tick()).catch(() => { /* counted in grader stats */ });
 
     const gap = coverage?.tick(sampleCoverage(), Date.now());
     if (gap) {
