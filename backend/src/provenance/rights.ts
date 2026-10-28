@@ -486,6 +486,18 @@ export function datasetIdForSource(source: string): string | undefined {
   return SOURCE_TO_DATASET[source];
 }
 
+/**
+ * Whether a source is generated here rather than observed.
+ *
+ * `synthetic` on a print is the producer's own statement, and a producer that
+ * forgets to make it would otherwise put a simulated print in the record as a
+ * real one: SIMULATION is PERMITTED for PERSIST (it raises no rights question),
+ * so the rights gate does not stop it. The dataset decides, not the flag alone.
+ */
+export function isSimulatedSource(source: string): boolean {
+  return SOURCE_TO_DATASET[source] === 'SIMULATION';
+}
+
 export function getDataset(id: string): DatasetRights | undefined {
   return BY_ID.get(id);
 }

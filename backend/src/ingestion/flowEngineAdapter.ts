@@ -30,7 +30,7 @@ import type {
   OptionTradeEvent,
 } from '../flow-engine/types';
 import { DEFAULT_CONFIG } from '../flow-engine/types';
-import { classifySource, type RightsClass } from '../provenance/rights';
+import { classifySource, isSimulatedSource, type RightsClass } from '../provenance/rights';
 
 // ─── Input ──────────────────────────────────────────────────────────────────
 
@@ -700,7 +700,9 @@ function ingestInto(S: IngestorState, print: RawPrint): WireFlowEvent[] {
     }
     printSource.set(id, {
       source: print.source,
-      synthetic: print.synthetic === true,
+      // The dataset decides as well as the flag: a simulated print whose
+      // producer forgot `synthetic` must not read as observed.
+      synthetic: print.synthetic === true || isSimulatedSource(print.source),
       iv: print.iv,
       delta: print.delta,
       declaredVenues,
