@@ -1,0 +1,294 @@
+//@version=6
+// QuantFlow Pro · F-001 — ES intraday: opening-range breakout on trend days,
+// VWAP reversion on range days, routed by one regime filter.
+//
+// A bar-for-bar port of es-signal-tool's `combined_orb_vwap` (src/strategies.py,
+// md5 9aaa65c5d1c6ec46ff1f2393ca135f84) executed the way its backtester
+// (src/backtest.py, md5 addec990732fe6cce72dde9ab73b40cd) executes it: the
+// target position is decided on a bar's close and filled at the next bar's
+// open, everything is flat from 15:59 ET, $4.00 round-turn commission, one
+// tick of slippage per side. Defaults are the Python defaults. Where the
+// Python does something odd, the port does the same odd thing, so the two can
+// be checked against each other; pine/README.md lists each one.
+//
+// Registered as F-001 in research/SEARCH_LEDGER.csv. UNTESTED. No result of
+// this script has been viewed. Read research/hypotheses/F-001-… before
+// opening the Strategy Tester on any date before the default "Trade from".
+
+strategy("QuantFlow F-001 · ES ORB + VWAP reversion",
+     shorttitle="QF F-001",
+     overlay=true,
+     initial_capital=50000,
+     default_qty_type=strategy.fixed,
+     default_qty_value=1,
+     pyramiding=0,
+     commission_type=strategy.commission.cash_per_contract,
+     commission_value=2.0,
+     slippage=1,
+     margin_long=0,
+     margin_short=0,
+     process_orders_on_close=false,
+     calc_on_every_tick=false,
+     calc_on_order_fills=false,
+     max_bars_back=500)
+
+// The Python reads its bars in US/Eastern. ES's exchange timezone is Chicago,
+// so every clock read here names New York explicitly.
+TZ = "America/New_York"
+
+// ---------- Inputs (defaults = es-signal-tool defaults) ----------
+gStrat = "Strategy"
+gReg   = "Regime filter"
+gOrb   = "Opening range"
+gVw    = "VWAP reversion"
+gSess  = "Session"
+gExec  = "Execution"
+
+mode      = input.string("Combined", "Mode", options=["Combined", "ORB only", "VWAP reversion only"], group=gStrat,
+     tooltip="Combined = combined_orb_vwap: ORB wins where it fires, VWAP reversion fills the rest.")
+useRegime = input.bool(true, "Gate by regime", group=gStrat)
+
+adxLen    = input.int(14, "ADX length", minval=1, group=gReg)
+adxThresh = input.float(20.0, "ADX trend threshold", minval=0, group=gReg)
+rvLen     = input.int(20, "Realized-vol window (stdev of TR)", minval=2, group=gReg)
+volLook   = input.int(100, "Vol percentile lookback", minval=2, maxval=400, group=gReg)
+volCap    = input.float(0.95, "Vol percentile cap", minval=0, maxval=1, step=0.01, group=gReg)
+
+orMinutes = input.int(30, "Opening range (minutes)", minval=1, group=gOrb)
+
+bandMult  = input.float(2.0, "Band multiplier", minval=0.1, step=0.1, group=gVw)
+bandLook  = input.int(20, "Band lookback (RTH bars)", minval=2, group=gVw)
+exitAtVw  = input.bool(true, "Exit at VWAP", group=gVw)
+
+rthStartH = input.int(9,  "RTH start hour (ET)",   minval=0, maxval=23, group=gSess)
+rthStartM = input.int(30, "RTH start minute (ET)", minval=0, maxval=59, group=gSess)
+rthEndH   = input.int(16, "RTH end hour (ET)",     minval=0, maxval=23, group=gSess)
+rthEndM   = input.int(0,  "RTH end minute (ET)",   minval=0, maxval=59, group=gSess)
+flatH     = input.int(15, "Flat-from hour (ET)",   minval=0, maxval=23, group=gSess)
+flatM     = input.int(59, "Flat-from minute (ET)", minval=0, maxval=59, group=gSess)
+
+contracts  = input.int(1, "Contracts", minval=1, group=gExec)
+allowShort = input.bool(true, "Allow shorts", group=gExec)
+tradeFrom  = input.time(timestamp("2026-08-15T00:00:00-04:00"), "Trade from", group=gExec,
+     tooltip="F-001's parity window starts 2026-08-15. Moving this earlier views the confirmatory or holdout window: record it in research/DATASET_EXPOSURE_LEDGER.csv first.")
+
+if not timeframe.isintraday
+    runtime.error("F-001 is an intraday system; the Python reference runs on 5-minute bars.")
+
+// ---------- Rolling statistics with pandas' NaN rule ----------
+// pandas' rolling(n) yields NaN when any value in the window is NaN; Pine's
+// ta.* functions skip na instead. These loops keep the pandas rule.
+meanStrict(float src, int len) =>
+    float s = 0.0
+    bool ok = bar_index >= len - 1
+    if ok
+        for i = 0 to len - 1
+            float v = src[i]
+            if na(v)
+                ok := false
+                break
+            s += v
+    ok ? s / len : na
+
+// Sample standard deviation (ddof=1), as pandas' .std().
+stdevStrict(float src, int len) =>
+    float m = meanStrict(src, len)
+    float ss = 0.0
+    if not na(m)
+        for i = 0 to len - 1
+            float d = src[i] - m
+            ss += d * d
+    na(m) ? na : math.sqrt(ss / (len - 1))
+
+// Percentile rank of the newest value in its window, ties averaged:
+// pandas' x.rank(pct=True).iloc[-1].
+rankPctLast(float src, int len) =>
+    float cur = src
+    bool ok = bar_index >= len - 1 and not na(cur)
+    int less = 0
+    int eq = 0
+    if ok
+        for i = 0 to len - 1
+            float v = src[i]
+            if na(v)
+                ok := false
+                break
+            if v < cur
+                less += 1
+            else if v == cur
+                eq += 1
+    ok ? (less + (eq + 1) / 2.0) / len : na
+
+// ---------- Regime filter (regime_filter) — computed on every bar ----------
+float tr     = ta.tr(true)
+float up     = nz(high - high[1])
+float dn     = nz(low[1] - low)
+float plusDM = up > dn and up > 0 ? up : 0.0
+float minDM  = dn > up and dn > 0 ? dn : 0.0
+float atrN   = meanStrict(tr, adxLen)
+float atrNz  = atrN == 0 ? na : atrN
+float plusDI = 100 * meanStrict(plusDM, adxLen) / atrNz
+float minDI  = 100 * meanStrict(minDM, adxLen) / atrNz
+float diSum  = plusDI + minDI
+float dx     = 100 * math.abs(plusDI - minDI) / (diSum == 0 ? na : diSum)
+float adxVal = nz(meanStrict(dx, adxLen), 0)
+
+float realized = stdevStrict(tr, rvLen)
+float volPct   = nz(rankPctLast(realized, volLook), 0.5)
+
+bool isTrend   = adxVal >= adxThresh
+bool tradeable = isTrend and volPct <= volCap
+
+// ---------- Session clock ----------
+int barMod   = hour(time, TZ) * 60 + minute(time, TZ)
+int nextMod  = hour(time_close, TZ) * 60 + minute(time_close, TZ)
+int startMod = rthStartH * 60 + rthStartM
+int endMod   = rthEndH * 60 + rthEndM
+int flatMod  = flatH * 60 + flatM
+int dayKey   = year(time, TZ) * 10000 + month(time, TZ) * 100 + dayofmonth(time, TZ)
+
+// between_time(start, end) is inclusive at both ends.
+bool inRth = barMod >= startMod and barMod <= endMod
+int orBars = math.max(1, int(math.floor(orMinutes * 60.0 / timeframe.in_seconds())))
+
+// ---------- Per-day state ----------
+var int   curDay  = na
+var int   rthN    = 0
+var float orHigh  = na
+var float orLow   = na
+var float cumPV   = 0.0
+var float cumVol  = 0.0
+var float vwapVal = na
+var int   vwPos   = 0
+var array<float> devs = array.new<float>()
+
+if na(curDay) or dayKey != curDay
+    curDay  := dayKey
+    rthN    := 0
+    orHigh  := na
+    orLow   := na
+    cumPV   := 0.0
+    cumVol  := 0.0
+    vwapVal := na
+    vwPos   := 0
+    array.clear(devs)
+
+int   orbSig = 0
+int   vwSig  = 0
+float upper  = na
+float lower  = na
+
+if inRth
+    rthN += 1
+
+    // opening_range_breakout
+    if rthN <= orBars
+        orHigh := na(orHigh) ? high : math.max(orHigh, high)
+        orLow  := na(orLow)  ? low  : math.min(orLow, low)
+    else if not useRegime or tradeable
+        if high > orHigh
+            orbSig := 1
+        else if low < orLow
+            orbSig := -1
+
+    // _session_vwap: typical price, anchored at the RTH open; a zero-volume
+    // start carries the last VWAP forward (ffill), so it stays na until volume.
+    cumPV  += hlc3 * volume
+    cumVol += volume
+    if cumVol > 0
+        vwapVal := cumPV / cumVol
+
+    // Bands: VWAP ± bandMult · sample stdev of (close − VWAP) over the day's
+    // last bandLook RTH bars.
+    array.push(devs, close - vwapVal)
+    int n = array.size(devs)
+    if n >= bandLook
+        float s = 0.0
+        bool ok = true
+        for i = n - bandLook to n - 1
+            float d = array.get(devs, i)
+            if na(d)
+                ok := false
+                break
+            s += d
+        if ok
+            float m = s / bandLook
+            float ss = 0.0
+            for i = n - bandLook to n - 1
+                float d = array.get(devs, i) - m
+                ss += d * d
+            float band = math.sqrt(ss / (bandLook - 1))
+            upper := vwapVal + bandMult * band
+            lower := vwapVal - bandMult * band
+
+    // vwap_reversion's state machine. A bar without bands leaves the
+    // position untouched and signals 0, exactly as the Python's `continue`.
+    if not na(upper) and not na(lower) and not na(vwapVal)
+        if useRegime and (isTrend or not (volPct <= volCap))
+            vwPos := 0
+        else
+            if vwPos == 0
+                if close < lower
+                    vwPos := 1
+                else if close > upper
+                    vwPos := -1
+            else
+                float w = upper - lower
+                if exitAtVw and ((vwPos == 1 and close >= vwapVal) or (vwPos == -1 and close <= vwapVal))
+                    vwPos := 0
+                else if vwPos == 1 and close < lower - w
+                    vwPos := 0
+                else if vwPos == -1 and close > upper + w
+                    vwPos := 0
+        vwSig := vwPos
+
+// ---------- Target position and execution (run_backtest) ----------
+int target = switch mode
+    "ORB only"            => orbSig
+    "VWAP reversion only" => vwSig
+    => orbSig != 0 ? orbSig : vwSig
+
+if not allowShort
+    target := math.max(target, 0)
+
+// The backtester applies a bar's target at the next bar's open and is flat
+// from flat-time on; time_close is that next open.
+bool forceFlatNext = nextMod >= flatMod
+int desired = forceFlatNext or time < tradeFrom ? 0 : target
+
+if desired == 1 and strategy.position_size <= 0
+    strategy.entry("Long", strategy.long, qty=contracts)
+else if desired == -1 and strategy.position_size >= 0
+    strategy.entry("Short", strategy.short, qty=contracts)
+else if desired == 0 and strategy.position_size != 0
+    strategy.close_all(comment=forceFlatNext ? "Session flat" : "Target 0")
+
+// Supervised use only: the prop rules es-signal-tool targets forbid
+// unattended automation. One message per change of target, at bar close.
+var int lastDesired = 0
+if desired != lastDesired
+    alert('{"system":"QF-F001","symbol":"' + syminfo.ticker + '","target":' + str.tostring(desired) +
+         ',"contracts":' + str.tostring(contracts) + ',"close":' + str.tostring(close) + '}',
+         alert.freq_once_per_bar_close)
+    lastDesired := desired
+
+// ---------- Visuals ----------
+bool showOr = inRth and rthN > orBars
+plot(showOr ? orHigh : na, "OR high", color=color.new(color.teal, 0), style=plot.style_linebr, linewidth=2)
+plot(showOr ? orLow  : na, "OR low",  color=color.new(color.maroon, 0), style=plot.style_linebr, linewidth=2)
+plot(inRth ? vwapVal : na, "VWAP", color=color.new(color.orange, 0), style=plot.style_linebr)
+plot(upper, "Upper band", color=color.new(color.orange, 60), style=plot.style_linebr)
+plot(lower, "Lower band", color=color.new(color.orange, 60), style=plot.style_linebr)
+bgcolor(inRth and useRegime ? (tradeable ? color.new(color.teal, 92) : not isTrend and volPct <= volCap ? color.new(color.orange, 94) : na) : na,
+     title="Regime: teal = ORB may fire, orange = VWAP reversion may fire")
+
+var table info = table.new(position.top_right, 2, 4, bgcolor=color.new(color.black, 30), border_width=1)
+if barstate.islast
+    table.cell(info, 0, 0, "ADX", text_color=color.white)
+    table.cell(info, 1, 0, str.tostring(adxVal, "#.0"), text_color=color.white)
+    table.cell(info, 0, 1, "Vol pct", text_color=color.white)
+    table.cell(info, 1, 1, str.tostring(volPct, "#.00"), text_color=color.white)
+    table.cell(info, 0, 2, "Regime", text_color=color.white)
+    table.cell(info, 1, 2, tradeable ? "trend" : not isTrend ? "range" : "blow-off", text_color=color.white)
+    table.cell(info, 0, 3, "Target", text_color=color.white)
+    table.cell(info, 1, 3, str.tostring(desired), text_color=color.white)
