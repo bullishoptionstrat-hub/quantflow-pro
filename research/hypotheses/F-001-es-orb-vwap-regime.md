@@ -64,19 +64,25 @@ es-signal-tool's Python backtester and `prop_rules.py`. The Pine port is a
 mirror, and a mirror is only evidence once it has been checked. **Before the
 confirmatory window is loaded**, the two must agree on the parity window: at
 least 95% of Python trades matched by a Pine trade with the same entry bar and
-direction. A lower match rate halts F-001 until it is explained.
+direction. A lower match rate halts F-001 until it is explained. The Python
+is fed **TradingView's own bars** for that window (the chart's data export),
+so that a difference is a difference in code and not between data vendors;
+VWAP reads volume and roll handling varies by vendor.
 
 ## D. Decision rule
 
-Over the confirmatory window, one contract, Combined mode:
+Over the confirmatory window, one contract, Combined mode. Every measure is
+computed by code that already exists in es-signal-tool, on
+`trades = run_backtest(bars, lambda b: combined_orb_vwap(b, bar_minutes=5))`
+with the default `BacktestConfig()`:
 
 | condition | measure |
 |---|---|
-| D1 | net P&L after costs > $0 |
-| D2 | net P&L > $0 in at least **6 of the 8** calendar quarters |
-| D3 | worst peak-to-trough drawdown of equity marked at each bar close, open P&L included, < **$2,000** |
-| D4 | `PropConfig.topstep_50k()` started on 2023-01-03 reaches its target before it fails |
-| D5 | at least **200** round-trip trades |
+| D1 | `summarize(trades)["net_pnl"] > 0` |
+| D2 | `trades.groupby(trades.exit_time.dt.to_period("Q")).pnl_dollars.sum() > 0` in at least **6 of the 8** quarters (a quarter with no trades counts as not positive) |
+| D3 | `evaluate(trades, PropConfig(drawdown_type=DrawdownType.EOD_STATIC, daily_loss_limit=None, max_drawdown=float("inf"))).max_intraday_dd < 2000`. This config never stops early, so the figure covers every trade. It is peak-to-trough of **realized** equity in exit order, which is looser than marking open P&L. That limit is stated in `evaluate`'s own docstring and accepted here rather than written as new code |
+| D4 | `evaluate(trades, PropConfig.topstep_50k()).passed` |
+| D5 | `summarize(trades)["trades"] >= 200` |
 
 - D5 fails → **INCONCLUSIVE**, whatever D1–D4 say.
 - D1–D5 all hold → **SUPPORTED**, and the holdout may then be run once, under

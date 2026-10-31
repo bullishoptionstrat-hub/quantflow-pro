@@ -39,6 +39,7 @@ TradingView, and no result from it or its Python original has been viewed.
 | Flat | everything from 15:59 ET. No entry is placed for a bar opening at or after it |
 | Costs | $2.00 per contract per fill ($4.00 round turn) and 1 tick of slippage per fill |
 | Size | 1 contract, fixed |
+| Margin | 0% long and short. The Python models no margin. Under a nonzero margin, TradingView's emulator can liquidate an ES contract against a $50k account with "Margin call" exits the Python never makes |
 | Timezone | `America/New_York` everywhere. ES's exchange timezone is Chicago, so nothing reads `syminfo.timezone` |
 | Repainting | none. No `request.security`, and every value is computed from closed bars |
 | Alerts | one `alert()` per change of target, at bar close, as JSON. The prop rules es-signal-tool targets forbid unattended automation, so treat the alerts as prompts, not as a bot |
@@ -86,8 +87,11 @@ new experiment on both engines.
 
 F-001 §C requires this before any confirmatory data is loaded:
 
-1. Run the Python on ES 5-minute bars from 2026-08-15 onward, with the same
-   session coverage and roll handling as the chart.
+1. Export the chart's own bars from 2026-08-15 onward and run the Python on
+   *those*, not on another vendor's ES. VWAP reads volume and roll handling
+   varies by vendor, so separate feeds would test the data as well as the
+   code. (On lower TradingView plans, 5-minute history may not reach back to
+   2026-08-15. If it doesn't, record the window actually used.)
 2. Export TradingView's *List of trades*.
 3. Match the two on entry bar and direction. Below 95% matched, F-001 halts
    until the difference is explained.

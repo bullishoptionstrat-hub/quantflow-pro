@@ -59,7 +59,7 @@ test('H-001 v1 is exactly what was frozen, and v2 is pinned', () => {
 
 test('F-001 is pinned and registered', () => {
   assert.equal(sha(join(RESEARCH, 'hypotheses', 'F-001-es-orb-vwap-regime.md')),
-    'ac7ea78d7baa96b1b8b4cc64d1f5e43ae81d5fc2c46539ee70ceac69cd93866e',
+    'ba546b0aa568ec3e0e43d156ab37a7414a60a3c3fd343e73011831fec956e735',
     'F-001 changed. Before data is accessed, update this pin in the same diff; after, register F-001-v2 instead.');
   const rows = parseCsv(readFileSync(join(RESEARCH, 'SEARCH_LEDGER.csv'), 'utf8')).slice(1);
   assert.ok(rows.some((r) => r[0] === 'F-001' && r[1] === 'v1'), 'F-001 v1 has a search-ledger row');
