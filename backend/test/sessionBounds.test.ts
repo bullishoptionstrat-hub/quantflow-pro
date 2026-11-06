@@ -16,7 +16,7 @@ test('a regular day, a half day, a closure and a date the calendar will not answ
   // 2026-11-27 closes at 13:00, EST (UTC−5).
   assert.deepEqual(regularSessionInstants('2026-11-27'),
     { ok: true, open: Date.parse('2026-11-27T14:30:00Z'), close: Date.parse('2026-11-27T18:00:00Z') });
-  for (const [date, unknown] of [['2026-03-14', false], ['2026-11-26', false], ['2027-03-10', true], ['not-a-date', true]] as const) {
+  for (const [date, unknown] of [['2026-03-14', false], ['2026-11-26', false], ['2028-03-08', true], ['not-a-date', true]] as const) {
     const r = regularSessionInstants(date);
     assert.equal(r.ok, false, date);
     assert.equal(!r.ok && r.unknown, unknown, `${date}: closed and cannot-say are different answers`);

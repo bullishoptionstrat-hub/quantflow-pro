@@ -38,11 +38,11 @@ insert into public.signal_history (
   signal_key, content_hash, engine_id, kind, underlying, side,
   total_premium, total_size, score, legs,
   first_event_at, last_event_at, decision_at, decision_basis,
-  source, dataset_id, rights_class
+  source, dataset_id, rights_class, synthetic
 ) values (
   'g1-bad', 'h', 'sig_1', 'SWEEP', 'SPY', 'BUY', 250000, 100, 82, '[]'::jsonb,
   '2026-08-29 14:30:00+00', '2026-08-29 14:30:01+00', '2026-08-29 14:30:00.5+00',
-  'OBSERVED', 'tradier', 'TRADIER_STREAM', 'PERMITTED'
+  'OBSERVED', 'tradier', 'TRADIER_STREAM', 'PERMITTED', false
 );
 
 \echo '--- G1b  last_event_at BEFORE first_event_at  (must be refused)'
@@ -50,11 +50,11 @@ insert into public.signal_history (
   signal_key, content_hash, engine_id, kind, underlying, side,
   total_premium, total_size, score, legs,
   first_event_at, last_event_at, decision_at, decision_basis,
-  source, dataset_id, rights_class
+  source, dataset_id, rights_class, synthetic
 ) values (
   'g1-bad2', 'h', 'sig_1', 'SWEEP', 'SPY', 'BUY', 250000, 100, 82, '[]'::jsonb,
   '2026-08-29 14:30:05+00', '2026-08-29 14:30:00+00', '2026-08-29 14:30:10+00',
-  'OBSERVED', 'tradier', 'TRADIER_STREAM', 'PERMITTED'
+  'OBSERVED', 'tradier', 'TRADIER_STREAM', 'PERMITTED', false
 );
 
 \echo '--- G1c  a well-ordered timeline  (must be ACCEPTED)'
@@ -62,9 +62,21 @@ insert into public.signal_history (
   signal_key, content_hash, engine_id, kind, underlying, side,
   total_premium, total_size, score, legs,
   first_event_at, last_event_at, decision_at, decision_basis, latency_ms,
-  source, dataset_id, rights_class
+  source, dataset_id, rights_class, synthetic
 ) values (
   'g1-ok', 'hash-a', 'sig_1', 'SWEEP', 'SPY', 'BUY', 250000, 100, 82, '[]'::jsonb,
+  '2026-08-29 14:30:00+00', '2026-08-29 14:30:00.5+00', '2026-08-29 14:30:00.53+00',
+  'OBSERVED', 30, 'tradier', 'TRADIER_STREAM', 'PERMITTED', false
+);
+
+\echo '--- G1c2  the same signal with synthetic omitted  (must be refused: no default)'
+insert into public.signal_history (
+  signal_key, content_hash, engine_id, kind, underlying, side,
+  total_premium, total_size, score, legs,
+  first_event_at, last_event_at, decision_at, decision_basis, latency_ms,
+  source, dataset_id, rights_class
+) values (
+  'g1-nosyn', 'hash-n', 'sig_1', 'SWEEP', 'SPY', 'BUY', 250000, 100, 82, '[]'::jsonb,
   '2026-08-29 14:30:00+00', '2026-08-29 14:30:00.5+00', '2026-08-29 14:30:00.53+00',
   'OBSERVED', 30, 'tradier', 'TRADIER_STREAM', 'PERMITTED'
 );
@@ -74,11 +86,11 @@ insert into public.signal_history (
   signal_key, content_hash, engine_id, kind, underlying, side,
   total_premium, total_size, score, legs,
   first_event_at, last_event_at, decision_at, decision_basis,
-  source, dataset_id, rights_class
+  source, dataset_id, rights_class, synthetic
 ) values (
   'g1-basis', 'h', 'sig_1', 'SWEEP', 'SPY', 'BUY', 250000, 100, 82, '[]'::jsonb,
   '2026-08-29 14:30:00+00', '2026-08-29 14:30:01+00', '2026-08-29 14:30:02+00',
-  'PROBABLY_FINE', 'tradier', 'TRADIER_STREAM', 'PERMITTED'
+  'PROBABLY_FINE', 'tradier', 'TRADIER_STREAM', 'PERMITTED', false
 );
 
 \echo '--- G1e  an invented rights class  (must be refused)'
@@ -86,11 +98,11 @@ insert into public.signal_history (
   signal_key, content_hash, engine_id, kind, underlying, side,
   total_premium, total_size, score, legs,
   first_event_at, last_event_at, decision_at, decision_basis,
-  source, dataset_id, rights_class
+  source, dataset_id, rights_class, synthetic
 ) values (
   'g1-rights', 'h', 'sig_1', 'SWEEP', 'SPY', 'BUY', 250000, 100, 82, '[]'::jsonb,
   '2026-08-29 14:30:00+00', '2026-08-29 14:30:01+00', '2026-08-29 14:30:02+00',
-  'OBSERVED', 'tradier', 'TRADIER_STREAM', 'PROBABLY_OK'
+  'OBSERVED', 'tradier', 'TRADIER_STREAM', 'PROBABLY_OK', false
 );
 
 \echo ''
@@ -101,11 +113,11 @@ insert into public.signal_history (
   signal_key, content_hash, engine_id, kind, underlying, side,
   total_premium, total_size, score, legs,
   first_event_at, last_event_at, decision_at, decision_basis,
-  source, dataset_id, rights_class
+  source, dataset_id, rights_class, synthetic
 ) values (
   'g1-ok', 'hash-DIFFERENT', 'sig_2', 'SWEEP', 'SPY', 'BUY', 999999, 100, 82, '[]'::jsonb,
   '2026-08-29 14:30:00+00', '2026-08-29 14:30:01+00', '2026-08-29 14:30:02+00',
-  'OBSERVED', 'tradier', 'TRADIER_STREAM', 'PERMITTED'
+  'OBSERVED', 'tradier', 'TRADIER_STREAM', 'PERMITTED', false
 );
 
 \echo '--- G2b  the original is unchanged'

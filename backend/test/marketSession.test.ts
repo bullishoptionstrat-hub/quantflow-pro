@@ -72,9 +72,9 @@ test('a weekend is closed, and named as a weekend rather than as a holiday', () 
 test('a date the calendar will not answer for is UNKNOWN, never closed', () => {
   // The load-bearing assertion, and the same rule `coverage.ts` follows: a
   // reader who converts "cannot say" into "closed" has been told something
-  // nobody established. 2027-11-25 would be Thanksgiving if the table were
-  // extrapolated, and 2027-11-27 is a Saturday — arithmetic anyone could do.
-  for (const d of ['2027-01-15', '2027-11-25', '2027-11-27', '2025-12-19']) {
+  // nobody established. 2028-11-23 would be Thanksgiving if the table were
+  // extrapolated, and 2028-11-25 is a Saturday — arithmetic anyone could do.
+  for (const d of ['2028-01-14', '2028-11-23', '2028-11-25', '2025-12-19']) {
     const s = marketSessionAt(est(d, '12:00'));
     assert.equal(s.state, 'UNKNOWN', `${d} is outside coverage`);
     assert.match(s.basis, /outside the calendar's coverage/);
@@ -89,7 +89,7 @@ test('the verdict carries its provenance, because it is an external fact', () =>
   assert.match(s.source, /NYSE|Cboe/);
   assert.match(s.readAt, /^\d{4}-\d{2}-\d{2}$/);
   assert.equal(s.coverage.from, '2026-01-01');
-  assert.equal(s.coverage.to, '2026-12-31');
+  assert.equal(s.coverage.to, '2027-12-31');
   assert.match(s.basis, /regular session/);
 });
 

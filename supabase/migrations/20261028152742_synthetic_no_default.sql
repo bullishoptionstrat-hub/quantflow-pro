@@ -1,0 +1,21 @@
+-- signal_history.synthetic: keep NOT NULL, drop the default.
+--
+-- Applied to production (project vitnwysywkmpuaoluqom) on 2026-10-28 with the
+-- owner's approval; supabase_migrations.schema_migrations records it as
+-- 20261028152742_synthetic_no_default, and this file carries that version so
+-- disk and deployment agree. It lived in docs/proposals/ until then, which
+-- left the repo describing a schema production no longer had.
+--
+-- Why: the column was `boolean not null default false`, and JSON drops an
+-- undefined key, so a writer that omitted the field stored the row as REAL.
+-- With no default, an insert that omits `synthetic` is refused (SQLSTATE
+-- 23502) instead of silently becoming real. Measured on a disposable
+-- PostgreSQL 16 (docs/MIGRATION_READINESS.md §2a): a batch is all-or-nothing,
+-- and an upsert must carry the field even when it only updates.
+-- supabaseStore.toRow always sends it.
+--
+-- No existing row changes: NOT NULL already guarantees every row has a value,
+-- and dropping a default rewrites nothing. Re-running is a no-op.
+--
+-- Rollback: alter table public.signal_history alter column synthetic set default false;
+alter table public.signal_history alter column synthetic drop default;

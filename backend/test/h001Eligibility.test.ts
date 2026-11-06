@@ -168,7 +168,7 @@ test('what cannot be established is UNKNOWN — out of the sample, and counted a
   assert.deepEqual(failing({ ...asKnown, finalRevision: r }), ['UNKNOWN:final-tape']);
 
   // Past the calendar's coverage: no session can be read, so none is assumed.
-  const v = h001Eligibility(decidedAt('2027-03-09T15:00:00.000Z', '2027-03-19'), CTX, 'FINAL_TAPE');
+  const v = h001Eligibility(decidedAt('2028-03-07T15:00:00.000Z', '2028-03-17'), CTX, 'FINAL_TAPE');
   assert.equal(v.verdict, 'UNKNOWN');
   assert.ok(v.findings.every((f) => f.outcome === 'UNKNOWN'));
   assert.ok(v.findings.some((f) => f.rule === 'decision-window'));

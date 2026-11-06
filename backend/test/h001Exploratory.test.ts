@@ -117,7 +117,7 @@ test('K2: an exit is measured only inside its date\'s published regular session'
   assert.equal(regularSessionAt(Date.parse('2026-11-27T18:00:00Z')).ok, true);
   no(Date.parse('2026-11-27T18:00:01Z'), /after the regular close/);
   // Past the calendar's coverage it cannot say — which is not a closure.
-  no(Date.parse('2027-03-10T15:00:00Z'), /coverage/, true);
+  no(Date.parse('2028-03-08T15:00:00Z'), /coverage/, true);
 });
 
 test('H1: measured on the primary\'s units; a unit past the close or on a broken book is counted, never replaced', () => {
@@ -260,8 +260,8 @@ test('K6: an exit never reads the frozen holdout, whatever quotes the caller loa
 });
 
 test('K2: an exit past the calendar\'s coverage is counted as unknown, never as a closure', () => {
-  // 2026-12-31 (EST): its D1 exit is 2027-01-01, which the calendar will not answer for.
-  const NYE = '2026-12-31';
+  // 2027-12-31 (EST): its D1 exit falls in 2028, which the calendar will not answer for.
+  const NYE = '2027-12-31';
   const quotes: UnderlyingQuote[] = [];
   const open = Date.parse(`${NYE}T14:30:00Z`);
   for (let t = open; t <= Date.parse(`${NYE}T21:00:00Z`); t += 1_000) {
