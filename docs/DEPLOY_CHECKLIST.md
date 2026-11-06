@@ -19,8 +19,8 @@ There are two different deployments here, and only the first is close:
    cd backend && npm run security:verify
    ```
    Runbook: `docs/SECURITY_ROTATION.md`.
-2. **Restore GitHub Actions (owner).** Billing-locked since around run #80; no `verify` job
-   has executed since. Once restored, re-run `verify` on `main` and treat any red as real.
+2. **GitHub Actions works.** It was billing-locked from 2026-10-21 to 2026-10-24 and has
+   run real `verify` jobs since #100. A red `verify` is a real failure; don't merge past it.
 
 ## 1. Supabase (project `vitnwysywkmpuaoluqom`)
 

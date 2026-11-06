@@ -4,7 +4,22 @@ Dated 2026-10-24, at `main` = `fde46ed` (after #95–#98). This is a record of o
 The counts below are evidence of that moment only, and will go stale; re-run the commands
 to get today's numbers.
 
-## External blocker: GitHub Actions is billing-locked
+## Update 2026-11-06: the lock ended on 2026-10-24
+
+The billing lock described below lifted a few hours after this file was written. Every
+`verify` run from 2026-10-21T05:43Z to 2026-10-24T04:17Z failed within seconds; the last was
+on `e5c7509`, the #99 commit that recorded the blocker. From 2026-10-24T07:49Z on, every run
+executed all its steps and passed. The first real run on `main` is 40080030162 on
+`5b81a49` (#100, 2026-10-24T08:57Z). The merge of #131 (`f30d83e`) passed too, as run
+42258626236. So a red `verify` from #100 on is a real failure.
+
+This was found by reading the run history on 2026-11-06. Until then this file, `CLAUDE.md`
+and `docs/DEPLOY_CHECKLIST.md` said no run had executed, two weeks after that stopped being
+true.
+
+The rest of this file is the record as of 2026-10-24 and is kept as written.
+
+## External blocker (2026-10-24): GitHub Actions is billing-locked
 
 `.github/workflows/verify.yml` runs on every push and every pull request. **Since the lock,
 no job has actually run.** Each run reports `failure` about three seconds after it is
