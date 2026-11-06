@@ -10,7 +10,7 @@
  * the window.
  *
  * So the load-bearing property is not "Thanksgiving is a holiday". It is
- * "2027-11-25 is UNKNOWN".
+ * "2028-11-23 is UNKNOWN".
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,7 +22,7 @@ import {
 } from '../src/flow-engine/calendar';
 
 test('a date past the coverage window is UNKNOWN, never extrapolated', () => {
-  for (const d of ['2027-11-25', '2027-01-01', '2025-12-31', '2030-07-04']) {
+  for (const d of ['2028-11-23', '2028-01-03', '2025-12-31', '2030-07-04']) {
     const s = sessionOn(d);
     assert.equal(s.kind, 'UNKNOWN', `${d} is outside ${COVERAGE.from}..${COVERAGE.to}`);
     assert.equal(s.closeHour, null, 'and carries no close time to be misread');
@@ -35,8 +35,8 @@ test('UNKNOWN is not a synonym for closed', () => {
   // The dangerous conflation. A caller that reads "not open" out of "cannot
   // say" writes MARKET_CLOSED over an outage, which is the flattering
   // direction `coverage.ts` refuses by name.
-  assert.equal(sessionOn('2027-11-25').kind, 'UNKNOWN');
-  assert.equal(isEstablishedClosure('2027-11-25'), false,
+  assert.equal(sessionOn('2028-11-23').kind, 'UNKNOWN');
+  assert.equal(isEstablishedClosure('2028-11-23'), false,
     'an unknown date is not an established closure');
   // And a real closure still reads as one.
   assert.equal(isEstablishedClosure('2026-11-26'), true, 'Thanksgiving 2026');
@@ -74,7 +74,7 @@ test('a regular session is plainly regular', () => {
 });
 
 test('a malformed date is UNKNOWN rather than parsed loosely', () => {
-  for (const d of ['2026-13-45', 'tomorrow', '', '2026/11/26', '2026-11-26T12:00:00Z']) {
+  for (const d of ['2026-13-45', '2027-02-30', '2027-04-31', 'tomorrow', '', '2026/11/26', '2026-11-26T12:00:00Z']) {
     assert.equal(sessionOn(d).kind, 'UNKNOWN', `${d} must not be guessed at`);
   }
 });
@@ -216,4 +216,19 @@ test('the calendar and the expiry fallback agree about the regular close', () =>
   assert.ok(h && m, 'expiry.ts declares its fallback close');
   assert.equal(Number(h![1]), regular.closeHour);
   assert.equal(Number(m![1]), regular.closeMinute);
+});
+
+test('2027 is the schedule NYSE published, read 2026-11-06', () => {
+  const holidays = ['2027-01-01', '2027-01-18', '2027-02-15', '2027-03-26', '2027-05-31',
+    '2027-06-18', '2027-07-05', '2027-09-06', '2027-11-25', '2027-12-24'];
+  for (const d of holidays) assert.equal(sessionOn(d).kind, 'HOLIDAY', d);
+  const half = sessionOn('2027-11-26');
+  assert.equal(half.kind, 'EARLY_CLOSE');
+  assert.equal(half.closeHour, 13);
+  // No early close before Independence Day (July 3 is a Saturday) and none on
+  // Christmas Eve, which is itself the observed holiday. Easy to copy from 2026.
+  assert.equal(sessionOn('2027-07-02').kind, 'REGULAR');
+  assert.equal(sessionOn('2027-07-03').kind, 'WEEKEND');
+  assert.equal(sessionOn('2027-12-23').kind, 'REGULAR');
+  assert.equal(sessionOn('2027-12-31').kind, 'REGULAR');
 });

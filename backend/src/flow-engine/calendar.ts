@@ -42,7 +42,8 @@
 
 /** Effective-dated source for the facts below (§15). */
 export const SOURCE = 'NYSE/Cboe published holiday schedules';
-export const READ_AT = '2026-09-23';
+/** 2026 read 2026-09-23; 2027 read 2026-11-06 from nyse.com/markets/hours-calendars. */
+export const READ_AT = '2026-11-06';
 
 /**
  * The inclusive date range this table can answer for.
@@ -51,10 +52,10 @@ export const READ_AT = '2026-09-23';
  * holidays nobody has published, and the whole point of the bound is that it
  * expires loudly instead of drifting quietly.
  */
-export const COVERAGE = { from: '2026-01-01', to: '2026-12-31' } as const;
+export const COVERAGE = { from: '2026-01-01', to: '2027-12-31' } as const;
 
 /** Full closures. */
-const HOLIDAYS_2026 = new Set([
+const HOLIDAYS = new Set([
   '2026-01-01', // New Year's Day
   '2026-01-19', // Martin Luther King, Jr. Day
   '2026-02-16', // Washington's Birthday
@@ -65,12 +66,27 @@ const HOLIDAYS_2026 = new Set([
   '2026-09-07', // Labor Day
   '2026-11-26', // Thanksgiving Day
   '2026-12-25', // Christmas Day
+  // 2027, as published by NYSE (read 2026-11-06).
+  '2027-01-01', // New Year's Day
+  '2027-01-18', // Martin Luther King, Jr. Day
+  '2027-02-15', // Washington's Birthday
+  '2027-03-26', // Good Friday
+  '2027-05-31', // Memorial Day
+  '2027-06-18', // Juneteenth (observed — June 19 falls on Saturday)
+  '2027-07-05', // Independence Day (observed — July 4 falls on Sunday)
+  '2027-09-06', // Labor Day
+  '2027-11-25', // Thanksgiving Day
+  '2027-12-24', // Christmas Day (observed — December 25 falls on Saturday)
 ]);
 
 /** Early closes: 13:00 America/New_York. */
-const EARLY_CLOSE_2026 = new Set([
+const EARLY_CLOSES = new Set([
   '2026-11-27', // day after Thanksgiving
   '2026-12-24', // Christmas Eve
+  // 2027: NYSE publishes one early close. There is none before Independence
+  // Day (July 3 is a Saturday) and none on Christmas Eve, which is the observed
+  // Christmas holiday itself.
+  '2027-11-26', // day after Thanksgiving
 ]);
 
 export type SessionKind =
@@ -119,6 +135,18 @@ const OPEN_MINUTE = 30;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
+ * The shape AND a real calendar day. The shape alone admitted `2026-13-45`,
+ * and while coverage ended on 2026-12-31 that string happened to sort past the
+ * bound, so it read as UNKNOWN by luck. Extending coverage into 2027 put it
+ * inside the range, where it classified as a REGULAR session.
+ */
+function isRealDate(isoDate: string): boolean {
+  if (!ISO_DATE.test(isoDate)) return false;
+  const d = new Date(`${isoDate}T12:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === isoDate;
+}
+
+/**
  * The session on a calendar date, given as `YYYY-MM-DD` in market-local terms.
  *
  * The caller supplies a date already expressed in the market's own zone.
@@ -131,7 +159,7 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
  * DST rule is the same class of stale constant as a 2024 price map.
  */
 export function sessionOn(isoDate: string): Session {
-  if (!ISO_DATE.test(isoDate)) {
+  if (!isRealDate(isoDate)) {
     return {
       kind: 'UNKNOWN', openHour: null, openMinute: null,
       closeHour: null, closeMinute: null,
@@ -160,14 +188,14 @@ export function sessionOn(isoDate: string): Session {
       basis: `${isoDate} is a ${day === 0 ? 'Sunday' : 'Saturday'}`,
     };
   }
-  if (HOLIDAYS_2026.has(isoDate)) {
+  if (HOLIDAYS.has(isoDate)) {
     return {
       kind: 'HOLIDAY', openHour: null, openMinute: null,
       closeHour: null, closeMinute: null,
       basis: `${isoDate} is a published exchange holiday (${SOURCE})`,
     };
   }
-  if (EARLY_CLOSE_2026.has(isoDate)) {
+  if (EARLY_CLOSES.has(isoDate)) {
     return {
       kind: 'EARLY_CLOSE', openHour: OPEN_HOUR, openMinute: OPEN_MINUTE,
       closeHour: 13, closeMinute: 0,

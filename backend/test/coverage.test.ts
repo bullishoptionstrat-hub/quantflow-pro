@@ -90,16 +90,16 @@ test('a window that touches one open session is still an outage', () => {
 test('a date the calendar cannot answer for is NOT a closure', () => {
   // The load-bearing assertion. `sessionOn` answers UNKNOWN past its COVERAGE
   // bound, and a caller reading "not open" out of "cannot say" is exactly how
-  // a MARKET_CLOSED row gets written over a real outage. 2027-11-25 would be
+  // a MARKET_CLOSED row gets written over a real outage. 2028-11-23 would be
   // Thanksgiving if the table were extrapolated. It is not extrapolated.
-  const beyond = win('2027-11-25T16:00:00Z', '2027-11-25T16:01:00Z');
+  const beyond = win('2028-11-23T16:00:00Z', '2028-11-23T16:01:00Z');
   assert.equal(classifyWindow(down(), 0, beyond)!.kind, 'NOT_OBSERVED');
   assert.equal(classifyWindow(up(0), 0, beyond)!.kind, 'OBSERVED_EMPTY');
 
   // Same for a Saturday beyond the bound: a weekend is arithmetic, but the
   // calendar refuses to answer at all outside its coverage, and this module
   // takes the refusal rather than reaching past it.
-  const satBeyond = win('2027-11-27T16:00:00Z', '2027-11-27T16:01:00Z');
+  const satBeyond = win('2028-11-25T16:00:00Z', '2028-11-25T16:01:00Z');
   assert.equal(classifyWindow(down(), 0, satBeyond)!.kind, 'NOT_OBSERVED');
 
   // And the epoch, which every recorder test below uses.

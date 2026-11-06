@@ -268,7 +268,7 @@ test('D1: the window is the part of the ET clock hour where §L could admit a de
   assert.equal(clockWindow(DAY, 16), null);
   assert.equal(clockWindow('2026-11-26', 10), null, 'Thanksgiving');
   assert.equal(clockWindow('2026-03-14', 10), null, 'a Saturday');
-  assert.equal(clockWindow('2027-03-10', 10), null, 'past the calendar: unknown, not open');
+  assert.equal(clockWindow('2028-03-08', 10), null, 'past the calendar: unknown, not open');
 });
 
 test('D: five times per A meta-event, inside its hour and window, measured the §C way', () => {

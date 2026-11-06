@@ -58,7 +58,7 @@ test('feed: the OPRA window is effective-dated and nothing before it is assumed'
   assert.equal(feedSessionAt('OPRA', et('2026-09-26', '10:00')).state, 'UNKNOWN', 'a Saturday is not assumed to be outside the window');
   assert.equal(feedSessionAt('OPRA', et('2026-11-27', '12:00')).state, 'SUPPORTED', 'inside the early-close day\'s own hours');
   assert.equal(feedSessionAt('OPRA', et('2026-11-27', '14:00')).state, 'UNKNOWN', 'the window on a half day is not established');
-  assert.equal(feedSessionAt('OPRA', Date.parse('2027-02-02T15:00:00Z')).state, 'UNKNOWN', 'past the calendar coverage');
+  assert.equal(feedSessionAt('OPRA', Date.parse('2028-02-01T15:00:00Z')).state, 'UNKNOWN', 'past the calendar coverage');
   for (const r of FEED_WINDOW_RULES) {
     assert.equal(r.readAt, null, 'no feed rule has been read in a primary document yet; one that claims so must say when');
     assert.notEqual(r.status, 'PRIMARY_VERIFIED');
@@ -137,7 +137,7 @@ test('lifecycle: a half day, a new family, an unknown product and an uncovered d
   assert.equal(spxo.lastTradingDate, '2026-11-17');
   assert.equal(spxo.state, 'DATE_ONLY');
 
-  for (const [root, expiry] of [['ZZZZ', '2026-10-16'], ['SPXW', '2027-03-19'], ['XSP', '2026-10-16'], ['SPX', 'not-a-date']] as const) {
+  for (const [root, expiry] of [['ZZZZ', '2026-10-16'], ['SPXW', '2028-03-17'], ['XSP', '2026-10-16'], ['SPX', 'not-a-date']] as const) {
     const life = contractLifecycle(root, expiry);
     assert.equal(life.state, 'UNKNOWN', `${root} ${expiry}`);
     assert.equal(life.lastTradingInstantMs, null, `${root} ${expiry}: no fabricated 16:00`);

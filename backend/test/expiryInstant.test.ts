@@ -134,7 +134,7 @@ test('a date the calendar will not answer for is NEVER NaN', () => {
   // silently drops every print with an expiry past this year's table — which is
   // every LEAPS, and everything at all once the year rolls over.
   const beyond = [
-    '2027-01-15', '2027-06-18', '2028-01-21',   // past COVERAGE
+    '2028-01-14', '2028-06-16', '2028-01-21',   // past COVERAGE
     '2025-12-19',                                // before COVERAGE
     '2026-11-26',                                // Thanksgiving: a closed day
     '2026-09-26',                                // a Saturday
@@ -159,7 +159,7 @@ test('the fallback says it is a fallback', () => {
   assert.equal(sessionCloseFor('2026-11-27').basis, 'published');
   assert.match(sessionCloseFor('2026-11-27').why, /early close/);
 
-  for (const d of ['2027-01-15', '2026-11-26', '2026-09-26', 'not-a-date']) {
+  for (const d of ['2028-01-14', '2026-11-26', '2026-09-26', 'not-a-date']) {
     const c = sessionCloseFor(d);
     assert.equal(c.basis, 'fallback', `${d} is not a published close`);
     assert.equal(c.hour, 16);

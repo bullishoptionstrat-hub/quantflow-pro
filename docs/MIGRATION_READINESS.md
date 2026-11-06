@@ -2,7 +2,7 @@
 
 **Both changes below were applied to production (project `vitnwysywkmpuaoluqom`) on 2026-10-28 with the owner's approval.** Migration A was applied without its `drop trigger if exists` line, which is a no-op on a new table. Post-migration probes, run in a block that rolls back: a valid mark inserts; a duplicate, an update, a delete and a mark with no parent signal are each refused; an insert into `signal_history` omitting `synthetic` fails with 23502 (that probe also omitted other required columns, so the 23502 is not attributed to `synthetic` alone). `signal_entry_marks` holds 0 rows afterwards, RLS is enabled and forced, and the trigger function is pinned to `search_path=""`. Not yet confirmed: `entryMarkWriteFailures` staying at 0 on a running deployment.
 
-## 1. `supabase/migrations/20261024100000_signal_entry_marks.sql` (on disk, unapplied in production as of the last read-only check)
+## 1. `supabase/migrations/20261024100000_signal_entry_marks.sql` (applied 2026-10-28; production records it as version `20261028153423`)
 
 **What happens without it.**
 - Every `writeEntryMark` fails and is counted in `entryMarkWriteFailures`. Grading continues from the in-memory mark.
@@ -33,7 +33,15 @@
 - `drop table public.signal_entry_marks` is safe only before any mark has been written.
 - After that, roll forward instead, because the marks are the evidence the table exists to keep.
 
-## 2. Proposal: `docs/proposals/20261028_synthetic_no_default.sql` (not a migration yet)
+## 2. `supabase/migrations/20261028152742_synthetic_no_default.sql` (applied 2026-10-28)
+
+This was a proposal in `docs/proposals/` when the section below was written. Production
+records it as `20261028152742_synthetic_no_default`; the file was moved into
+`supabase/migrations/` under that version on 2026-11-06, after a read of
+`supabase_migrations.schema_migrations` showed it applied while the repo still called it
+unapplied. `supabase/gate-proofs.sql` relied on the default in all six of its
+`signal_history` inserts; they now pass `synthetic` explicitly, and a new G1c2 proves the
+omission is refused.
 
 **Risk.** `signal_history.synthetic` is `not null default false`. Measured on the disposable cluster, an insert that omits the column stores `f`, which means a real signal. The only writer, `toRow`, now sends `synthetic: r.synthetic !== false`, so the code fails closed already. The default is what would mislabel rows for any future writer, including a manual SQL insert.
 
