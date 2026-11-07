@@ -88,6 +88,31 @@ describe('off-grid prices round the conservative way, and say so', () => {
     expect(r.warnings.join(' ')).toMatch(/rounded down/)
   })
 
+  // The two directions are tested apart as well, so deleting or editing the
+  // combined case above leaves neither one unguarded.
+  test('an off-grid stop alone is rounded up, and the size follows it', () => {
+    // 10.1 points = 40.4 ticks → 41; (41 + 1) × 12.50 + 5 = 530 a contract.
+    // Rounded down to 40 it would read 517.50, and 1,059.99 would buy 2 instead of 1.
+    const r = sizePosition(base({ stop: 4989.9, riskBudget: 1060 }))
+    expect(r.stopTicks).toBe(41)
+    expect(r.lossPerUnit).toBeCloseTo(530, 9)
+    expect(r.units).toBe(2)
+    const tight = sizePosition(base({ stop: 4989.9, riskBudget: 1059.99 }))
+    expect(tight.units).toBe(1)
+  })
+
+  test('an off-grid target alone is rounded down, and the R follows it', () => {
+    // MNQ, 20-tick stop at 0.50 = 10, no costs. Target 20010.1 = 40.4 ticks → 40:
+    // exactly 2R. Rounded up to 41 it would read 2.05R.
+    const r = sizePosition(base({
+      spec: spec('MNQ'), entry: 20000, stop: 19995, targets: [{ price: 20010.1 }],
+      riskBudget: 100, costPerUnit: 0, slippageTicks: 0,
+    }))
+    expect(r.stopOffGrid).toBe(false)
+    expect(r.targets[0]!.ticks).toBe(40)
+    expect(r.blendedNetR).toBeCloseTo(2, 12)
+  })
+
   test('float noise on an on-grid price is not called off-grid', () => {
     // 100 − 99.9 is 0.09999999999999432; still exactly 10 cents.
     const r = sizePosition(base({ spec: spec('SPY'), entry: 100, stop: 99.9, riskBudget: 50, costPerUnit: 0, slippageTicks: 0 }))
@@ -143,6 +168,20 @@ describe('partial exits are blended from the split that can be filled', () => {
     const r = blended(0.75, 0.25)
     expect(r.targets[1]!.grossR).toBe(3)
     expect(r.blendedNetR).toBeCloseTo(1.5, 12)
+    expect(r.verdict).toBe('BELOW_MIN_R')
+  })
+
+  test('an odd size splits in whole units, and the blend reads that split', () => {
+    // $1,500 buys 3. Half and half of 3 is 2 at TP1 and 1 at TP2, not 1.5 each:
+    // 2 × $500 + 1 × $1,500 = $2,500 on $1,500 of risk is 1.67R, below 2R.
+    // Blending by share would read 1.5 × $500 + 1.5 × $1,500 = $3,000, a 2R pass.
+    const r = sizePosition(base({
+      riskBudget: 1500, costPerUnit: 0, slippageTicks: 0,
+      targets: [{ price: 5010, share: 0.5 }, { price: 5030, share: 0.5 }],
+    }))
+    expect(r.units).toBe(3)
+    expect(r.targets.map((t) => t.units)).toEqual([2, 1])
+    expect(r.blendedNetR).toBeCloseTo(2500 / 1500, 12)
     expect(r.verdict).toBe('BELOW_MIN_R')
   })
 
