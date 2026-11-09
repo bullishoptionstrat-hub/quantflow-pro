@@ -7,6 +7,7 @@ const ITEMS = [
   { href: '/flow',         icon: '⚡', label: 'Flow' },
   { href: '/power-alerts', icon: '🔥', label: 'Alerts' },
   { href: '/gex',          icon: 'Γ',  label: 'GEX' },
+  { href: '/ticket',       icon: '🧾', label: 'Ticket' },
   { href: '/risk',         icon: '🎯', label: 'Risk' },
   { href: '/calculator',   icon: '🧮', label: 'Calc' },
   { href: '/watchlist',    icon: '★',  label: 'Watch' },

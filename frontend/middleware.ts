@@ -87,6 +87,7 @@ export const config = {
     '/power-alerts/:path*',
     '/risk/:path*',
     '/settings/:path*',
+    '/ticket/:path*',
     '/watchlist/:path*',
     '/login/:path*',
     '/register/:path*',
