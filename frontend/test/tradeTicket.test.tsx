@@ -239,6 +239,14 @@ describe('the reward gate is computed, after costs', () => {
     expect(high.blockers[0]!.reason).toMatch(/4R minimum/)
   })
 
+  test('a 1.5R idea typed against a 1.5R minimum is still blocked: the floor reaches the sizing', () => {
+    // Without the floor the sizing would read 1.5R as a pass, and the ticket
+    // would only wait on the refused minimum. With it, the reward gate fails.
+    const r = evaluateTicket(complete({ minR: 1.5, targets: [{ price: 5015, kind: 'EXTERNAL' }] }))
+    expect(r.state).toBe('BLOCKED')
+    expect(r.blockers.map((b) => b.code)).toEqual(['REWARD_UNDER_2R'])
+  })
+
   test('the reward is read from the whole-unit split, not the shares', () => {
     // $1,500 buys 3. 50/50 of 3 is 2 at 1R and 1 at 3R: 5 / 3 = 1.67R, blocked.
     // Blending by share would read 2R and approve.
