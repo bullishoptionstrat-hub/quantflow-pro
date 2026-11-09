@@ -1,0 +1,538 @@
+/**
+ * A pre-trade ticket: the God's Plan gates first, then the size.
+ *
+ * The ticket's job is to say NO clearly, and to say why. It is not an order
+ * ticket and it sends nothing anywhere: APPROVED_TRADE means "every required
+ * gate passed and the idea sizes to at least the minimum R", which is
+ * permission to place an order by hand, not an order.
+ *
+ * The rules it enforces, each closing a specific way a checklist misleads:
+ *
+ *  - **A score never approves.** The five-part confluence score is shown for
+ *    ranking only. Every required gate is checked on its own, so a 5/5 idea
+ *    with the daily lock active is BLOCKED, not "strong".
+ *  - **Unanswered is not passed.** A gate nobody ticked is WAIT_FOR_TRIGGER.
+ *    A gate this terminal cannot measure (no clock from the backend, a date the
+ *    calendar will not answer for) is UNMEASURABLE, and that waits too.
+ *  - **No direction by default.** The ticket starts NEUTRAL. A direction is
+ *    chosen, never pre-selected.
+ *  - **Locks outrank everything.** The daily lock, a used attempt and the
+ *    trader's own state block even a ticket with no direction yet: they are
+ *    about the trader, not the setup.
+ *  - **Requirements can be tightened, never loosened.** A model adds gates;
+ *    the "also require" switches add gates; nothing here removes one.
+ *  - **The reward gate is computed, not ticked.** It reads `sizePosition`'s
+ *    blended net R of the split that can actually be filled, after costs.
+ *
+ * What it does not know, and does not pretend to: whether any answer the
+ * trader gives is true. Every TRADER gate is the trader's own observation,
+ * labelled as such in the export. Only the session window and the reward are
+ * measured here.
+ */
+import type { MarketSession } from './marketSession'
+import { sizePosition, type Side, type SizingResult, type SizingSpec } from './riskSize'
+
+export type DecisionState = 'NEUTRAL' | 'WAIT_FOR_TRIGGER' | 'BLOCKED' | 'NO_TRADE' | 'APPROVED_TRADE'
+
+/** The terminal README's blocker codes, kept by name. */
+export const README_CODES = [
+  'NO_SMT', 'MIDRANGE_COMPRESSION', 'NO_DISPLACEMENT', 'NO_RETEST', 'NO_ENGULF_OR_REJECTION',
+  'HTF_MISALIGNMENT', 'NO_CANDLE2_OR_CANDLE3_CLOSE', 'NO_CISD', 'WEAK_POI', 'DENIAL_OVERRIDE',
+  'NO_EXTERNAL_SWEEP_OR_HTF_RETEST', 'REWARD_UNDER_2R', 'OPPOSING_LIQUIDITY_UNDER_ATTACK',
+  'SESSION_MODEL_MISSING', 'DAILY_LOCK_ACTIVE', 'ONE_ATTEMPT_ALREADY_USED',
+] as const
+
+/**
+ * Codes added here because two playbook rules had none: the four-layer
+ * model's iFVG inversion, and the trader-state blocker (tilt, fatigue,
+ * revenge intent).
+ */
+export const ADDED_CODES = ['NO_IFVG_INVERSION', 'TRADER_STATE_NOT_CLEAR'] as const
+
+export type BlockerCode = typeof README_CODES[number] | typeof ADDED_CODES[number]
+
+export type AnsweredGateId =
+  | 'traderState' | 'dailyLock' | 'firstAttempt'
+  | 'htfAlignment' | 'liquidityEvent' | 'poiQuality' | 'smt'
+  | 'displacement' | 'retest' | 'confirmation'
+  | 'notMidrange' | 'noDenial' | 'opposingLiquidity'
+  | 'candle23' | 'cisd' | 'ifvgInversion'
+
+export type GateId = AnsweredGateId | 'session' | 'reward'
+
+export type Answer = 'PASS' | 'FAIL'
+
+export interface GateDef {
+  id: AnsweredGateId
+  code: BlockerCode
+  title: string
+  /** What must be true to answer PASS. */
+  pass: string
+  /** What answering FAIL means. */
+  fail: string
+  /** About the trader, not the setup: blocks even before a direction is chosen. */
+  lock?: true
+}
+
+export const ANSWERED_GATES: readonly GateDef[] = [
+  { id: 'traderState', code: 'TRADER_STATE_NOT_CLEAR', lock: true, title: 'Trader state',
+    pass: 'No tilt, fatigue, revenge intent, or need to trade.',
+    fail: 'Tilted, tired, chasing a loss, sizing up after wins, or trading to trade.' },
+  { id: 'dailyLock', code: 'DAILY_LOCK_ACTIVE', lock: true, title: 'Daily lock',
+    pass: "Today's written loss limit and lockout are not hit, and no condition ban applies.",
+    fail: 'The daily loss limit, the two-stop-out lockout, or a condition ban is active.' },
+  { id: 'firstAttempt', code: 'ONE_ATTEMPT_ALREADY_USED', lock: true, title: 'First attempt',
+    pass: 'This is the first attempt at this idea.',
+    fail: 'This idea already had its attempt. It needs a new higher-timeframe trigger.' },
+  { id: 'htfAlignment', code: 'HTF_MISALIGNMENT', title: 'HTF alignment',
+    pass: 'Higher-timeframe bias agrees with this direction, and no conflicting HTF zone is in the way.',
+    fail: 'HTF bias disagrees, or a conflicting HTF zone sits in the path.' },
+  { id: 'liquidityEvent', code: 'NO_EXTERNAL_SWEEP_OR_HTF_RETEST', title: 'Liquidity event',
+    pass: '(set by the model)', fail: '(set by the model)' },
+  { id: 'poiQuality', code: 'WEAK_POI', title: 'POI quality',
+    pass: 'A defined POI (FVG, iFVG, order block, breaker) with HTF context and displacement away from it.',
+    fail: 'Weak POI: no HTF context, or no displacement from it.' },
+  { id: 'smt', code: 'NO_SMT', title: 'Paired SMT',
+    pass: 'Paired SMT is clear, current and agrees with this direction.',
+    fail: 'SMT is absent, unclear, mixed, stale or opposing.' },
+  { id: 'displacement', code: 'NO_DISPLACEMENT', title: 'Displacement',
+    pass: 'Displacement with a structure shift (BOS / CHoCH / MSS).',
+    fail: 'No displacement, or no structure shift.' },
+  { id: 'retest', code: 'NO_RETEST', title: 'Retest',
+    pass: 'Price came back and retested the POI after the shift.',
+    fail: 'No retest yet. Entering now is a first touch or a chase.' },
+  { id: 'confirmation', code: 'NO_ENGULF_OR_REJECTION', title: 'Closed confirmation',
+    pass: 'A CLOSED engulfing or strong rejection candle at the retest.',
+    fail: 'No closed confirmation candle. A candle still forming does not count.' },
+  { id: 'notMidrange', code: 'MIDRANGE_COMPRESSION', title: 'Out of equilibrium',
+    pass: 'A long from discount or a short from premium, out of chop and compression.',
+    fail: 'At equilibrium, in chop, or in tight compression (three or more overlapping candles).' },
+  { id: 'noDenial', code: 'DENIAL_OVERRIDE', title: 'No denial',
+    pass: 'No front-run or denial has cancelled the scenario, and this is not an unconfirmed first Judas leg.',
+    fail: 'Price reversed with displacement before the anticipated pool, or this is an unconfirmed first Judas leg.' },
+  { id: 'opposingLiquidity', code: 'OPPOSING_LIQUIDITY_UNDER_ATTACK', title: 'Opposing liquidity',
+    pass: 'Opposing liquidity is not being taken, and there is room before it.',
+    fail: 'Opposing liquidity is under attack, or the target runs into it.' },
+  { id: 'candle23', code: 'NO_CANDLE2_OR_CANDLE3_CLOSE', title: 'Candle 2/3 closure',
+    pass: 'TTrades Candle 2 or Candle 3 has closed, confirming the HTF reaction.',
+    fail: 'No Candle 2/3 closure yet.' },
+  { id: 'cisd', code: 'NO_CISD', title: 'CISD',
+    pass: 'Lower-timeframe CISD (change in the state of delivery) is confirmed.',
+    fail: 'No CISD.' },
+  { id: 'ifvgInversion', code: 'NO_IFVG_INVERSION', title: 'iFVG inversion',
+    pass: 'A lower-timeframe FVG was inverted by a candle closing through it.',
+    fail: 'No confirmed iFVG inversion.' },
+]
+
+export type ModelId = 'TRAP_FADE' | 'HTF_CONTINUATION' | 'AMD_IFVG'
+
+export interface ModelDef {
+  label: string
+  liquidityPass: string
+  liquidityFail: string
+  /** Gates this model adds to the core set. */
+  requires: AnsweredGateId[]
+}
+
+export const MODELS: Record<ModelId, ModelDef> = {
+  TRAP_FADE: {
+    label: 'Trap-fade: sweep & reclaim / sell the rip',
+    liquidityPass: 'A named external liquidity pool was swept and a candle closed back through it. A wick alone is not a reclaim.',
+    liquidityFail: 'No external sweep, or no close back through the swept level.',
+    requires: [],
+  },
+  HTF_CONTINUATION: {
+    label: 'HTF continuation',
+    liquidityPass: 'A higher-timeframe break, retest and acceptance is confirmed in this direction.',
+    liquidityFail: 'No confirmed HTF break, retest and acceptance. An indicator flip does not count.',
+    requires: [],
+  },
+  AMD_IFVG: {
+    label: 'AMD / PO3 / iFVG four-layer',
+    liquidityPass: 'An external liquidity pool was swept (layer 1). The POI gate is the HTF FVG/OB location (layer 2).',
+    liquidityFail: 'No external sweep. A sweep alone does not establish distribution, but without one there is no model.',
+    requires: ['ifvgInversion', 'cisd'],
+  },
+}
+
+export type SessionProfileId = 'ONEPAGER' | 'LEGACY_RESEARCH' | 'PROP_REPORT'
+
+export interface SessionWindow { name: string; from: string; to: string }
+
+/**
+ * Trading windows, ET, start inclusive and end exclusive. These are the
+ * trader's own profiles from the playbook notes, not market hours: whether the
+ * exchange is open on a date comes from the backend's calendar.
+ */
+export const SESSION_PROFILES: Record<SessionProfileId, { label: string; windows: SessionWindow[] }> = {
+  ONEPAGER: {
+    label: 'OnePager',
+    windows: [
+      { name: 'London', from: '03:00', to: '05:00' },
+      { name: 'NY AM', from: '09:30', to: '11:30' },
+      { name: 'NY PM', from: '13:30', to: '15:00' },
+    ],
+  },
+  LEGACY_RESEARCH: {
+    label: 'Legacy research',
+    windows: [
+      { name: 'London', from: '02:00', to: '05:00' },
+      { name: 'NY AM', from: '08:00', to: '11:30' },
+      { name: 'NY PM', from: '13:00', to: '16:00' },
+    ],
+  },
+  PROP_REPORT: {
+    label: 'Prop report',
+    windows: [
+      { name: 'Premarket', from: '07:00', to: '08:30' },
+      { name: 'NY', from: '08:30', to: '11:00' },
+      { name: 'NY PM', from: '13:30', to: '15:00' },
+    ],
+  },
+}
+
+/** Instruments where paired SMT is mandatory in the strict profile. */
+export const SMT_REQUIRED_SYMBOLS = ['ES', 'MES', 'NQ', 'MNQ', 'SPY', 'QQQ'] as const
+
+/** CUSTOM cannot be classified, so it gets the strict answer. */
+export function smtRequired(symbol: string): boolean {
+  return symbol === 'CUSTOM' || (SMT_REQUIRED_SYMBOLS as readonly string[]).includes(symbol)
+}
+
+/** The strict profile's floor. A lower minimum is a relaxed variant, not offered here. */
+export const STRICT_MIN_R = 2
+
+export type TargetKind = 'INTERNAL' | 'EXTERNAL'
+
+export interface TicketTarget {
+  price: number
+  /** Fraction 0..1. Omit for a single target. */
+  share?: number
+  kind: TargetKind | null
+}
+
+export interface Narrative {
+  htfContext: string
+  poi: string
+  liquidityEvent: string
+  invalidation: string
+  cancelCondition: string
+  managementPlan: string
+  screenshot: string
+}
+
+export const NARRATIVE_FIELDS: readonly { key: keyof Narrative; label: string }[] = [
+  { key: 'htfContext', label: 'HTF context' },
+  { key: 'poi', label: 'POI' },
+  { key: 'liquidityEvent', label: 'Liquidity event' },
+  { key: 'invalidation', label: 'Invalidation' },
+  { key: 'cancelCondition', label: 'Cancel condition' },
+  { key: 'managementPlan', label: 'Management plan' },
+  { key: 'screenshot', label: 'Pre-entry screenshot' },
+]
+
+export type SessionClock = Pick<MarketSession, 'state' | 'nowMinutesEt' | 'closeMinutesEt'>
+
+export interface TicketInput {
+  /** A CONTRACT_SPECS symbol, 'CUSTOM', or '' when none is chosen. */
+  symbol: string
+  /** Null when no instrument is chosen. CUSTOM supplies its own. */
+  spec: SizingSpec | null
+  /** The exact contract, e.g. ESZ6. Not asked for share instruments. */
+  contract: string
+  side: Side | null
+  setupId: string
+  model: ModelId | null
+  sessionProfile: SessionProfileId | null
+  alsoRequire: { candle23: boolean; cisd: boolean }
+  answers: Partial<Record<AnsweredGateId, Answer>>
+  narrative: Narrative
+  entry: number | null
+  stop: number | null
+  targets: TicketTarget[]
+  riskBudget: number | null
+  costPerUnit: number | null
+  slippageTicks: number | null
+  minR: number
+  /** The backend's session verdict and ET clock. Null when it did not answer. */
+  clock: SessionClock | null
+}
+
+export type GateStatus = 'PASS' | 'FAIL' | 'UNANSWERED' | 'UNMEASURABLE'
+
+export interface GateResult {
+  id: GateId
+  code: BlockerCode
+  title: string
+  required: boolean
+  source: 'TRADER' | 'COMPUTED'
+  status: GateStatus
+  detail: string
+}
+
+export interface Blocker { code: BlockerCode; reason: string }
+
+export interface ScoreCategory { name: string; met: boolean }
+
+export interface TicketResult {
+  state: DecisionState
+  gates: GateResult[]
+  blockers: Blocker[]
+  /** Why it is not approved yet: unanswered gates, missing fields, bad inputs. */
+  waiting: string[]
+  score: { value: number; of: 5; categories: ScoreCategory[] }
+  sizing: SizingResult | null
+}
+
+/** Minutes past midnight from 'HH:MM'. */
+export function minutesOf(hhmm: string): number {
+  const m = /^(\d{2}):(\d{2})$/.exec(hhmm)
+  if (!m) throw new Error(`not HH:MM: ${hhmm}`)
+  return Number(m[1]) * 60 + Number(m[2])
+}
+
+function clockText(minutes: number): string {
+  return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`
+}
+
+/**
+ * The session gate, measured on the backend's ET clock.
+ *
+ * A window is the trader's; whether there is a session at all is the
+ * calendar's. A weekend fails. A holiday cannot be measured here, because
+ * futures keep their own holiday hours and this terminal's calendar is the
+ * exchange's regular session. A window that falls after the day's published
+ * close fails, which only happens on a half day: no profile window runs past
+ * a regular close.
+ */
+export function sessionGate(profile: SessionProfileId | null, clock: SessionClock | null): { status: GateStatus; detail: string } {
+  if (profile === null) return { status: 'UNANSWERED', detail: 'Choose a session profile.' }
+  const p = SESSION_PROFILES[profile]
+  if (clock === null) {
+    return { status: 'UNMEASURABLE', detail: 'The backend did not answer, so the ET clock could not be read.' }
+  }
+  if (clock.state === 'UNKNOWN') {
+    return { status: 'UNMEASURABLE', detail: 'The session calendar cannot say for this date.' }
+  }
+  const now = clock.nowMinutesEt
+  if (now === null || !Number.isFinite(now)) {
+    return { status: 'UNMEASURABLE', detail: 'The backend sent no ET clock.' }
+  }
+  if (clock.state === 'CLOSED_WEEKEND') {
+    return { status: 'FAIL', detail: 'It is the weekend: there is no session to trade.' }
+  }
+  if (clock.state === 'CLOSED_HOLIDAY') {
+    return { status: 'UNMEASURABLE', detail: 'Exchange holiday. Futures holiday hours are not in this terminal\'s calendar; check the exchange schedule.' }
+  }
+  const w = p.windows.find((x) => now >= minutesOf(x.from) && now < minutesOf(x.to))
+  if (!w) {
+    return { status: 'FAIL', detail: `${clockText(now)} ET is outside every ${p.label} window.` }
+  }
+  if (clock.closeMinutesEt !== null && now >= clock.closeMinutesEt) {
+    return { status: 'FAIL', detail: `${clockText(now)} ET is after today's published close at ${clockText(clock.closeMinutesEt)} ET.` }
+  }
+  return { status: 'PASS', detail: `${clockText(now)} ET is inside ${p.label} ${w.name} ${w.from}–${w.to} ET.` }
+}
+
+const MONTH_CODES = 'FGHJKMNQUVXZ'
+
+/**
+ * The exact contract must belong to the chosen instrument: ESZ6 for ES, not
+ * MESZ6 or NQZ6. This checks the format and the root only — not whether that
+ * month is listed or is the front month.
+ */
+export function contractProblem(symbol: string, unit: 'contract' | 'share' | null, contract: string): string | null {
+  const c = contract.trim().toUpperCase()
+  if (unit === 'share') return null
+  if (symbol === 'CUSTOM') return c === '' ? 'Enter the exact contract.' : null
+  if (c === '') return `Enter the exact contract (e.g. ${symbol}Z6).`
+  const m = new RegExp(`^${symbol}([${MONTH_CODES}])(\\d{1,2})$`).exec(c)
+  if (!m) return `${c} does not match ${symbol}: expected ${symbol} + month code + year, e.g. ${symbol}Z6.`
+  return null
+}
+
+function requiredGates(input: TicketInput): Set<AnsweredGateId> {
+  const req = new Set<AnsweredGateId>([
+    'traderState', 'dailyLock', 'firstAttempt',
+    'htfAlignment', 'liquidityEvent', 'poiQuality',
+    'displacement', 'retest', 'confirmation',
+    'notMidrange', 'noDenial', 'opposingLiquidity',
+  ])
+  if (input.symbol !== '' && smtRequired(input.symbol)) req.add('smt')
+  if (input.model) for (const g of MODELS[input.model].requires) req.add(g)
+  if (input.alsoRequire.candle23) req.add('candle23')
+  if (input.alsoRequire.cisd) req.add('cisd')
+  return req
+}
+
+/** Gates shown on the ticket: the required ones, plus SMT where it is optional. */
+export function visibleGates(input: TicketInput): { def: GateDef; required: boolean }[] {
+  const req = requiredGates(input)
+  return ANSWERED_GATES
+    .filter((d) => req.has(d.id) || d.id === 'smt')
+    .map((d) => {
+      if (d.id !== 'liquidityEvent' || !input.model) return { def: d, required: req.has(d.id) }
+      const m = MODELS[input.model]
+      return { def: { ...d, pass: m.liquidityPass, fail: m.liquidityFail }, required: true }
+    })
+}
+
+export function evaluateTicket(input: TicketInput): TicketResult {
+  const gates: GateResult[] = []
+  const waiting: string[] = []
+
+  for (const { def, required } of visibleGates(input)) {
+    const a = input.answers[def.id]
+    gates.push({
+      id: def.id, code: def.code, title: def.title, required, source: 'TRADER',
+      status: a ?? 'UNANSWERED',
+      detail: a === 'PASS' ? def.pass : a === 'FAIL' ? def.fail : `Unanswered. Pass means: ${def.pass}`,
+    })
+  }
+
+  const s = sessionGate(input.sessionProfile, input.clock)
+  gates.push({ id: 'session', code: 'SESSION_MODEL_MISSING', title: 'Session window', required: true, source: 'COMPUTED', ...s })
+
+  // Sizing, when there is enough to size.
+  let sizing: SizingResult | null = null
+  if (input.spec && input.side && input.entry !== null && input.stop !== null) {
+    sizing = sizePosition({
+      spec: input.spec, side: input.side, entry: input.entry, stop: input.stop,
+      targets: input.targets.map((t) => ({ price: t.price, share: t.share })),
+      riskBudget: input.riskBudget, costPerUnit: input.costPerUnit, slippageTicks: input.slippageTicks,
+      minR: Math.max(input.minR, STRICT_MIN_R),
+    })
+  }
+
+  let reward: { status: GateStatus; detail: string }
+  if (sizing?.verdict === 'MEETS_MIN_R') {
+    reward = { status: 'PASS', detail: `Blended net R ${sizing.blendedNetR!.toFixed(2)} meets the ${Math.max(input.minR, STRICT_MIN_R)}R minimum.` }
+  } else if (sizing?.verdict === 'BELOW_MIN_R') {
+    reward = { status: 'FAIL', detail: `Blended net R ${sizing.blendedNetR!.toFixed(2)} is under the ${Math.max(input.minR, STRICT_MIN_R)}R minimum, after costs.` }
+  } else {
+    reward = { status: 'UNMEASURABLE', detail: 'Computed once the idea is sized against at least one target.' }
+  }
+  gates.push({ id: 'reward', code: 'REWARD_UNDER_2R', title: 'Net reward', required: true, source: 'COMPUTED', ...reward })
+
+  // Fields that must be on the ticket before it can be approved.
+  if (input.symbol === '' || !input.spec) waiting.push('Choose an instrument.')
+  if (input.side === null) waiting.push('Choose a direction.')
+  if (input.symbol !== '') {
+    const p = contractProblem(input.symbol, input.spec?.unit ?? null, input.contract)
+    if (p) waiting.push(p)
+  }
+  if (input.setupId.trim() === '') waiting.push('Enter a setup / idea ID.')
+  if (input.model === null) waiting.push('Choose a model.')
+  for (const f of NARRATIVE_FIELDS) {
+    if (input.narrative[f.key].trim() === '') waiting.push(`Write the ${f.label.toLowerCase()}.`)
+  }
+  if (input.entry === null) waiting.push('Enter the entry.')
+  if (input.stop === null) waiting.push('Enter the stop.')
+  if (input.targets.length === 0) waiting.push('Enter at least one target.')
+  input.targets.forEach((t, i) => {
+    if (t.kind === null) waiting.push(`Say whether TP${i + 1} is internal or external liquidity.`)
+  })
+  if (!Number.isFinite(input.minR) || input.minR < STRICT_MIN_R) {
+    waiting.push(`The strict minimum is ${STRICT_MIN_R}R. A lower minimum is a relaxed variant and is not offered here.`)
+  }
+  if (sizing && sizing.verdict !== 'NO_SIZE') {
+    for (const e of sizing.errors) waiting.push(`Sizing: ${e}`)
+  }
+
+  for (const g of gates) {
+    if (!g.required) continue
+    if (g.status === 'UNANSWERED' && g.source === 'TRADER') waiting.push(`Answer: ${g.title}.`)
+    if (g.status === 'UNMEASURABLE' && g.id === 'session') waiting.push(`Session window cannot be measured: ${g.detail}`)
+    if (g.status === 'UNANSWERED' && g.id === 'session') waiting.push(g.detail)
+  }
+
+  const fails = (pred: (g: GateResult) => boolean): Blocker[] =>
+    gates.filter((g) => g.required && g.status === 'FAIL' && pred(g)).map((g) => ({ code: g.code, reason: g.detail }))
+
+  const lockIds = new Set(ANSWERED_GATES.filter((d) => d.lock).map((d) => d.id as GateId))
+  const lockBlockers = fails((g) => lockIds.has(g.id))
+  const allBlockers = fails(() => true)
+
+  const statusOf = (id: GateId) => gates.find((g) => g.id === id)?.status
+  const met = (...ids: GateId[]) => ids.every((id) => statusOf(id) === 'PASS')
+  const categories: ScoreCategory[] = [
+    { name: 'HTF bias / POI', met: met('htfAlignment', 'poiQuality') },
+    { name: 'SMT', met: met('smt') },
+    { name: 'POI reaction (retest + closed confirmation)', met: met('retest', 'confirmation') },
+    { name: 'Displacement + structure shift', met: met('displacement') },
+    { name: 'Session timing', met: met('session') },
+  ]
+  const score = { value: categories.filter((c) => c.met).length, of: 5 as const, categories }
+
+  let state: DecisionState
+  let blockers: Blocker[] = []
+  if (lockBlockers.length) {
+    state = 'BLOCKED'
+    blockers = allBlockers
+  } else if (input.side === null) {
+    state = 'NEUTRAL'
+  } else if (allBlockers.length) {
+    state = 'BLOCKED'
+    blockers = allBlockers
+  } else if (sizing?.verdict === 'NO_SIZE') {
+    state = 'NO_TRADE'
+    waiting.unshift(...sizing.errors)
+  } else if (waiting.length) {
+    state = 'WAIT_FOR_TRIGGER'
+  } else {
+    state = 'APPROVED_TRADE'
+  }
+
+  return { state, gates, blockers, waiting, score, sizing }
+}
+
+export const TICKET_SCHEMA = 'quantflow.ticket/v1'
+
+/**
+ * The ticket as a record: what was decided, on what, and why. It is written
+ * for a journal, not sent anywhere, and it says so in `note`.
+ */
+export function ticketRecord(input: TicketInput, result: TicketResult, createdAt: string, specStatus: string) {
+  const s = result.sizing
+  return {
+    schema: TICKET_SCHEMA,
+    createdAt,
+    note: 'A ticket records a decision. It places no order. TRADER gates are the trader\'s own observations.',
+    state: result.state,
+    symbol: input.symbol,
+    contract: input.contract.trim().toUpperCase() || null,
+    specStatus,
+    setupId: input.setupId.trim(),
+    direction: input.side,
+    model: input.model,
+    sessionProfile: input.sessionProfile,
+    alsoRequire: input.alsoRequire,
+    sessionClock: input.clock ? { state: input.clock.state, nowMinutesEt: input.clock.nowMinutesEt } : null,
+    gates: result.gates.map((g) => ({ id: g.id, code: g.code, status: g.status, required: g.required, source: g.source })),
+    blockers: result.blockers,
+    waiting: result.waiting,
+    score: { value: result.score.value, of: result.score.of, rankingOnly: true },
+    plan: {
+      entry: input.entry,
+      stop: input.stop,
+      stopPoints: s && s.verdict !== 'INVALID' ? +s.stopPoints.toFixed(6) : null,
+      stopTicks: s && s.verdict !== 'INVALID' ? s.stopTicks : null,
+      lossPerUnit: s && s.verdict !== 'INVALID' ? s.lossPerUnit : null,
+      units: s ? s.units : null,
+      plannedRisk: s ? s.plannedRisk : null,
+      blendedNetR: s ? s.blendedNetR : null,
+      riskBudget: input.riskBudget,
+      costPerUnit: input.costPerUnit,
+      slippageTicks: input.slippageTicks,
+      minR: Math.max(input.minR, STRICT_MIN_R),
+      targets: input.targets.map((t, i) => ({
+        price: t.price,
+        kind: t.kind,
+        share: s?.targets[i]?.share ?? t.share ?? null,
+        units: s?.targets[i]?.units ?? null,
+        netR: s?.targets[i]?.netR ?? null,
+      })),
+    },
+    narrative: input.narrative,
+  }
+}
