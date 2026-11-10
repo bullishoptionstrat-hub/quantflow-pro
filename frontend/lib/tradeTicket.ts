@@ -202,6 +202,25 @@ export function smtRequired(symbol: string): boolean {
 /** The strict profile's floor. A lower minimum is a relaxed variant, not offered here. */
 export const STRICT_MIN_R = 2
 
+/**
+ * Losing trades in one ET calendar day that lock the rest of it: the
+ * playbook's conservative two-stop-out default. A stricter personal rule is
+ * the trader's own answer to the daily-lock gate; this only adds to it.
+ */
+export const STOP_OUT_LOCK = 2
+
+/**
+ * What the journal in this browser knows about this idea and today. It can
+ * only tighten the two gates it informs: a journal that has no record proves
+ * nothing (it may be another browser's), so the trader's answer stands.
+ */
+export interface JournalContext {
+  /** Earlier entries with this setup ID that were taken. */
+  priorAttempts: number
+  /** Closed losing trades whose last exit fell on today's ET date. */
+  stopOutsToday: number
+}
+
 export type TargetKind = 'INTERNAL' | 'EXTERNAL'
 
 export interface TicketTarget {
@@ -256,6 +275,8 @@ export interface TicketInput {
   minR: number
   /** The backend's session verdict and ET clock. Null when it did not answer. */
   clock: SessionClock | null
+  /** The journal's record of this idea and today. Absent or null: not consulted. */
+  journal?: JournalContext | null
 }
 
 export type GateStatus = 'PASS' | 'FAIL' | 'UNANSWERED' | 'UNMEASURABLE'
@@ -390,6 +411,26 @@ export function evaluateTicket(input: TicketInput): TicketResult {
     })
   }
 
+  // The journal can only turn these two gates to FAIL. When it does, the gate
+  // is measured rather than answered, and the record says so.
+  const j = input.journal
+  if (j) {
+    const first = gates.find((g) => g.id === 'firstAttempt')
+    if (first && j.priorAttempts > 0) {
+      Object.assign(first, {
+        status: 'FAIL', source: 'COMPUTED',
+        detail: `The journal in this browser holds ${j.priorAttempts} earlier attempt${j.priorAttempts === 1 ? '' : 's'} at this setup ID. A new idea needs a new higher-timeframe trigger.`,
+      })
+    }
+    const lock = gates.find((g) => g.id === 'dailyLock')
+    if (lock && j.stopOutsToday >= STOP_OUT_LOCK) {
+      Object.assign(lock, {
+        status: 'FAIL', source: 'COMPUTED',
+        detail: `The journal in this browser holds ${j.stopOutsToday} losing trades today (ET). ${STOP_OUT_LOCK} stop-outs lock the day.`,
+      })
+    }
+  }
+
   const s = sessionGate(input.sessionProfile, input.clock)
   gates.push({ id: 'session', code: 'SESSION_MODEL_MISSING', title: 'Session window', required: true, source: 'COMPUTED', ...s })
 
@@ -486,7 +527,9 @@ export function evaluateTicket(input: TicketInput): TicketResult {
   return { state, gates, blockers, waiting, score, sizing }
 }
 
-export const TICKET_SCHEMA = 'quantflow.ticket/v1'
+export const TICKET_SCHEMA = 'quantflow.ticket/v1' as const
+
+export type TicketRecord = ReturnType<typeof ticketRecord>
 
 /**
  * The ticket as a record: what was decided, on what, and why. It is written

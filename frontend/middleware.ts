@@ -81,6 +81,7 @@ export const config = {
     '/flow/:path*',
     '/gex/:path*',
     '/heat-map/:path*',
+    '/journal/:path*',
     '/macro/:path*',
     '/news/:path*',
     '/optimizer/:path*',

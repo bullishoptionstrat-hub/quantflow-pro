@@ -18,6 +18,7 @@ const NAV = [
   { href: '/macro',         icon: '📊', label: 'Macro',          badge: 'NEW',  group: 'analytics' },
   { href: '/news',          icon: '📰', label: 'News & Sentiment', badge: 'NEW', group: 'analytics' },
   { href: '/ticket',        icon: '🧾', label: 'Trade Ticket',   badge: 'NEW',  group: 'tools' },
+  { href: '/journal',       icon: '📓', label: 'Trade Journal',  badge: 'NEW',  group: 'tools' },
   { href: '/risk',          icon: '🎯', label: 'Risk & Size',    badge: 'NEW',  group: 'tools' },
   { href: '/calculator',    icon: '🧮', label: 'P/L Calculator', badge: null,   group: 'tools' },
   { href: '/optimizer',     icon: '⚙', label: 'Optimizer',      badge: null,   group: 'tools' },

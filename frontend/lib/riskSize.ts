@@ -120,6 +120,21 @@ function ticksBetween(a: number, b: number, tickSize: number): { raw: number; on
 }
 
 /**
+ * Ticks to the stop and dollars lost per unit there, including stop slippage
+ * and the round-trip cost. A stop off the tick grid counts as MORE ticks.
+ *
+ * Exported so the journal measures risk at the actual fill with the same
+ * rounding the sizing used, rather than a second copy of the rule.
+ */
+export function stopRisk(
+  tickSize: number, tickValue: number, entry: number, stop: number, slippageTicks: number, costPerUnit: number,
+): { stopTicks: number; offGrid: boolean; lossPerUnit: number } {
+  const s = ticksBetween(entry, stop, tickSize)
+  const stopTicks = s.onGrid ? Math.round(s.raw) : Math.ceil(s.raw)
+  return { stopTicks, offGrid: !s.onGrid, lossPerUnit: (stopTicks + slippageTicks) * tickValue + costPerUnit }
+}
+
+/**
  * Split `units` across target shares in whole units, by largest remainder, so
  * the parts always sum to `units`. Ties go to the earlier target.
  */
@@ -193,13 +208,13 @@ export function sizePosition(input: SizingInput): SizingResult {
   const cost = costPerUnit as number
   const slip = slippageTicks as number
 
-  const s = ticksBetween(entry, stop, spec.tickSize)
-  const stopTicks = s.onGrid ? Math.round(s.raw) : Math.ceil(s.raw)
-  if (!s.onGrid) {
+  const s = stopRisk(spec.tickSize, spec.tickValue, entry, stop, slip, cost)
+  const stopTicks = s.stopTicks
+  if (s.offGrid) {
     warnings.push(`The stop is off the ${spec.tickSize} tick grid; sized at ${stopTicks} ticks (rounded up, the conservative way).`)
   }
   const stopPoints = stopTicks * spec.tickSize
-  const lossPerUnit = (stopTicks + slip) * spec.tickValue + cost
+  const lossPerUnit = s.lossPerUnit
 
   // Floor, never round. Float division can land a hair under an exact whole
   // number (0.3 / 0.1 is 2.9999999999999996), so a unit is added back only when
@@ -261,7 +276,7 @@ export function sizePosition(input: SizingInput): SizingResult {
 
   return {
     verdict, errors, warnings,
-    stopPoints, stopTicks, stopOffGrid: !s.onGrid, lossPerUnit,
+    stopPoints, stopTicks, stopOffGrid: s.offGrid, lossPerUnit,
     units, plannedRisk, budgetUnused: Math.max(0, budget - plannedRisk),
     targets: targetResults, blendedNetR,
   }

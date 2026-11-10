@@ -2,6 +2,8 @@
 import { useMemo, useState, type CSSProperties } from 'react'
 import { CONTRACT_SPECS, SPEC_SOURCE, specFor } from '@/lib/contractSpecs'
 import { etClock, useMarketSession } from '@/lib/marketSession'
+import { createEntry, etDate, priorAttempts, stopOutsOn } from '@/lib/journal'
+import { useJournal } from '@/lib/journalStore'
 import type { Side, SizingSpec } from '@/lib/riskSize'
 import {
   MODELS, NARRATIVE_FIELDS, SESSION_PROFILES, STRICT_MIN_R,
@@ -92,8 +94,18 @@ export default function TicketPage() {
   const [minR, setMinR] = useState(String(STRICT_MIN_R))
   const [copied, setCopied] = useState<'idle' | 'copied' | 'failed'>('idle')
 
+  const [saveMsg, setSaveMsg] = useState<string | null>(null)
+
   const { panel } = useMarketSession()
   const clock = panel.status === 'ok' ? panel.data : null
+  const journal = useJournal()
+  const journalCtx = useMemo(() => {
+    if (!journal.ready || journal.error) return null
+    return {
+      priorAttempts: priorAttempts(journal.entries, setupId),
+      stopOutsToday: stopOutsOn(journal.entries, etDate(new Date().toISOString()) ?? ''),
+    }
+  }, [journal.ready, journal.error, journal.entries, setupId])
 
   const preset = symbol === '' || symbol === 'CUSTOM' ? undefined : specFor(symbol)
 
@@ -118,8 +130,9 @@ export default function TicketPage() {
       riskBudget: parseField(budget), costPerUnit: parseField(cost), slippageTicks: parseField(slippage),
       minR: parseField(minR) ?? NaN,
       clock: clock ? { state: clock.state, nowMinutesEt: clock.nowMinutesEt, closeMinutesEt: clock.closeMinutesEt } : null,
+      journal: journalCtx,
     }
-  }, [symbol, preset, customTickSize, customTickValue, customUnit, contract, side, setupId, model, profile, alsoRequire, answers, narrative, entry, stop, targets, budget, cost, slippage, minR, clock])
+  }, [symbol, preset, customTickSize, customTickValue, customUnit, contract, side, setupId, model, profile, alsoRequire, answers, narrative, entry, stop, targets, budget, cost, slippage, minR, clock, journalCtx])
 
   const result = useMemo(() => evaluateTicket(input), [input])
   const gates = visibleGates(input)
@@ -137,10 +150,17 @@ export default function TicketPage() {
   const setTarget = (i: number, patch: Partial<TargetRow>) =>
     setTargets((ts) => ts.map((t, j) => (j === i ? { ...t, ...patch } : t)))
 
-  const record = JSON.stringify(
-    ticketRecord(input, result, new Date().toISOString(), preset ? SPEC_SOURCE.status : symbol === 'CUSTOM' ? 'CUSTOM' : 'NONE'),
-    null, 2,
-  )
+  const specStatus = preset ? SPEC_SOURCE.status : symbol === 'CUSTOM' ? 'CUSTOM' : 'NONE'
+  const record = JSON.stringify(ticketRecord(input, result, new Date().toISOString(), specStatus), null, 2)
+  const saveToJournal = () => {
+    const spec = input.spec
+    if (!spec) { setSaveMsg('Choose an instrument first.'); return }
+    const now = new Date().toISOString()
+    const made = createEntry(ticketRecord(input, result, now, specStatus), { tickSize: spec.tickSize, tickValue: spec.tickValue, unit: spec.unit }, now)
+    if ('error' in made) { setSaveMsg(made.error); return }
+    const err = journal.update((es) => [...es, made.entry])
+    setSaveMsg(err ?? `Saved to the journal as ${made.entry.ticket.setupId}, ${result.state}.`)
+  }
   const copy = async () => {
     try {
       if (!navigator.clipboard) throw new Error('no clipboard')
@@ -393,6 +413,12 @@ export default function TicketPage() {
             style={{ padding: '4px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: '#a78bfa', cursor: 'pointer', fontSize: 11 }}>
             Copy JSON
           </button>
+          <button type="button" onClick={saveToJournal} disabled={result.state === 'NEUTRAL'}
+            title="Saves this ticket, as it stands, to the journal in this browser. Blocked ideas are worth keeping too."
+            style={{ padding: '4px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: result.state === 'NEUTRAL' ? 'var(--text-muted)' : '#22c55e', cursor: result.state === 'NEUTRAL' ? 'not-allowed' : 'pointer', fontSize: 11 }}>
+            Save to journal
+          </button>
+          {saveMsg && <span data-testid="save-msg" style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{saveMsg}</span>}
           {copied === 'copied' && <span style={{ fontSize: 11, color: '#22c55e' }}>Copied.</span>}
           {copied === 'failed' && <span style={{ fontSize: 11, color: '#fca5a5' }}>The browser refused the clipboard; select the text below instead.</span>}
         </div>
