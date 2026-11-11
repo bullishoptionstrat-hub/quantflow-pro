@@ -5,6 +5,7 @@ import {
   type EntryEvaluation, type JournalEntry, type SelfTag,
 } from '@/lib/journal'
 import { mergeImport, serializeJournal, useJournal } from '@/lib/journalStore'
+import { Panel } from '@/components/hud/Panel'
 
 /**
  * The trade journal: planned against actual, R against the planned stop, and
@@ -106,7 +107,7 @@ export default function JournalPage() {
       )}
       {msg && <div data-testid="journal-msg" style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 12 }}>{msg}</div>}
 
-      <div className="card" style={{ padding: 16, marginBottom: 16 }} data-testid="journal-stats">
+      <Panel title="Journal stats" code="THIS BROWSER" data-testid="journal-stats">
         <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', fontFamily: MONO, fontSize: 12, color: 'var(--text-secondary)', marginBottom: 8 }}>
           <span>SAVED {stats.saved}</span>
           <span>TAKEN {stats.taken}</span>
@@ -114,7 +115,9 @@ export default function JournalPage() {
           <span>CLOSED {stats.closed}</span>
           <span>MEASURED {stats.measured}</span>
           <span>W/L/BE {stats.wins}/{stats.losses}/{stats.breakeven}</span>
-          <span style={{ color: stats.totalR >= 0 ? '#22c55e' : '#ef4444' }}>TOTAL {rText(stats.totalR)}</span>
+          {/* Green and red say up and down. A zero total — which is what an
+              empty journal sums to — is neither, so it stays neutral. */}
+          <span style={{ color: stats.totalR > 0 ? '#22c55e' : stats.totalR < 0 ? '#ef4444' : 'var(--text-secondary)' }}>TOTAL {rText(stats.totalR)}</span>
         </div>
         <div style={{ fontFamily: MONO, fontSize: 12, marginBottom: 8 }} data-testid="journal-rates">
           {stats.rates
@@ -127,7 +130,7 @@ export default function JournalPage() {
             <> · TAGS {Object.entries(stats.tagCounts).map(([t, n]) => `${t}×${n}`).join(' ')}</>
           )}
         </div>
-      </div>
+      </Panel>
 
       {ready && ordered.length === 0 && !error && (
         <div className="card" style={{ padding: 16, marginBottom: 16, fontSize: 12, color: 'var(--text-muted)' }}>
@@ -137,10 +140,8 @@ export default function JournalPage() {
 
       {ordered.map((e) => <EntryCard key={e.id} entry={e} ev={evals.get(e.id)!} onPatch={(p) => patch(e.id, p)} />)}
 
-      <div className="card" style={{ padding: 16, marginTop: 16 }}>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-          <button type="button" style={BUTTON} onClick={() => setShowExport((s) => !s)}>{showExport ? 'Hide export' : 'Export JSON'}</button>
-        </div>
+      <Panel title="Export / import" code="THIS BROWSER" style={{ marginTop: 16 }}
+        actions={<button type="button" style={BUTTON} onClick={() => setShowExport((s) => !s)}>{showExport ? 'Hide export' : 'Export JSON'}</button>}>
         {showExport && (
           <textarea data-testid="journal-export" readOnly rows={6} value={serializeJournal(entries, [])} style={{ ...INPUT, fontSize: 11, marginBottom: 8 }} />
         )}
@@ -148,7 +149,7 @@ export default function JournalPage() {
         <textarea id="import" rows={3} value={importText} onChange={(e) => setImportText(e.target.value)} style={{ ...INPUT, fontSize: 11, marginBottom: 8 }} />
         <button type="button" style={BUTTON} onClick={doImport} disabled={importText.trim() === ''}>Import</button>
         <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }}>An import adds entries by id and never rewrites one that is already here.</div>
-      </div>
+      </Panel>
     </div>
   )
 }

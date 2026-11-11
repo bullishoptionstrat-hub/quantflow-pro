@@ -1,28 +1,24 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { NAV, isActive } from '@/lib/nav'
 import { SignOutButton } from './SignOutButton'
 
-const ITEMS = [
-  { href: '/flow',         icon: '⚡', label: 'Flow' },
-  { href: '/power-alerts', icon: '🔥', label: 'Alerts' },
-  { href: '/gex',          icon: 'Γ',  label: 'GEX' },
-  { href: '/ticket',       icon: '🧾', label: 'Ticket' },
-  { href: '/risk',         icon: '🎯', label: 'Risk' },
-  { href: '/calculator',   icon: '🧮', label: 'Calc' },
-  { href: '/watchlist',    icon: '★',  label: 'Watch' },
-]
+// The mobile bar shows the pages that carry a `short` label in `lib/nav.ts`,
+// in the same order as the sidebar. It used to hold its own list.
+const ITEMS = NAV.filter((n) => n.short)
 
 export function MobileNav() {
   const pathname = usePathname()
   return (
-    <nav className="mobile-nav">
+    <nav className="mobile-nav" aria-label="Pages">
       {ITEMS.map(item => {
-        const active = pathname === item.href
+        const active = isActive(pathname, item.href)
         return (
-          <Link key={item.href} href={item.href} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, padding: '4px 12px', color: active ? '#a78bfa' : 'var(--text-secondary)', textDecoration: 'none' }}>
-            <span style={{ fontSize: 18 }}>{item.icon}</span>
-            <span style={{ fontSize: 10, fontWeight: active ? 600 : 400 }}>{item.label}</span>
+          <Link key={item.href} href={item.href} aria-current={active ? 'page' : undefined}
+            style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, padding: '4px 12px', color: active ? 'var(--accent-cyan)' : 'var(--text-secondary)', textDecoration: 'none' }}>
+            <span style={{ fontSize: 18 }} aria-hidden="true">{item.icon}</span>
+            <span style={{ fontSize: 10, fontWeight: active ? 600 : 400 }}>{item.short}</span>
           </Link>
         )
       })}

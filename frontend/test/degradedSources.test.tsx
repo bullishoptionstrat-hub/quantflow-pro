@@ -26,8 +26,11 @@ afterEach(() => vi.clearAllMocks())
 
 const health = (ingestion: Record<string, unknown>) => ({ ingestion })
 
-describe('a contributing source that carries a note is not plainly live', () => {
-  test('an entitlement refusal on a connected source shows DEGRADED, not LIVE', async () => {
+// The clean badge said `✓ LIVE` until the Desk HUD pass. `connected` is "the
+// last cycle succeeded", not a freshness claim, so it now says `✓ CONNECTED` —
+// the word the sidebar's source summary has always used for the same state.
+describe('a contributing source that carries a note is not plainly connected', () => {
+  test('an entitlement refusal on a connected source shows DEGRADED, not CONNECTED', async () => {
     // The exact shape this deployment produces: the poller owns `sources` and
     // reports what the request returned, while the entitlement probe answers a
     // question no poller asks. Both are true at once.
@@ -42,12 +45,13 @@ describe('a contributing source that carries a note is not plainly live', () => 
     await waitFor(() => expect(screen.getByText('polygon')).toBeTruthy())
     const body = document.body.textContent ?? ''
     expect(body).toMatch(/DEGRADED/)
-    expect(body).not.toMatch(/✓ LIVE/)
+    expect(body).not.toMatch(/✓ CONNECTED/)
+    expect(body).not.toMatch(/\bLIVE\b/)
     // And the backend's own words reach the reader, not a paraphrase.
     expect(body).toMatch(/NOT_AUTHORIZED/)
   })
 
-  test('a clean connected source is still plainly live', async () => {
+  test('a clean connected source is still plainly connected', async () => {
     // The badge must not become permanently amber: a degraded marker that is
     // always on is a marker nobody reads.
     mockApi(health({
@@ -58,8 +62,10 @@ describe('a contributing source that carries a note is not plainly live', () => 
 
     await waitFor(() => expect(screen.getByText('fred')).toBeTruthy())
     const body = document.body.textContent ?? ''
-    expect(body).toMatch(/✓ LIVE/)
+    expect(body).toMatch(/✓ CONNECTED/)
     expect(body).not.toMatch(/DEGRADED/)
+    // Not "LIVE": a successful cycle says nothing about how fresh the data is.
+    expect(body).not.toMatch(/\bLIVE\b/)
   })
 
   test('a note is rendered even when the source is not connected', async () => {

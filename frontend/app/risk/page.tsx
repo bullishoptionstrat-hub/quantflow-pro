@@ -2,6 +2,7 @@
 import { useMemo, useState } from 'react'
 import { CONTRACT_SPECS, SPEC_SOURCE, specFor } from '@/lib/contractSpecs'
 import { sizePosition, type Side, type SizingResult, type Verdict } from '@/lib/riskSize'
+import { Panel } from '@/components/hud/Panel'
 
 /**
  * Risk & position size for one idea.
@@ -112,7 +113,7 @@ export default function RiskPage() {
         </p>
       </div>
 
-      <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+      <Panel title="Sizing inputs" code="TRADER INPUT">
         <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 12 }}>
           <div style={{ minWidth: 200 }}>
             <label htmlFor="instrument" style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block', marginBottom: 4, fontWeight: 600, letterSpacing: '0.08em' }}>INSTRUMENT</label>
@@ -188,15 +189,15 @@ export default function RiskPage() {
             + Add target
           </button>
         )}
-      </div>
+      </Panel>
 
-      <div className="card" style={{ padding: 16, marginBottom: 16 }} aria-live="polite">
+      <Panel title="Size result" code="BROWSER CALC" aria-live="polite">
         {result === null ? (
           <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Enter an entry and a stop to size the idea.</div>
         ) : (
           <Results result={result} unit={unitWord} />
         )}
-      </div>
+      </Panel>
 
       <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6 }}>
         Assumptions: slippage is charged on the stop only (a stop exits at market, a target rests as a limit); costs are

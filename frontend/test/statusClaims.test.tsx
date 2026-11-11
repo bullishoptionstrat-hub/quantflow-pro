@@ -153,9 +153,16 @@ describe('the sidebar reports transport as transport', () => {
     const offenders: string[] = []
     for (const f of files) {
       const rel = f.slice(ROOT.length + 1)
-      if (rel === 'lib/marketSession.ts') continue   // names them to forbid them
       const src = readFileSync(f, 'utf8')
         .replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*|\{\/\*[\s\S]*?\*\/\}/g, '')
+      // The verdict is the exchange's regular session and nothing wider, so it
+      // may never be printed as "the market". This ban used to live only in
+      // `wireContract.test.ts`, scoped to `Sidebar.tsx` and `marketSession.ts`
+      // by name — a new component (the status strip) could have printed
+      // MARKET OPEN and no guard would have seen it. Every file, and no
+      // exemption: nothing in the frontend has a reason to say it.
+      if (/MARKET OPEN|MARKET CLOSED/.test(src)) offenders.push(`${rel}: prints the session as "the market"`)
+      if (rel === 'lib/marketSession.ts') continue   // names them to forbid them
       if (/getDay\(\)/.test(src)) offenders.push(`${rel}: decides a weekday itself`)
       if (/\bisRegularHours\b|\bisMarketOpen\b/.test(src)) {
         offenders.push(`${rel}: a local session check`)

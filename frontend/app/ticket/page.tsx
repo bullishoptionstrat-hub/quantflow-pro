@@ -4,6 +4,7 @@ import { CONTRACT_SPECS, SPEC_SOURCE, specFor } from '@/lib/contractSpecs'
 import { etClock, useMarketSession } from '@/lib/marketSession'
 import { createEntry, etDate, priorAttempts, stopOutsOn } from '@/lib/journal'
 import { useJournal } from '@/lib/journalStore'
+import { Panel } from '@/components/hud/Panel'
 import type { Side, SizingSpec } from '@/lib/riskSize'
 import {
   MODELS, NARRATIVE_FIELDS, SESSION_PROFILES, STRICT_MIN_R,
@@ -181,7 +182,7 @@ export default function TicketPage() {
         </p>
       </div>
 
-      <div className="card" style={{ padding: 16, marginBottom: 16 }} aria-live="polite">
+      <Panel title="Verdict" code="BROWSER CALC" aria-live="polite">
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
           <span data-testid="ticket-state" style={{ color: style.color, background: style.bg, fontWeight: 800, fontSize: 13, padding: '4px 12px', borderRadius: 4, fontFamily: MONO }}>
             {style.label}
@@ -214,10 +215,9 @@ export default function TicketPage() {
             </span>
           ))}
         </div>
-      </div>
+      </Panel>
 
-      <div className="card" style={{ padding: 16, marginBottom: 16 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: '#fafafa', marginBottom: 10 }}>IDEA</div>
+      <Panel title="Idea" code="TRADER INPUT">
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 12 }}>
           <div style={{ minWidth: 200 }}>
             <label htmlFor="instrument" style={LABEL}>INSTRUMENT</label>
@@ -293,10 +293,9 @@ export default function TicketPage() {
             </label>
           ))}
         </div>
-      </div>
+      </Panel>
 
-      <div className="card" style={{ padding: 16, marginBottom: 16 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: '#fafafa', marginBottom: 4 }}>GATES</div>
+      <Panel title="Gates" code="TRADER INPUT · MEASURED">
         <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 10 }}>
           Your observations, recorded as yours. Pass only what has closed and you can point to on the chart. Click an answer again to clear it.
         </div>
@@ -342,10 +341,9 @@ export default function TicketPage() {
             </div>
           </div>
         ))}
-      </div>
+      </Panel>
 
-      <div className="card" style={{ padding: 16, marginBottom: 16 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: '#fafafa', marginBottom: 10 }}>PLAN</div>
+      <Panel title="Plan" code="TRADER INPUT · BROWSER CALC">
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
           {NARRATIVE_FIELDS.map((f) => (
             <TextField key={f.key} id={`n-${f.key}`} label={f.label.toUpperCase()} value={narrative[f.key]}
@@ -404,11 +402,9 @@ export default function TicketPage() {
             {result.sizing.warnings.map((w) => <li key={w}>{w}</li>)}
           </ul>
         )}
-      </div>
+      </Panel>
 
-      <div className="card" style={{ padding: 16, marginBottom: 16 }}>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 8 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#fafafa' }}>TICKET RECORD</div>
+      <Panel title="Ticket record" code="BROWSER CALC" actions={<>
           <button type="button" onClick={() => void copy()}
             style={{ padding: '4px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: '#a78bfa', cursor: 'pointer', fontSize: 11 }}>
             Copy JSON
@@ -418,13 +414,17 @@ export default function TicketPage() {
             style={{ padding: '4px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: result.state === 'NEUTRAL' ? 'var(--text-muted)' : '#22c55e', cursor: result.state === 'NEUTRAL' ? 'not-allowed' : 'pointer', fontSize: 11 }}>
             Save to journal
           </button>
-          {saveMsg && <span data-testid="save-msg" style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{saveMsg}</span>}
-          {copied === 'copied' && <span style={{ fontSize: 11, color: '#22c55e' }}>Copied.</span>}
-          {copied === 'failed' && <span style={{ fontSize: 11, color: '#fca5a5' }}>The browser refused the clipboard; select the text below instead.</span>}
-        </div>
+        </>}>
+        {(saveMsg || copied !== 'idle') && (
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+            {saveMsg && <span data-testid="save-msg" style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{saveMsg}</span>}
+            {copied === 'copied' && <span style={{ fontSize: 11, color: '#22c55e' }}>Copied.</span>}
+            {copied === 'failed' && <span style={{ fontSize: 11, color: '#fca5a5' }}>The browser refused the clipboard; select the text below instead.</span>}
+          </div>
+        )}
         <textarea data-testid="ticket-json" readOnly value={record} rows={10}
           style={{ ...INPUT, fontSize: 11, color: 'var(--text-secondary)', resize: 'vertical' }} />
-      </div>
+      </Panel>
 
       <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6 }}>
         What this measures: the session window (on the backend&apos;s ET clock and holiday calendar) and the net reward

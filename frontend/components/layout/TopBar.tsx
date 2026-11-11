@@ -50,7 +50,6 @@ type Tape =
 
 export function TopBar() {
   const [tape, setTape] = useState<Tape>({ status: 'loading' })
-  const [time, setTime] = useState<string>('')
   const { powerAlerts, flowEvents } = useStore()
   const pathname = usePathname()
   const newAlerts = powerAlerts.filter(a => Date.now() - new Date(a.created_at).getTime() < 300_000).length
@@ -74,14 +73,8 @@ export function TopBar() {
     }
   }, [])
 
-  useEffect(() => {
-    const tick = () => {
-      setTime(new Date().toLocaleTimeString('en-US', { hour12: false, timeZone: 'America/New_York' }))
-    }
-    tick()
-    const id = setInterval(tick, 1000)
-    return () => clearInterval(id)
-  }, [])
+  // The New York clock that sat at the right of this bar moved to the status
+  // strip above it, beside London and Tokyo. One clock per zone on screen.
 
   useEffect(() => {
     // Refetch on navigation as well as on the timer: signing in is a
@@ -104,8 +97,11 @@ export function TopBar() {
   return (
     <div className="topbar" style={{ justifyContent: 'space-between' }}>
       {/* Scrolling ticker */}
-      <div style={{ flex: 1, overflow: 'hidden', maskImage: 'linear-gradient(90deg,transparent,black 40px,black calc(100% - 40px),transparent)' }}>
-        <div style={{ display: 'flex', gap: 24, alignItems: 'center', overflowX: 'auto', scrollbarWidth: 'none' }}>
+      {/* The edge fade is for quotes scrolling past it. The row starts inside
+          the opaque region, so the first symbol or a status line is never
+          drawn half-transparent ("SPOT FEED" read as "POT FEED"). */}
+      <div style={{ flex: 1, overflow: 'hidden', maskImage: 'linear-gradient(90deg,transparent,black 24px,black calc(100% - 24px),transparent)' }}>
+        <div style={{ display: 'flex', gap: 24, alignItems: 'center', overflowX: 'auto', scrollbarWidth: 'none', paddingInline: 24 }}>
           {quotes.map(q => {
             const stale = quoteIsStale(q)
             return (
@@ -145,12 +141,17 @@ export function TopBar() {
             ⚡ {newAlerts} ALERTS
           </span>
         )}
-        <span style={{ color: 'var(--text-secondary)', fontSize: 11, fontFamily: "'JetBrains Mono', monospace" }}>
-          TOTAL PREM <span style={{ color: '#fbbf24', fontWeight: 700 }}>{formatPremium(totalPremium)}</span>
-        </span>
-        <span style={{ color: 'var(--text-muted)', fontSize: 11, fontFamily: "'JetBrains Mono', monospace" }}>
-          {time} ET
-        </span>
+        {/* This said TOTAL PREM. It is a sum over the signals this tab has
+            received — a client ring buffer that keeps at most 500 — so
+            "total" claimed a session figure nobody computed. The label now
+            says what it is summed over, and a sum over nothing is not shown. */}
+        {flowEvents.length > 0 && (
+          <span data-testid="topbar-prem"
+            title={`Sum over the last ${flowEvents.length} signals this browser received. At most 500 are kept, so this is not a session total.`}
+            style={{ color: 'var(--text-secondary)', fontSize: 11, fontFamily: "'JetBrains Mono', monospace" }}>
+            PREM · {flowEvents.length} SIG <span style={{ color: '#fbbf24', fontWeight: 700 }}>{formatPremium(totalPremium)}</span>
+          </span>
+        )}
       </div>
     </div>
   )
