@@ -115,7 +115,9 @@ export default function JournalPage() {
           <span>CLOSED {stats.closed}</span>
           <span>MEASURED {stats.measured}</span>
           <span>W/L/BE {stats.wins}/{stats.losses}/{stats.breakeven}</span>
-          <span style={{ color: stats.totalR >= 0 ? '#22c55e' : '#ef4444' }}>TOTAL {rText(stats.totalR)}</span>
+          {/* Green and red say up and down. A zero total — which is what an
+              empty journal sums to — is neither, so it stays neutral. */}
+          <span style={{ color: stats.totalR > 0 ? '#22c55e' : stats.totalR < 0 ? '#ef4444' : 'var(--text-secondary)' }}>TOTAL {rText(stats.totalR)}</span>
         </div>
         <div style={{ fontFamily: MONO, fontSize: 12, marginBottom: 8 }} data-testid="journal-rates">
           {stats.rates

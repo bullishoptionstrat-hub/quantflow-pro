@@ -97,8 +97,11 @@ export function TopBar() {
   return (
     <div className="topbar" style={{ justifyContent: 'space-between' }}>
       {/* Scrolling ticker */}
-      <div style={{ flex: 1, overflow: 'hidden', maskImage: 'linear-gradient(90deg,transparent,black 40px,black calc(100% - 40px),transparent)' }}>
-        <div style={{ display: 'flex', gap: 24, alignItems: 'center', overflowX: 'auto', scrollbarWidth: 'none' }}>
+      {/* The edge fade is for quotes scrolling past it. The row starts inside
+          the opaque region, so the first symbol or a status line is never
+          drawn half-transparent ("SPOT FEED" read as "POT FEED"). */}
+      <div style={{ flex: 1, overflow: 'hidden', maskImage: 'linear-gradient(90deg,transparent,black 24px,black calc(100% - 24px),transparent)' }}>
+        <div style={{ display: 'flex', gap: 24, alignItems: 'center', overflowX: 'auto', scrollbarWidth: 'none', paddingInline: 24 }}>
           {quotes.map(q => {
             const stale = quoteIsStale(q)
             return (
