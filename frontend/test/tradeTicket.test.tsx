@@ -11,9 +11,11 @@ import { join } from 'node:path'
 import { render, screen, fireEvent, within } from '@testing-library/react'
 import {
   ADDED_CODES, MODELS, README_CODES, SESSION_PROFILES,
-  contractProblem, evaluateTicket, minutesOf, sessionGate, ticketRecord, visibleGates,
-  type AnsweredGateId, type SessionClock, type TicketInput,
+  contractProblem, evaluateTicket, gateWaiting, minutesOf, sessionGate, ticketRecord, visibleGates,
+  type AnsweredGateId, type GateResult, type SessionClock, type TicketInput,
 } from '@/lib/tradeTicket'
+import { gexContext } from '@/lib/gexContext'
+import type { GEXResponse } from '@/lib/types'
 import { specFor } from '@/lib/contractSpecs'
 import type { MarketSession } from '@/lib/marketSession'
 // vi.mock below is hoisted above every import, so the page reads the mocked clock.
@@ -256,6 +258,87 @@ describe('the reward gate is computed, after costs', () => {
     }))
     expect(r.sizing?.targets.map((t) => t.units)).toEqual([2, 1])
     expect(r.blockers.map((b) => b.code)).toEqual(['REWARD_UNDER_2R'])
+  })
+})
+
+describe('a required computed gate that cannot be measured waits — any of them', () => {
+  // The rule used to read `UNMEASURABLE && id === 'session'`, so only the
+  // session window was held to it. A required COMPUTED gate is a measurement,
+  // and a measurement nobody could take is not a pass.
+  const reward: GateResult = {
+    id: 'reward', code: 'REWARD_UNDER_2R', title: 'Net reward', required: true, source: 'COMPUTED',
+    status: 'UNMEASURABLE', detail: 'Computed once the idea is sized against at least one target.',
+  }
+
+  test('a non-session computed gate that reads UNMEASURABLE leaves the ticket waiting', () => {
+    expect(gateWaiting([reward])).toEqual([
+      'Net reward cannot be measured: Computed once the idea is sized against at least one target.',
+    ])
+  })
+
+  test('every required computed gate on a complete ticket would wait if it could not be measured', () => {
+    const computed = evaluateTicket(complete()).gates.filter((g) => g.required && g.source === 'COMPUTED')
+    expect(computed.map((g) => g.id).sort()).toEqual(['reward', 'session'])
+    for (const g of computed) {
+      expect(gateWaiting([{ ...g, status: 'UNMEASURABLE' }])).toEqual([`${g.title} cannot be measured: ${g.detail}`])
+    }
+  })
+
+  test('decided and optional gates leave nothing waiting', () => {
+    expect(gateWaiting([{ ...reward, status: 'PASS' }, { ...reward, status: 'FAIL' }, { ...reward, required: false }])).toEqual([])
+  })
+
+  test('on the ticket: an unmeasurable reward is listed, not left to another line to cover', () => {
+    const r = evaluateTicket(complete({ targets: [] }))
+    expect(r.state).toBe('WAIT_FOR_TRIGGER')
+    expect(r.gates.find((g) => g.id === 'reward')?.status).toBe('UNMEASURABLE')
+    expect(r.waiting).toContain(`Net reward cannot be measured: ${reward.detail}`)
+    expect(r.waiting).toContain('Enter at least one target.')
+  })
+
+  test('the session window still reads as it did', () => {
+    const r = evaluateTicket(complete({ clock: null }))
+    expect(r.waiting).toContain('Session window cannot be measured: The backend did not answer, so the ET clock could not be read.')
+  })
+
+  test('precedence is unchanged: lock, then a failed gate, then size, then waiting', () => {
+    expect(evaluateTicket(withAnswer('dailyLock', 'FAIL', { clock: null, side: null })).state).toBe('BLOCKED')
+    expect(evaluateTicket(complete({ clock: null, side: null })).state).toBe('NEUTRAL')
+    expect(evaluateTicket(withAnswer('retest', 'FAIL', { clock: null })).state).toBe('BLOCKED')
+    expect(evaluateTicket(complete({ clock: null, riskBudget: 400 })).state).toBe('NO_TRADE')
+    expect(evaluateTicket(complete({ clock: null })).state).toBe('WAIT_FOR_TRIGGER')
+  })
+})
+
+describe('GEX context is beside the ticket, never in it', () => {
+  const recorded = (): GEXResponse => JSON.parse(readFileSync(
+    join(__dirname, '..', '..', 'backend', 'test', 'fixtures', 'gex.json'), 'utf8'))
+
+  test('the verdict is identical with and without GEX context, for every kind of ticket', () => {
+    const ctx = gexContext({ ...recorded(), spot: 760, asOf: '2026-09-15T19:46:01.000Z' })
+    const tickets: TicketInput[] = [
+      complete(), complete({ side: null }), complete({ clock: null }), complete({ targets: [] }),
+      complete({ riskBudget: 400 }), withAnswer('retest', 'FAIL'), withAnswer('smt', undefined),
+      complete({ symbol: 'SPY', spec: specOf('SPY'), contract: '' }),
+    ]
+    for (const t of tickets) {
+      const withGex = { ...t, gex: ctx, gexContext: ctx } as TicketInput
+      expect(evaluateTicket(withGex)).toEqual(evaluateTicket(t))
+    }
+  })
+
+  test('the ticket module never reads GEX, and the page never puts it into the input', () => {
+    // Comments are stripped, and so is `RegExp`, whose middle spells "gEx".
+    const strip = (x: string) =>
+      x.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '').replace(/RegExp/g, '')
+    const ticket = strip(readFileSync(join(__dirname, '..', 'lib', 'tradeTicket.ts'), 'utf8'))
+    expect(ticket).not.toMatch(/gex/i)
+    const page = strip(readFileSync(join(__dirname, '..', 'app', 'ticket', 'page.tsx'), 'utf8'))
+    const start = page.indexOf('const input: TicketInput = useMemo(')
+    expect(start).toBeGreaterThan(0)
+    const inputBlock = page.slice(start, page.indexOf('const result = useMemo(', start))
+    expect(inputBlock).not.toMatch(/gex/i)
+    expect(page).toMatch(/<GexContextPanel symbol=\{symbol\} \/>/)
   })
 })
 

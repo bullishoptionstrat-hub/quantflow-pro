@@ -5,6 +5,7 @@ import { etClock, useMarketSession } from '@/lib/marketSession'
 import { createEntry, etDate, priorAttempts, stopOutsOn } from '@/lib/journal'
 import { useJournal } from '@/lib/journalStore'
 import { Panel } from '@/components/hud/Panel'
+import { GexContextPanel } from '@/components/ticket/GexContextPanel'
 import type { Side, SizingSpec } from '@/lib/riskSize'
 import {
   MODELS, NARRATIVE_FIELDS, SESSION_PROFILES, STRICT_MIN_R,
@@ -295,6 +296,10 @@ export default function TicketPage() {
         </div>
       </Panel>
 
+      {/* Context beside the ticket, never inside it: nothing from this panel
+          reaches `input` or `evaluateTicket`. */}
+      <GexContextPanel symbol={symbol} />
+
       <Panel title="Gates" code="TRADER INPUT · MEASURED">
         <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 10 }}>
           Your observations, recorded as yours. Pass only what has closed and you can point to on the chart. Click an answer again to clear it.
@@ -430,7 +435,8 @@ export default function TicketPage() {
         What this measures: the session window (on the backend&apos;s ET clock and holiday calendar) and the net reward
         (after your costs, on the whole-unit split). Everything else is your own observation. The exact contract is
         checked for format and root only, not for whether that month is listed or is the front month. Holiday futures
-        hours are not in this terminal&apos;s calendar, so the session gate waits on a holiday rather than guess.
+        hours are not in this terminal&apos;s calendar, so the session gate waits on a holiday rather than guess. The
+        GEX reference levels are delayed, modelled context from the instrument&apos;s own chain and gate nothing.
       </div>
     </div>
   )

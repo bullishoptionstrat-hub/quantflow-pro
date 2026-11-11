@@ -398,6 +398,28 @@ export function visibleGates(input: TicketInput): { def: GateDef; required: bool
     })
 }
 
+/**
+ * What the gates themselves leave waiting: every required gate that is neither
+ * PASS nor FAIL.
+ *
+ * This was written gate by gate — `UNMEASURABLE && id === 'session'` — so a
+ * required COMPUTED gate other than the session window could read
+ * UNMEASURABLE and add nothing here. Today every such case also leaves another
+ * line waiting (a reward that cannot be measured has no target, and that is
+ * listed), which is why it never approved; that was a coincidence of the
+ * current gates, not a rule. The next measured gate would not have had it.
+ * The rule is now total: a required gate that has not been decided waits.
+ */
+export function gateWaiting(gates: readonly GateResult[]): string[] {
+  const out: string[] = []
+  for (const g of gates) {
+    if (!g.required || g.status === 'PASS' || g.status === 'FAIL') continue
+    if (g.status === 'UNANSWERED') out.push(g.source === 'TRADER' ? `Answer: ${g.title}.` : g.detail)
+    else out.push(`${g.title} cannot be measured: ${g.detail}`)
+  }
+  return out
+}
+
 export function evaluateTicket(input: TicketInput): TicketResult {
   const gates: GateResult[] = []
   const waiting: string[] = []
@@ -480,12 +502,7 @@ export function evaluateTicket(input: TicketInput): TicketResult {
     for (const e of sizing.errors) waiting.push(`Sizing: ${e}`)
   }
 
-  for (const g of gates) {
-    if (!g.required) continue
-    if (g.status === 'UNANSWERED' && g.source === 'TRADER') waiting.push(`Answer: ${g.title}.`)
-    if (g.status === 'UNMEASURABLE' && g.id === 'session') waiting.push(`Session window cannot be measured: ${g.detail}`)
-    if (g.status === 'UNANSWERED' && g.id === 'session') waiting.push(g.detail)
-  }
+  waiting.push(...gateWaiting(gates))
 
   const fails = (pred: (g: GateResult) => boolean): Blocker[] =>
     gates.filter((g) => g.required && g.status === 'FAIL' && pred(g)).map((g) => ({ code: g.code, reason: g.detail }))

@@ -285,6 +285,25 @@ export interface GEXResponse {
   }
   /** What a reader has to know to read these numbers. See the route. */
   assumptions?: Record<string, string>
+  /**
+   * The chain's own as-of: Cboe's `last_trade_time` for the underlying, read
+   * as New York time and sent as an ISO instant. `null` when the chain carried
+   * no readable time — the backend never puts its own clock here.
+   *
+   * Optional, like the four below, because the recorded `gex.json` predates
+   * them and a backend older than the field answers without it. Absent and
+   * `null` both read as unknown.
+   */
+  asOf?: string | null
+  /** The vendor's timestamp string exactly as sent. */
+  asOfVendor?: string | null
+  /** The underlying price the same chain carried. Never a live quote, never 0. */
+  spot?: number | null
+  /** Which chain field supplied `spot`. */
+  spotField?: 'current_price' | 'close' | null
+  /** The rights registry's DISPLAY class for this chain's dataset, in the running mode. */
+  rights?: { datasetId: string; display: string; mode: string } | null
+  /** When the backend built the response — its clock, not the chain's. */
   updatedAt: string
   /** `'cboe'`, or `null` when no chain has been received. */
   source: 'cboe' | null | string
