@@ -61,8 +61,9 @@ describe('ticker tape', () => {
     mockApi(() => ok({ quotes: [] }))
     await renderTape()
     await waitFor(() => expect(screen.getByText(/NO SPOT FEED REPORTING/i)).toBeDefined())
-    // Nothing price-shaped anywhere in the strip. (`TOTAL PREM $0` on the
-    // right is the store's own sum over an empty feed, not a quote.)
+    // Nothing price-shaped anywhere in the strip. (The premium sum on the
+    // right, `PREM · n SIG`, is the store's own and is not shown at all over
+    // an empty feed.)
     expect(screen.queryByText(/^\$[\d,]+\.\d\d$/)).toBeNull()
   })
 

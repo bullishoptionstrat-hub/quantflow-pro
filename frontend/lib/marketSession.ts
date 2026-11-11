@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { createContext, createElement, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { loadPanel, type Panel } from './panel'
 import { summariseSources, type SourceSummary } from './sourceSummary'
 
@@ -128,14 +128,25 @@ function pick(body: unknown): MarketSession | null {
   return s as MarketSession
 }
 
-export function useMarketSession(): {
+/**
+ * The colour of each tone. One map, so the sidebar and the status strip cannot
+ * paint the same verdict two ways. Grey for `unknown` on purpose: the calendar
+ * refusing to answer is not a closure.
+ */
+export const SESSION_TONE = { open: '#22c55e', closed: '#ef4444', unknown: '#a1a1aa' } as const
+
+export interface SessionPoll {
   panel: Panel<MarketSession | null>
   sources: Panel<SourceSummary | null>
-} {
+}
+
+/** One `/api/health` poll; does nothing while `enabled` is false. */
+function usePoll(enabled: boolean): SessionPoll {
   const [panel, setPanel] = useState<Panel<MarketSession | null>>({ status: 'loading' })
   const [sources, setSources] = useState<Panel<SourceSummary | null>>({ status: 'loading' })
 
   useEffect(() => {
+    if (!enabled) return
     let live = true
     const read = async () => {
       // One request feeds both: the sidebar's source summary rides on the
@@ -153,7 +164,36 @@ export function useMarketSession(): {
     void read()
     const t = setInterval(() => void read(), POLL_MS)
     return () => { live = false; clearInterval(t) }
-  }, [])
+  }, [enabled])
 
-  return { panel, sources }
+  return useMemo(() => ({ panel, sources }), [panel, sources])
+}
+
+const SessionContext = createContext<SessionPoll | null>(null)
+
+/**
+ * One poll for everything mounted under it.
+ *
+ * The sidebar, the status strip and the trade ticket all show this verdict. As
+ * three independent 60-second polls they could disagree for up to a minute
+ * around 09:30 and 16:00 — the sidebar saying OUTSIDE RTH while the strip said
+ * RTH OPEN — which is two answers to one question on one screen. The layout
+ * mounts this provider so they read one response.
+ */
+export function MarketSessionProvider({ children }: { children: ReactNode }) {
+  const value = usePoll(true)
+  return createElement(SessionContext.Provider, { value }, children)
+}
+
+/**
+ * The session verdict and the source summary from `/api/health`.
+ *
+ * Reads the provider's poll when one is mounted; otherwise polls on its own,
+ * so a component rendered alone (a test, a page outside the layout) behaves
+ * exactly as it did before the provider existed.
+ */
+export function useMarketSession(): SessionPoll {
+  const shared = useContext(SessionContext)
+  const own = usePoll(shared === null)
+  return shared ?? own
 }

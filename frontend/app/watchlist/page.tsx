@@ -107,12 +107,16 @@ export default function WatchlistPage() {
               </div>
               {stats.count > 0 ? (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                  <div>
-                    <div style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: '0.08em', fontWeight: 600, marginBottom: 2 }}>TOTAL PREM</div>
+                  {/* "TOTAL PREM" and "TRADES" claimed a session total and
+                      trades. Both are counts over the signals for this ticker
+                      that this browser has received (at most 500 kept across
+                      all tickers), and a signal is a cluster of prints. */}
+                  <div title={`Sum over the last ${stats.count} signals for ${ticker} this browser received — not a session total`}>
+                    <div style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: '0.08em', fontWeight: 600, marginBottom: 2 }}>PREM · {stats.count} SIG</div>
                     <div style={{ fontSize: 14, fontWeight: 700, color: '#fafafa', fontFamily: "'JetBrains Mono', monospace" }}>{formatPremium(stats.totalPremium)}</div>
                   </div>
                   <div>
-                    <div style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: '0.08em', fontWeight: 600, marginBottom: 2 }}>TRADES</div>
+                    <div style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: '0.08em', fontWeight: 600, marginBottom: 2 }}>SIGNALS</div>
                     <div style={{ fontSize: 14, fontWeight: 700, color: '#a78bfa', fontFamily: "'JetBrains Mono', monospace" }}>{stats.count}</div>
                   </div>
                   <div>

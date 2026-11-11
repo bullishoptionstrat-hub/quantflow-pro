@@ -142,9 +142,13 @@ export function GEXChart() {
 
       <div className="card" style={{ padding: 16, marginBottom: 16 }}>
         <div style={{ marginBottom: 12 }}>
-          <span style={{ fontWeight: 700, color: '#fafafa', fontSize: 13 }}>NET DEALER GAMMA EXPOSURE — {selectedTicker}</span>
+          {/* "NET DEALER GAMMA EXPOSURE" and "Positive = dealers long gamma
+              (stabilizing)" stated a dealer position as fact. It is the sign
+              convention's assumption — the backend says so in `assumptions` —
+              so the header names it as modelled and the caption as conditional. */}
+          <span style={{ fontWeight: 700, color: '#fafafa', fontSize: 13 }}>MODELLED NET GAMMA EXPOSURE — {selectedTicker}</span>
           <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-            Positive = dealers long gamma (stabilizing) · Negative = dealers short gamma (volatile)
+            Calls counted positive, puts negative: an assumed dealer book, not observed. Under that assumption positive reads as dealers long gamma, negative as short gamma
             {gex?.flipStrike != null && <> · flip at <strong style={{ color: '#fbbf24' }}>${gex.flipStrike.toLocaleString()}</strong></>}
           </div>
         </div>

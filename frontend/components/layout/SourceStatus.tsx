@@ -22,7 +22,11 @@ function note(text: string) {
   return <span style={{ ...chip, color: '#a1a1aa', background: 'rgba(161,161,170,0.08)' }}>{text}</span>
 }
 
-export function SourceStatus({ panel }: { panel: Panel<SourceSummary | null> }) {
+/**
+ * `size="strip"` is the status strip's rendering: larger chips on one line and
+ * no bottom margin. The default is the sidebar's, unchanged.
+ */
+export function SourceStatus({ panel, size }: { panel: Panel<SourceSummary | null>; size?: 'strip' }) {
   let body: React.ReactNode
   if (panel.status === 'loading') body = null
   else if (panel.status === 'unreachable') body = note('SOURCES: BACKEND UNREACHABLE')
@@ -44,6 +48,14 @@ export function SourceStatus({ panel }: { panel: Panel<SourceSummary | null> }) 
           </span>
         )}
       </>
+    )
+  }
+  if (size === 'strip') {
+    return (
+      <Link href="/settings" aria-label="Data source status — open Settings for detail" className="hud-sources"
+        style={{ display: 'flex', gap: 4, flexWrap: 'nowrap', textDecoration: 'none', alignItems: 'center' }}>
+        {body}
+      </Link>
     )
   }
   return (

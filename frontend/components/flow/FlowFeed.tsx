@@ -102,7 +102,11 @@ export function FlowFeed() {
       <div className="card" style={{ overflow: 'hidden' }}>
         <div className="card-header" style={{ padding: '10px 14px' }}>
           <span style={{ fontWeight: 700, fontSize: 13, color: '#fafafa' }}>
-            ⚡ LIVE OPTIONS FLOW
+            {/* Not "LIVE": the rows say per print whether they were observed
+                (no badge) or constructed (SYN), and the strip says whether the
+                feed is connected. A header asserting "live" over a simulated
+                tape is the overclaim those two exist to avoid. */}
+            OPTIONS FLOW
             <span style={{ marginLeft: 10, fontSize: 11, color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
               {/* Both numbers, because the filters no longer decide what is
                   kept — only what is shown. */}

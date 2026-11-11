@@ -1,36 +1,17 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useMarketSession, describeSession } from '@/lib/marketSession'
+import { useMarketSession, describeSession, SESSION_TONE } from '@/lib/marketSession'
+import { NAV, NAV_GROUPS, isActive } from '@/lib/nav'
+import { syntheticShare as constructedShare } from '@/lib/syntheticShare'
 import { useStore } from '@/store/useStore'
 import { SignOutButton } from './SignOutButton'
 import { SourceStatus } from './SourceStatus'
 
-const NAV = [
-  // No static `LIVE` badge: it sat two lines under the connection dot and
-  // contradicted it whenever the socket was down.
-  { href: '/flow',          icon: '⚡', label: 'Live Flow',      badge: null,   group: 'flow' },
-  { href: '/dark-pool',     icon: '🌑', label: 'Dark Pool',      badge: null,   group: 'flow' },
-  { href: '/power-alerts',  icon: '🔥', label: 'Power Alerts',   badge: null,   group: 'flow' },
-  { href: '/heat-map',      icon: '🗺', label: 'Heat Map',       badge: null,   group: 'flow' },
-  { href: '/gex',           icon: 'Γ',  label: 'GEX Levels',     badge: null,   group: 'analytics' },
-  { href: '/backtest',      icon: '⏮', label: 'Scanner Backtest', badge: 'NEW', group: 'analytics' },
-  { href: '/macro',         icon: '📊', label: 'Macro',          badge: 'NEW',  group: 'analytics' },
-  { href: '/news',          icon: '📰', label: 'News & Sentiment', badge: 'NEW', group: 'analytics' },
-  { href: '/ticket',        icon: '🧾', label: 'Trade Ticket',   badge: 'NEW',  group: 'tools' },
-  { href: '/journal',       icon: '📓', label: 'Trade Journal',  badge: 'NEW',  group: 'tools' },
-  { href: '/risk',          icon: '🎯', label: 'Risk & Size',    badge: 'NEW',  group: 'tools' },
-  { href: '/calculator',    icon: '🧮', label: 'P/L Calculator', badge: null,   group: 'tools' },
-  { href: '/optimizer',     icon: '⚙', label: 'Optimizer',      badge: null,   group: 'tools' },
-  { href: '/watchlist',     icon: '★',  label: 'Watchlist',      badge: null,   group: 'tools' },
-  { href: '/settings',      icon: '⚙', label: 'Settings',       badge: null,   group: 'tools' },
-]
-
-const GROUP_LABELS: Record<string, string> = {
-  flow: 'FLOW',
-  analytics: 'ANALYTICS',
-  tools: 'TOOLS',
-}
+// The page list lives in `lib/nav.ts` so the sidebar, the mobile bar and the
+// command palette cannot disagree about which pages exist. There is still no
+// static `LIVE` badge on any entry: it sat two lines under the connection dot
+// and contradicted it whenever the socket was down.
 
 export function Sidebar() {
   const pathname = usePathname()
@@ -39,54 +20,38 @@ export function Sidebar() {
   const session = describeSession(
     sessionPanel.status === 'ok' ? sessionPanel.data : null,
   )
-  const TONE = { open: '#22c55e', closed: '#ef4444', unknown: '#a1a1aa' } as const
+  const TONE = SESSION_TONE
   const tone = TONE[session.tone]
 
-  // How much of what has arrived is constructed rather than observed. Shown
-  // only when there is some, so a fully live feed stays quiet.
-  //
-  // "CONSTRUCTED", not "SIMULATED". `synthetic` covers two different things:
-  // a generated print, and a real vendor chain row turned into a print from
-  // the day's aggregate volume (marketData, schwab, tastytrade, yahoo). A
-  // deployment credentialed for only those sources is showing real Schwab
-  // data, and this read "ALL SIGNALS SIMULATED" — telling an operator their
-  // paid integration was fake. The row badge's own wording has been the
-  // accurate one all along: "constructed from aggregate volume or generated".
-  // Demo mode has its own all-or-nothing banner, so nothing is lost by not
-  // saying "simulated" here.
-  const syntheticCount = flowEvents.filter(e => e.synthetic).length
-  const syntheticShare = syntheticCount === 0
-    ? null
-    : syntheticCount === flowEvents.length
-      ? 'ALL SIGNALS CONSTRUCTED'
-      : `${syntheticCount}/${flowEvents.length} CONSTRUCTED`
+  // How much of what has arrived is constructed rather than observed — per
+  // print, from `synthetic`. The wording rule ("CONSTRUCTED", never
+  // "SIMULATED") lives with the helper, shared with the status strip.
+  const syntheticShare = constructedShare(flowEvents)
   const newAlerts = powerAlerts.filter(a => {
     const d = new Date(a.created_at)
     return Date.now() - d.getTime() < 300_000
   }).length
 
-  // Group nav items
-  const groups = ['flow', 'analytics', 'tools']
-
   return (
     <aside className="sidebar">
       {/* Logo */}
-      <div style={{ padding: '16px 16px 12px', borderBottom: '1px solid var(--border)', marginBottom: 8 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-            <rect width="28" height="28" rx="6" fill="#8b5cf6" fillOpacity=".2"/>
+      <div className="sidebar__brand">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <svg width="28" height="28" viewBox="0 0 28 28" fill="none" aria-hidden="true">
+            <rect x="0.5" y="0.5" width="27" height="27" rx="3" fill="#0c1220" stroke="rgba(34,211,238,0.45)"/>
             <path d="M6 20L11 13L15 16L20 8" stroke="#a78bfa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            <circle cx="20" cy="8" r="2" fill="#fbbf24"/>
+            <circle cx="20" cy="8" r="2" fill="#22d3ee"/>
           </svg>
           <div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: '#fafafa', letterSpacing: '-0.01em' }}>QuantFlow Pro</div>
-            <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>QUANTUM EDGE CAPITAL</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '0.02em' }}>QuantFlow Pro</div>
+            <div style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', letterSpacing: '0.1em' }}>QUANTUM EDGE CAPITAL</div>
           </div>
         </div>
       </div>
 
       {/* Market status */}
-      <div style={{ padding: '8px 16px', marginBottom: 4 }}>
+      <div className="sidebar__system">
+        <div className="sidebar__system-title">SYSTEM</div>
         {/* This was a weekday-and-clock check computed in the browser, with no
             holiday calendar behind it — green on Thanksgiving, and green all
             afternoon on a 13:00 half-day. The verdict now comes from the
@@ -136,22 +101,21 @@ export function Sidebar() {
         )}
       </div>
 
-      {/* Nav — grouped */}
-      <nav style={{ flex: 1, padding: '4px 0', overflowY: 'auto' }}>
-        {groups.map(group => {
-          const items = NAV.filter(n => n.group === group)
+      {/* Nav — grouped, from the one page list in lib/nav.ts */}
+      <nav aria-label="Pages" style={{ flex: 1, padding: '4px 0', overflowY: 'auto' }}>
+        {NAV_GROUPS.map(group => {
+          const items = NAV.filter(n => n.group === group.id)
           return (
-            <div key={group}>
-              <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', padding: '10px 16px 4px', letterSpacing: '0.1em', fontFamily: "'JetBrains Mono', monospace" }}>
-                {GROUP_LABELS[group]}
-              </div>
+            <div key={group.id}>
+              <div className="nav-group">{group.label}</div>
               {items.map(item => {
-                const isActive = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href))
+                const active = isActive(pathname, item.href)
                 const showAlertBadge = item.href === '/power-alerts' && newAlerts > 0
 
                 return (
-                  <Link key={item.href} href={item.href} className={`nav-item ${isActive ? 'active' : ''}`}>
-                    <span style={{ fontSize: 14, width: 20, textAlign: 'center', flexShrink: 0 }}>{item.icon}</span>
+                  <Link key={item.href} href={item.href} className={`nav-item ${active ? 'active' : ''}`}
+                    aria-current={active ? 'page' : undefined}>
+                    <span style={{ fontSize: 14, width: 20, textAlign: 'center', flexShrink: 0 }} aria-hidden="true">{item.icon}</span>
                     <span style={{ flex: 1 }}>{item.label}</span>
 
                     {/* Power alerts count badge */}
@@ -161,9 +125,9 @@ export function Sidebar() {
                       </span>
                     )}
 
-                    {/* "NEW" badge for macro/news */}
+                    {/* "NEW" badge for recently added pages */}
                     {item.badge === 'NEW' && !showAlertBadge && (
-                      <span style={{ background: 'rgba(251,191,36,0.15)', color: '#fbbf24', fontSize: 9, fontWeight: 700, borderRadius: 3, padding: '1px 5px', fontFamily: "'JetBrains Mono', monospace" }}>
+                      <span style={{ background: 'rgba(251,191,36,0.12)', color: '#fbbf24', fontSize: 9, fontWeight: 700, borderRadius: 2, padding: '1px 5px', fontFamily: "'JetBrains Mono', monospace" }}>
                         NEW
                       </span>
                     )}

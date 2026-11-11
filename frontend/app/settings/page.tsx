@@ -67,7 +67,11 @@ interface Health {
 
 /** Backend status string → how it reads to an operator. */
 const STATUS: Record<string, { label: string; fg: string; bg: string; hint: string }> = {
-  connected: { label: '✓ LIVE',        fg: '#86efac', bg: 'rgba(34,197,94,0.15)',  hint: 'Contributing data.' },
+  // `connected` means the connector ran and its last cycle succeeded — not
+  // that its data is fresh, and not that it is observed rather than
+  // constructed. This said "✓ LIVE"; the sidebar's source summary has always
+  // refused that word for the same state (lib/sourceSummary.ts).
+  connected: { label: '✓ CONNECTED',   fg: '#86efac', bg: 'rgba(34,197,94,0.15)',  hint: 'Its last cycle succeeded. That is not a freshness claim.' },
   disabled:  { label: 'NO CREDENTIALS', fg: '#fde68a', bg: 'rgba(251,191,36,0.12)', hint: 'Set the variable named below in the backend environment.' },
   error:     { label: '⚠ ERROR',        fg: '#fdba74', bg: 'rgba(251,146,60,0.14)', hint: 'The source answered with a failure.' },
   refused:   { label: '⛔ REFUSED',     fg: '#fca5a5', bg: 'rgba(248,113,113,0.15)', hint: 'Stopped on data rights. No key will turn this on.' },
