@@ -174,3 +174,31 @@ test('every published assumption is stated, not implied', () => {
   }
   assert.match(route, /assumptions: ASSUMPTIONS/, 'and ship them on the response');
 });
+
+test('the dealer-positioning assumption names the book the sign convention actually models', async () => {
+  // A long option carries positive gamma and a short one negative. So the
+  // sign the aggregation gives each right IS the dealer position it assumes:
+  // call strikes summing positive means dealers modelled long the calls, put
+  // strikes summing negative means short the puts. The text said "short calls
+  // and short puts" until 2026-11-11 — a book that is short gamma on both
+  // sides, which this arithmetic has never computed. Derive the words from
+  // the signs, so the sentence cannot drift from the code a second time.
+  const cboe = load([row('C', { option: osi('C', '260916', 100) }), row('P', { option: osi('P', '260916', 110) })]);
+  let callSign = 0, putSign = 0;
+  try {
+    const snap = await cboe.fetchCboeChain('SPY');
+    callSign = Math.sign(snap.gex.find((l: { strike: number }) => l.strike === 100).gex);
+    putSign = Math.sign(snap.gex.find((l: { strike: number }) => l.strike === 110).gex);
+  } finally { cboe.restore(); }
+  assert.equal(callSign, 1, 'a strike holding only calls sums positive');
+  assert.equal(putSign, -1, 'a strike holding only puts sums negative');
+
+  const route = readFileSync(join(__dirname, '..', 'src', 'routes', 'gex.ts'), 'utf8');
+  const m = route.match(/dealerPositioning:\s*((?:'[^']*'\s*\+?\s*)+),/);
+  assert.ok(m, 'dealerPositioning is a concatenation of string literals');
+  const text = [...m[1].matchAll(/'([^']*)'/g)].map((x) => x[1]).join('');
+  assert.match(text, callSign > 0 ? /long the calls/ : /short the calls/);
+  assert.match(text, putSign < 0 ? /short the puts/ : /long the puts/);
+  assert.doesNotMatch(text, /short calls and short puts|short both/, 'the old wording is gone');
+  assert.match(text, /modelled, not observed/, 'and it still says it is an assumption');
+});

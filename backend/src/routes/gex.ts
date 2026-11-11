@@ -13,8 +13,15 @@ const router = Router();
  * modelled, not observed: a public chain shows greeks, volume and open
  * interest, and shows **nothing** about whether a dealer is long or short any
  * contract. The call-positive / put-negative convention in `gex` *is* the
- * assumption — it expresses a book that is short both — and it is the one
- * assumption nobody states.
+ * assumption — a long option carries positive gamma and a short one negative,
+ * so adding call gamma and subtracting put gamma expresses a dealer book that
+ * is LONG the calls and SHORT the puts — and it is the one assumption nobody
+ * states.
+ *
+ * This said "short both" until 2026-11-11. A book short calls and short puts
+ * is short gamma on both sides and would subtract both; the arithmetic in
+ * `cboeOptions.ts` never did that. `dealerExposure.test.ts` now derives the
+ * sentence from the computed signs rather than from this comment.
  *
  * This is the same move as `synthetic`, `side: AMBIGUOUS` and
  * `INSUFFICIENT_SAMPLE`: say what is not known, next to the thing that depends
@@ -22,10 +29,11 @@ const router = Router();
  */
 const ASSUMPTIONS = {
   dealerPositioning:
-    'GEX assumes the dealer book is short calls and short puts — that is what ' +
-    'the call-positive / put-negative sign convention expresses. Open interest ' +
-    'does not say who is on which side of a contract, so this is modelled, not ' +
-    'observed, and a real book that differs makes these levels wrong.',
+    'GEX assumes dealers are long the calls and short the puts in open interest — ' +
+    'that is what the call-positive / put-negative sign convention expresses, ' +
+    'since a long option carries positive gamma and a short one negative. Open ' +
+    'interest does not say who is on which side of a contract, so this is ' +
+    'modelled, not observed, and a real book that differs makes these levels wrong.',
   dex:
     'DEX applies no dealer assumption at all. Delta already carries its own ' +
     'sign, so no convention is imposed and the figure is what the open ' +
