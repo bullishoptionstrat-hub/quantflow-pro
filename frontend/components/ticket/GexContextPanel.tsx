@@ -21,14 +21,14 @@ import {
 
 const MONO = "'JetBrains Mono', monospace"
 const ROW: CSSProperties = { display: 'flex', gap: 10, padding: '6px 0', borderTop: '1px solid var(--border)', fontSize: 12, flexWrap: 'wrap' }
-const NAME: CSSProperties = { minWidth: 230, color: 'var(--text-secondary)' }
+const NAME: CSSProperties = { minWidth: 340, color: 'var(--text-secondary)' }
 const VALUE: CSSProperties = { fontFamily: MONO, color: 'var(--text-primary)' }
 const NOTE: CSSProperties = { fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6 }
 
 /** How often the chain is re-read. The backend refreshes a symbol every ~2 min. */
 const POLL_MS = 60_000
 
-function Level({ name, level, empty }: { name: string; level: OiStrike | null; empty: string }) {
+function Level({ name, level, empty, noDistance }: { name: string; level: OiStrike | null; empty: string; noDistance: string }) {
   return (
     <div style={ROW} data-testid="gex-level">
       <span style={NAME}>{name}</span>
@@ -36,7 +36,7 @@ function Level({ name, level, empty }: { name: string; level: OiStrike | null; e
         <span style={VALUE}>
           {level.strike.toLocaleString('en-US')} · OI {level.oi.toLocaleString('en-US')}
           <span style={{ color: 'var(--text-muted)' }}>
-            {' · '}{level.distance ? distanceText(level.distance) : 'distance not computed: the chain carried no spot'}
+            {' · '}{level.distance ? distanceText(level.distance) : `distance not computed: ${noDistance}`}
           </span>
         </span>
       ) : (
@@ -52,12 +52,14 @@ function Provenance({ ctx, now }: { ctx: GexContext; now: number }) {
       Source {String(ctx.source ?? '—').toUpperCase()} · DELAYED{' '}
       {ctx.delayedMinutes === null ? '(delay not published)' : `${ctx.delayedMinutes} MIN (as the backend publishes)`}
       {' · '}
-      {ctx.asOfMs === null
-        ? 'as of unknown — the chain carried no readable time'
-        : `as of ${etDateTime(ctx.asOfMs)}, ${ageText(ctx.asOfMs, now)} on this browser's clock`}
+      {ctx.asOfMs !== null
+        ? `as of ${etDateTime(ctx.asOfMs)}, ${ageText(ctx.asOfMs, now)} on this browser's clock`
+        : ctx.asOfPublished
+          ? 'as of unknown — the chain carried no readable time'
+          : "as of unknown — this backend does not publish the chain's as-of"}
       {' · '}
       {ctx.spot === null
-        ? 'spot unknown'
+        ? (ctx.spotPublished ? 'spot unknown — the chain carried none' : "spot not published by this backend")
         : `spot ${ctx.spot.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (the chain's own ${ctx.spotField ?? 'price'}, not a live quote)`}
       {' · '}
       {ctx.rights
@@ -76,14 +78,15 @@ function ChainBody({ ctx, now }: { ctx: GexContext; now: number }) {
     )
   }
   const z = ctx.zeroDte
+  const noDistance = ctx.spotPublished ? 'the chain carried no spot' : "this backend does not publish the chain's spot"
   return (
     <>
-      <Level name="Max call OI strike (all expiries)" level={ctx.maxCallOi} empty="no call open interest in this chain" />
-      <Level name="Max put OI strike (all expiries)" level={ctx.maxPutOi} empty="no put open interest in this chain" />
+      <Level name="Max call OI strike (all expiries)" level={ctx.maxCallOi} empty="no call open interest in this chain" noDistance={noDistance} />
+      <Level name="Max put OI strike (all expiries)" level={ctx.maxPutOi} empty="no put open interest in this chain" noDistance={noDistance} />
       {z.status === 'PRESENT' ? (
         <>
-          <Level name={`Same-day (0DTE) max call OI strike · ${z.expiry}`} level={z.maxCallOi} empty="no same-day call open interest" />
-          <Level name={`Same-day (0DTE) max put OI strike · ${z.expiry}`} level={z.maxPutOi} empty="no same-day put open interest" />
+          <Level name={`Same-day (0DTE) max call OI strike · ${z.expiry}`} level={z.maxCallOi} empty="no same-day call open interest" noDistance={noDistance} />
+          <Level name={`Same-day (0DTE) max put OI strike · ${z.expiry}`} level={z.maxPutOi} empty="no same-day put open interest" noDistance={noDistance} />
         </>
       ) : (
         <div style={ROW} data-testid="gex-zero-dte">

@@ -246,10 +246,26 @@ describe('the GEX panel', () => {
     render(<GexContextPanel symbol="SPY" />)
     await waitFor(() => expect(screen.getByTestId('gex-provenance')).toBeDefined())
     const prov = screen.getByTestId('gex-provenance').textContent ?? ''
-    expect(prov).toMatch(/as of unknown/)
-    expect(prov).toMatch(/spot unknown/)
+    // The recording predates the fields, so the backend did not publish them.
+    // That is a different fact from a chain that carried no time, and the
+    // panel must not claim the latter.
+    expect(prov).toMatch(/as of unknown — this backend does not publish the chain's as-of/)
+    expect(prov).not.toMatch(/the chain carried no readable time/)
+    expect(prov).toMatch(/spot not published by this backend/)
     expect(prov).toMatch(/rights class not published/)
+    expect(screen.getByTestId('gex-panel').textContent).toMatch(/distance not computed: this backend does not publish the chain's spot/)
     expect(screen.getByTestId('gex-panel').textContent).toMatch(/MODELLED/)
+  })
+
+  test('a chain that carried no time, or no spot, is said to have carried none', async () => {
+    mockApi({ '/api/gex': { ...live(), asOf: null, asOfVendor: null, spot: null, spotField: null } })
+    const { GexContextPanel } = await import('@/components/ticket/GexContextPanel')
+    render(<GexContextPanel symbol="SPY" />)
+    await waitFor(() => expect(screen.getByTestId('gex-provenance')).toBeDefined())
+    const prov = screen.getByTestId('gex-provenance').textContent ?? ''
+    expect(prov).toMatch(/as of unknown — the chain carried no readable time/)
+    expect(prov).toMatch(/spot unknown — the chain carried none/)
+    expect(screen.getByTestId('gex-panel').textContent).toMatch(/distance not computed: the chain carried no spot/)
   })
 
   test('ES says UNMEASURABLE and reads no chain at all', async () => {

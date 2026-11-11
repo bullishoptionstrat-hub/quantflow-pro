@@ -115,8 +115,17 @@ export interface GexContext {
   delayedMinutes: number | null
   /** The chain's own as-of, epoch ms, or null when unknown. */
   asOfMs: number | null
+  /**
+   * Whether the backend sent the `asOf` field at all. Absent means a backend
+   * older than the field (the recorded `gex.json` is one); `null` sent means
+   * the chain itself carried no readable time. Both are unknown, for
+   * different reasons, and the panel says which.
+   */
+  asOfPublished: boolean
   asOfVendor: string | null
   spot: number | null
+  /** Whether the backend sent the `spot` field at all; see `asOfPublished`. */
+  spotPublished: boolean
   spotField: string | null
   rights: { datasetId: string; display: string; mode: string } | null
   maxCallOi: OiStrike | null
@@ -193,8 +202,10 @@ export function gexContext(r: GEXResponse): GexContext {
     source: available ? r.source : null,
     delayedMinutes: available && finite(r.delayedMinutes) ? r.delayedMinutes : null,
     asOfMs: Number.isFinite(asOfMs) ? asOfMs : null,
+    asOfPublished: available && r.asOf !== undefined,
     asOfVendor: available ? (r.asOfVendor ?? null) : null,
     spot,
+    spotPublished: available && r.spot !== undefined,
     spotField: available ? (r.spotField ?? null) : null,
     rights: available ? (r.rights ?? null) : null,
     maxCallOi: available ? maxOiStrike(levels, 'call', spot) : null,
