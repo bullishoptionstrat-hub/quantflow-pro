@@ -39,7 +39,8 @@ interface UnusualContract {
   iv: number | null
   notional: number
   delayedMinutes: number
-  asOf: string
+  /** An ISO instant from the chain's own clock, or `null` when it carried none. */
+  asOf: string | null
 }
 
 const fmtNotional = (n: number) =>

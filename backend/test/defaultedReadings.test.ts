@@ -111,10 +111,6 @@ const exemption = (operand: string) =>
 const LEDGER: Record<string, string> = {
   // ── Guarded: the zero is read back and rejected within a few lines, so it
   // is a way of spelling "skip", not a value that reaches anyone.
-  'ingestion/connectors/cboeOptions.ts: numeric(d.close) ?? 0':
-    'Spot for the chain, gated on `if (!(spot > 0)) return null` on the next ' +
-    'line. Every GEX figure is scaled by spot squared, so a snapshot without ' +
-    'one is refused rather than partially published.',
   'ingestion/connectors/cboeOptions.ts: rawOi ?? 0':
     'The GEX aggregation needs a number it can multiply and gates on ' +
     '`oi > 0 && gamma !== 0`. The unusual-activity list, which *publishes* ' +

@@ -8,12 +8,16 @@
 import { describe, expect, test, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { render, screen, fireEvent, within } from '@testing-library/react'
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react'
 import {
   ADDED_CODES, MODELS, README_CODES, SESSION_PROFILES,
-  contractProblem, evaluateTicket, minutesOf, sessionGate, ticketRecord, visibleGates,
-  type AnsweredGateId, type SessionClock, type TicketInput,
+  contractProblem, evaluateTicket, gateWaiting, minutesOf, sessionGate, ticketRecord, visibleGates,
+  type AnsweredGateId, type GateResult, type PlanContext, type SessionClock, type TicketInput,
 } from '@/lib/tradeTicket'
+import { PLAN_STORAGE_KEY } from '@/lib/dailyPlanStore'
+import { completePlan } from './planFixtures'
+import { gexContext } from '@/lib/gexContext'
+import type { GEXResponse } from '@/lib/types'
 import { specFor } from '@/lib/contractSpecs'
 import type { MarketSession } from '@/lib/marketSession'
 // vi.mock below is hoisted above every import, so the page reads the mocked clock.
@@ -53,9 +57,18 @@ function allPass(input: Omit<TicketInput, 'answers'>): TicketInput['answers'] {
 }
 
 /**
+ * Today's plan, written and complete, with nothing in it to tighten: no limit
+ * written to reach, no event window. `dailyPlan.test.tsx` holds the cases
+ * where it tightens; here it only lets the plan's own gate pass.
+ */
+const PLAN_READY: PlanContext = {
+  status: 'WRITTEN', date: '2026-11-09', missing: [], lossLimit: null, maxAttempts: null, windows: [], day: null,
+}
+
+/**
  * ES long, 10-point stop (40 ticks × $12.50 = $500 a contract), $1,000 budget:
  * 2 contracts. One external target 30 points away: 3R with no costs. 10:00 ET,
- * inside the OnePager NY AM window.
+ * inside the OnePager NY AM window. Today's plan is written and complete.
  */
 function complete(o: Partial<TicketInput> = {}): TicketInput {
   const base: Omit<TicketInput, 'answers'> = {
@@ -69,6 +82,7 @@ function complete(o: Partial<TicketInput> = {}): TicketInput {
     entry: 5000, stop: 4990, targets: [{ price: 5030, kind: 'EXTERNAL' }],
     riskBudget: 1000, costPerUnit: 0, slippageTicks: 0, minR: 2,
     clock: at('10:00'),
+    plan: PLAN_READY,
     ...o,
   }
   return { ...base, answers: o.answers ?? allPass(base) }
@@ -259,6 +273,87 @@ describe('the reward gate is computed, after costs', () => {
   })
 })
 
+describe('a required computed gate that cannot be measured waits — any of them', () => {
+  // The rule used to read `UNMEASURABLE && id === 'session'`, so only the
+  // session window was held to it. A required COMPUTED gate is a measurement,
+  // and a measurement nobody could take is not a pass.
+  const reward: GateResult = {
+    id: 'reward', code: 'REWARD_UNDER_2R', title: 'Net reward', required: true, source: 'COMPUTED',
+    status: 'UNMEASURABLE', detail: 'Computed once the idea is sized against at least one target.',
+  }
+
+  test('a non-session computed gate that reads UNMEASURABLE leaves the ticket waiting', () => {
+    expect(gateWaiting([reward])).toEqual([
+      'Net reward cannot be measured: Computed once the idea is sized against at least one target.',
+    ])
+  })
+
+  test('every required computed gate on a complete ticket would wait if it could not be measured', () => {
+    const computed = evaluateTicket(complete()).gates.filter((g) => g.required && g.source === 'COMPUTED')
+    expect(computed.map((g) => g.id).sort()).toEqual(['plan', 'reward', 'session'])
+    for (const g of computed) {
+      expect(gateWaiting([{ ...g, status: 'UNMEASURABLE' }])).toEqual([`${g.title} cannot be measured: ${g.detail}`])
+    }
+  })
+
+  test('decided and optional gates leave nothing waiting', () => {
+    expect(gateWaiting([{ ...reward, status: 'PASS' }, { ...reward, status: 'FAIL' }, { ...reward, required: false }])).toEqual([])
+  })
+
+  test('on the ticket: an unmeasurable reward is listed, not left to another line to cover', () => {
+    const r = evaluateTicket(complete({ targets: [] }))
+    expect(r.state).toBe('WAIT_FOR_TRIGGER')
+    expect(r.gates.find((g) => g.id === 'reward')?.status).toBe('UNMEASURABLE')
+    expect(r.waiting).toContain(`Net reward cannot be measured: ${reward.detail}`)
+    expect(r.waiting).toContain('Enter at least one target.')
+  })
+
+  test('the session window still reads as it did', () => {
+    const r = evaluateTicket(complete({ clock: null }))
+    expect(r.waiting).toContain('Session window cannot be measured: The backend did not answer, so the ET clock could not be read.')
+  })
+
+  test('precedence is unchanged: lock, then a failed gate, then size, then waiting', () => {
+    expect(evaluateTicket(withAnswer('dailyLock', 'FAIL', { clock: null, side: null })).state).toBe('BLOCKED')
+    expect(evaluateTicket(complete({ clock: null, side: null })).state).toBe('NEUTRAL')
+    expect(evaluateTicket(withAnswer('retest', 'FAIL', { clock: null })).state).toBe('BLOCKED')
+    expect(evaluateTicket(complete({ clock: null, riskBudget: 400 })).state).toBe('NO_TRADE')
+    expect(evaluateTicket(complete({ clock: null })).state).toBe('WAIT_FOR_TRIGGER')
+  })
+})
+
+describe('GEX context is beside the ticket, never in it', () => {
+  const recorded = (): GEXResponse => JSON.parse(readFileSync(
+    join(__dirname, '..', '..', 'backend', 'test', 'fixtures', 'gex.json'), 'utf8'))
+
+  test('the verdict is identical with and without GEX context, for every kind of ticket', () => {
+    const ctx = gexContext({ ...recorded(), spot: 760, asOf: '2026-09-15T19:46:01.000Z' })
+    const tickets: TicketInput[] = [
+      complete(), complete({ side: null }), complete({ clock: null }), complete({ targets: [] }),
+      complete({ riskBudget: 400 }), withAnswer('retest', 'FAIL'), withAnswer('smt', undefined),
+      complete({ symbol: 'SPY', spec: specOf('SPY'), contract: '' }),
+    ]
+    for (const t of tickets) {
+      const withGex = { ...t, gex: ctx, gexContext: ctx } as TicketInput
+      expect(evaluateTicket(withGex)).toEqual(evaluateTicket(t))
+    }
+  })
+
+  test('the ticket module never reads GEX, and the page never puts it into the input', () => {
+    // Comments are stripped, and so is `RegExp`, whose middle spells "gEx".
+    const strip = (x: string) =>
+      x.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '').replace(/RegExp/g, '')
+    const ticket = strip(readFileSync(join(__dirname, '..', 'lib', 'tradeTicket.ts'), 'utf8'))
+    expect(ticket).not.toMatch(/gex/i)
+    const page = strip(readFileSync(join(__dirname, '..', 'app', 'ticket', 'page.tsx'), 'utf8'))
+    const start = page.indexOf('const input: TicketInput = useMemo(')
+    expect(start).toBeGreaterThan(0)
+    const inputBlock = page.slice(start, page.indexOf('const result = useMemo(', start))
+    expect(inputBlock).not.toMatch(/gex/i)
+    expect(page).toMatch(/<GexContextPanel symbol=\{symbol\} \/>/)
+  })
+})
+
 describe('what cannot be sized is not traded', () => {
   test('one contract over budget is NO_TRADE, naming the micro', () => {
     const r = evaluateTicket(complete({ riskBudget: 400 }))
@@ -302,8 +397,13 @@ describe('models and requirements tighten, never loosen', () => {
 })
 
 describe('blocker codes', () => {
-  test('every README code can be produced, plus the two added here', () => {
-    const t = complete({ model: 'AMD_IFVG', alsoRequire: { candle23: true, cisd: true } })
+  test('every README code can be produced, plus the ones added here', () => {
+    // EVENT_STAND_ASIDE is on the ticket only when it applies, so the plan here
+    // declares a window around 10:00.
+    const t = complete({
+      model: 'AMD_IFVG', alsoRequire: { candle23: true, cisd: true },
+      plan: { ...PLAN_READY, windows: [{ name: 'CPI', time: '10:00', start: minutesOf('09:55'), end: minutesOf('10:05') }] },
+    })
     const codes = new Set(evaluateTicket(t).gates.map((g) => g.code))
     for (const c of [...README_CODES, ...ADDED_CODES]) expect(codes).toContain(c)
   })
@@ -378,8 +478,46 @@ describe('the page', () => {
     }
   })
 
-  test('a ticket filled in by hand is approved, and one failed gate blocks it', () => {
+  /** Fill the ticket by hand: an ES long that passes every gate the trader answers. */
+  function fillByHand() {
+    const set = (label: string, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } })
+    set('INSTRUMENT', 'ES')
+    set('EXACT CONTRACT', 'ESZ6')
+    fireEvent.click(screen.getByRole('button', { name: 'LONG' }))
+    set('SETUP / IDEA ID', 'ES-1109-01')
+    set('MODEL', 'TRAP_FADE')
+    set('SESSION PROFILE', 'ONEPAGER')
+    for (const b of screen.getAllByRole('button', { name: /: pass$/ })) fireEvent.click(b)
+    set('HTF CONTEXT', '4H bullish')
+    set('POI', '1H iFVG')
+    set('LIQUIDITY EVENT', 'Swept ONL')
+    set('INVALIDATION', 'Close below 4989')
+    set('CANCEL CONDITION', 'No retest by 11:00')
+    set('MANAGEMENT PLAN', 'Hold to TP1')
+    set('PRE-ENTRY SCREENSHOT', 'es.png')
+    set('ENTRY', '5000')
+    set('STOP / INVALIDATION', '4990')
+    set('RISK BUDGET ($ THIS IDEA MAY LOSE)', '1000')
+    set('ROUND-TRIP COST ($ PER CONTRACT)', '0')
+    set('STOP SLIPPAGE (TICKS)', '0')
+    set('TP1 PRICE', '5030')
+    set('TP1 LIQUIDITY', 'EXTERNAL')
+  }
+
+  test('with no plan for the backend\'s date, a ticket filled in by hand waits on PLAN_NOT_WRITTEN', async () => {
+    window.localStorage.clear()
     render(<TicketPageUnderTest />)
+    fillByHand()
+    expect(screen.getByTestId('ticket-state').textContent).toBe('WAIT FOR TRIGGER')
+    expect(screen.getByTestId('waiting').textContent).toMatch(/No daily plan is written for 2026-11-09/)
+    expect(screen.getByTestId('ticket-plan-status').textContent).toMatch(/NO PLAN for 2026-11-09/)
+  })
+
+  test('a ticket filled in by hand is approved, and one failed gate blocks it', async () => {
+    window.localStorage.clear()
+    window.localStorage.setItem(PLAN_STORAGE_KEY, JSON.stringify([completePlan('2026-11-09')]))
+    render(<TicketPageUnderTest />)
+    await waitFor(() => expect(screen.getByTestId('ticket-plan-status').textContent).toMatch(/PLAN 2026-11-09 WRITTEN/))
     const set = (label: string, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } })
     set('INSTRUMENT', 'ES')
     set('EXACT CONTRACT', 'ESZ6')

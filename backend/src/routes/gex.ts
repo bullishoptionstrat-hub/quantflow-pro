@@ -1,8 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { queryString } from './queryParams';
-import {
-  getGEXLevels, getRealGexSymbols, getZeroDteLevels, GEXLevel,
-} from '../ingestion/index';
+import { getGexChain, getRealGexSymbols, GEXLevel } from '../ingestion/index';
+import { classifySource } from '../provenance/rights';
 
 const router = Router();
 
@@ -47,6 +46,17 @@ const ASSUMPTIONS = {
     'Cboe\'s delta to recover a model this codebase does not have, so they are ' +
     'absent rather than estimated.',
   staleness: 'Cboe publishes this chain on a ~15 minute delay.',
+  clock:
+    '`asOf` is Cboe\'s own `last_trade_time` for the underlying, which Cboe ' +
+    'sends with no timezone. It is read as New York time: measured on ' +
+    '2026-11-11, that reading put it 15 minutes behind the file\'s own UTC ' +
+    'generation stamp, matching the published delay. `asOfVendor` is the ' +
+    'string exactly as sent. `null` when Cboe sent none or it could not be ' +
+    'read; this server\'s clock is never put in its place.',
+  spot:
+    '`spot` is the underlying price carried by the same chain (`spotField` ' +
+    'names the field), the price every GEX and DEX figure here is scaled by. ' +
+    'It is not a live quote and no other source is substituted for it.',
 } as const;
 
 /**
@@ -93,13 +103,22 @@ function extremesOf(levels: GEXLevel[], key: 'gex' | 'dex') {
 // GET /api/gex — gamma and delta exposure by strike
 router.get('/', (req: Request, res: Response) => {
   const symbol = (queryString(req.query.symbol) ?? 'SPX').toUpperCase();
-  const levels: GEXLevel[] = getGEXLevels(symbol);
-  const zeroDte = getZeroDteLevels(symbol);
+  // Levels, the same-day lens, the clock and the spot all come from one chain
+  // record, so a reader is never shown one chain's strikes beside another's
+  // time.
+  const chain = getGexChain(symbol);
+  const levels: GEXLevel[] = chain?.levels ?? [];
+  const zeroDte = chain?.zeroDte ?? null;
 
   // A symbol Cboe has snapshotted, with strikes to show for it. Both halves
   // matter: a snapshot whose gamma aggregation came out empty is not a chain
   // to report, and there is no longer a synthetic path that could fill it.
   const isReal = getRealGexSymbols().includes(symbol) && levels.length > 0;
+  const real = isReal ? chain : null;
+
+  // The registry's DISPLAY answer for the dataset behind this chain, in the
+  // running business mode — published rather than restated by the page.
+  const display = isReal ? classifySource('cboe_options', 'DISPLAY') : null;
 
   res.json({
     symbol,
@@ -121,6 +140,19 @@ router.get('/', (req: Request, res: Response) => {
       totalDex: levels.length > 0 ? totalOf(levels, 'dex') : null,
     },
     assumptions: ASSUMPTIONS,
+    /**
+     * The chain's own clock and spot. Both `null` when there is no chain, and
+     * `asOf` also `null` when the chain carried no readable time — never this
+     * server's receipt time, and never a zero spot. See `assumptions.clock`.
+     */
+    asOf: real ? real.asOf : null,
+    asOfVendor: real ? real.asOfVendor : null,
+    spot: real ? real.spot : null,
+    spotField: real ? real.spotField : null,
+    rights: display
+      ? { datasetId: display.datasetId, display: display.rightsClass, mode: display.mode }
+      : null,
+    /** When this response was built — this server's clock, not the chain's. */
     updatedAt: new Date().toISOString(),
     source: isReal ? 'cboe' : null,
     realData: isReal,

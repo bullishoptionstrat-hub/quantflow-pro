@@ -4,7 +4,12 @@ import { CONTRACT_SPECS, SPEC_SOURCE, specFor } from '@/lib/contractSpecs'
 import { etClock, useMarketSession } from '@/lib/marketSession'
 import { createEntry, etDate, priorAttempts, stopOutsOn } from '@/lib/journal'
 import { useJournal } from '@/lib/journalStore'
+import { planContextFor, planDateFrom } from '@/lib/dailyPlan'
+import { usePlans } from '@/lib/dailyPlanStore'
 import { Panel } from '@/components/hud/Panel'
+import { PlanContextPanel } from '@/components/ticket/PlanContextPanel'
+import { TICKET_STATE_STYLE } from '@/components/ticket/stateStyle'
+import { GexContextPanel } from '@/components/ticket/GexContextPanel'
 import type { Side, SizingSpec } from '@/lib/riskSize'
 import {
   MODELS, NARRATIVE_FIELDS, SESSION_PROFILES, STRICT_MIN_R,
@@ -32,13 +37,7 @@ function parseField(v: string): number | null {
   return Number(t)
 }
 
-const STATE_STYLE: Record<DecisionState, { label: string; color: string; bg: string; line: string }> = {
-  NEUTRAL:          { label: 'NEUTRAL — WAITING',  color: '#a1a1aa', bg: 'rgba(161,161,170,0.12)', line: 'No direction chosen. Bias is earned, not assumed.' },
-  WAIT_FOR_TRIGGER: { label: 'WAIT FOR TRIGGER',   color: '#fbbf24', bg: 'rgba(251,191,36,0.12)',  line: 'Not every required item is answered or measurable yet.' },
-  BLOCKED:          { label: 'BLOCKED',            color: '#ef4444', bg: 'rgba(239,68,68,0.12)',   line: 'A required gate failed. No trade on this idea as it stands.' },
-  NO_TRADE:         { label: 'NO TRADE · NO SIZE', color: '#f97316', bg: 'rgba(249,115,22,0.12)',  line: 'One unit risks more than the budget. It is not rounded up.' },
-  APPROVED_TRADE:   { label: 'APPROVED TRADE',     color: '#22c55e', bg: 'rgba(34,197,94,0.12)',   line: 'Every required gate passed and the idea meets the minimum R. This places no order.' },
-}
+const STATE_STYLE: Record<DecisionState, { label: string; color: string; bg: string; line: string }> = TICKET_STATE_STYLE
 
 const EMPTY_NARRATIVE: Narrative = {
   htfContext: '', poi: '', liquidityEvent: '', invalidation: '', cancelCondition: '', managementPlan: '', screenshot: '',
@@ -100,13 +99,24 @@ export default function TicketPage() {
   const { panel } = useMarketSession()
   const clock = panel.status === 'ok' ? panel.data : null
   const journal = useJournal()
+  const plans = usePlans()
+  // Today's ET date is the backend's. The stop-out count falls back to the ET
+  // date of this browser's clock only while the backend has not answered:
+  // that count can only tighten the lock, and it did so before the plan
+  // existed. The plan is matched on the backend's date alone.
+  const today = planDateFrom(clock)
   const journalCtx = useMemo(() => {
     if (!journal.ready || journal.error) return null
     return {
       priorAttempts: priorAttempts(journal.entries, setupId),
-      stopOutsToday: stopOutsOn(journal.entries, etDate(new Date().toISOString()) ?? ''),
+      stopOutsToday: stopOutsOn(journal.entries, today ?? etDate(new Date().toISOString()) ?? ''),
     }
-  }, [journal.ready, journal.error, journal.entries, setupId])
+  }, [journal.ready, journal.error, journal.entries, setupId, today])
+  const planCtx = useMemo(() => planContextFor(
+    today,
+    { ready: plans.ready, error: plans.error, items: plans.plans },
+    { ready: journal.ready, error: journal.error, items: journal.entries },
+  ), [today, plans.ready, plans.error, plans.plans, journal.ready, journal.error, journal.entries])
 
   const preset = symbol === '' || symbol === 'CUSTOM' ? undefined : specFor(symbol)
 
@@ -132,8 +142,9 @@ export default function TicketPage() {
       minR: parseField(minR) ?? NaN,
       clock: clock ? { state: clock.state, nowMinutesEt: clock.nowMinutesEt, closeMinutesEt: clock.closeMinutesEt } : null,
       journal: journalCtx,
+      plan: planCtx,
     }
-  }, [symbol, preset, customTickSize, customTickValue, customUnit, contract, side, setupId, model, profile, alsoRequire, answers, narrative, entry, stop, targets, budget, cost, slippage, minR, clock, journalCtx])
+  }, [symbol, preset, customTickSize, customTickValue, customUnit, contract, side, setupId, model, profile, alsoRequire, answers, narrative, entry, stop, targets, budget, cost, slippage, minR, clock, journalCtx, planCtx])
 
   const result = useMemo(() => evaluateTicket(input), [input])
   const gates = visibleGates(input)
@@ -217,6 +228,8 @@ export default function TicketPage() {
         </div>
       </Panel>
 
+      <PlanContextPanel plan={planCtx} nowMinutesEt={clock?.nowMinutesEt ?? null} />
+
       <Panel title="Idea" code="TRADER INPUT">
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 12 }}>
           <div style={{ minWidth: 200 }}>
@@ -294,6 +307,10 @@ export default function TicketPage() {
           ))}
         </div>
       </Panel>
+
+      {/* Context beside the ticket, never inside it: nothing from this panel
+          reaches `input` or `evaluateTicket`. */}
+      <GexContextPanel symbol={symbol} />
 
       <Panel title="Gates" code="TRADER INPUT · MEASURED">
         <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 10 }}>
@@ -427,10 +444,13 @@ export default function TicketPage() {
       </Panel>
 
       <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6 }}>
-        What this measures: the session window (on the backend&apos;s ET clock and holiday calendar) and the net reward
-        (after your costs, on the whole-unit split). Everything else is your own observation. The exact contract is
+        What this measures: the session window (on the backend&apos;s ET clock and holiday calendar), the net reward
+        (after your costs, on the whole-unit split), whether today&apos;s daily plan is written and complete, and what
+        that plan and this browser&apos;s journal can only tighten — the written loss limit and attempts, and the event
+        stand-aside windows. Everything else is your own observation. The exact contract is
         checked for format and root only, not for whether that month is listed or is the front month. Holiday futures
-        hours are not in this terminal&apos;s calendar, so the session gate waits on a holiday rather than guess.
+        hours are not in this terminal&apos;s calendar, so the session gate waits on a holiday rather than guess. The
+        GEX reference levels are delayed, modelled context from the instrument&apos;s own chain and gate nothing.
       </div>
     </div>
   )
