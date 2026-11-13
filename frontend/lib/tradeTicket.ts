@@ -24,10 +24,16 @@
  *  - **The reward gate is computed, not ticked.** It reads `sizePosition`'s
  *    blended net R of the split that can actually be filled, after costs.
  *
+ *  - **The daily plan tightens, and passes only itself.** `PLAN_NOT_WRITTEN`
+ *    passes when today's plan (on the backend's ET date) is written with its
+ *    checklist complete; otherwise it waits. The plan's written loss limit and
+ *    maximum attempts, measured against the journal, can only fail the daily
+ *    lock; its event windows can only fail or wait `EVENT_STAND_ASIDE`.
+ *
  * What it does not know, and does not pretend to: whether any answer the
  * trader gives is true. Every TRADER gate is the trader's own observation,
- * labelled as such in the export. Only the session window and the reward are
- * measured here.
+ * labelled as such in the export. Measured here: the session window, the
+ * reward, the plan's own gate, and the plan's and journal's tightenings.
  */
 import type { MarketSession } from './marketSession'
 import { sizePosition, type Side, type SizingResult, type SizingSpec } from './riskSize'
@@ -43,11 +49,12 @@ export const README_CODES = [
 ] as const
 
 /**
- * Codes added here because two playbook rules had none: the four-layer
- * model's iFVG inversion, and the trader-state blocker (tilt, fatigue,
- * revenge intent).
+ * Codes added here because playbook rules had none: the four-layer model's
+ * iFVG inversion, the trader-state blocker (tilt, fatigue, revenge intent),
+ * the pre-session plan (`PLAN_NOT_WRITTEN`), and standing aside around a
+ * scheduled event the plan declares (`EVENT_STAND_ASIDE`).
  */
-export const ADDED_CODES = ['NO_IFVG_INVERSION', 'TRADER_STATE_NOT_CLEAR'] as const
+export const ADDED_CODES = ['NO_IFVG_INVERSION', 'TRADER_STATE_NOT_CLEAR', 'PLAN_NOT_WRITTEN', 'EVENT_STAND_ASIDE'] as const
 
 export type BlockerCode = typeof README_CODES[number] | typeof ADDED_CODES[number]
 
@@ -58,7 +65,7 @@ export type AnsweredGateId =
   | 'notMidrange' | 'noDenial' | 'opposingLiquidity'
   | 'candle23' | 'cisd' | 'ifvgInversion'
 
-export type GateId = AnsweredGateId | 'session' | 'reward'
+export type GateId = AnsweredGateId | 'session' | 'reward' | 'plan' | 'eventStandAside'
 
 export type Answer = 'PASS' | 'FAIL'
 
@@ -221,6 +228,89 @@ export interface JournalContext {
   stopOutsToday: number
 }
 
+/** A stand-aside window the plan declares, in ET minutes past midnight, start inclusive, end exclusive. */
+export interface PlanEventWindow {
+  name: string
+  /** The event's own time, `HH:MM` ET. */
+  time: string
+  start: number
+  end: number
+}
+
+/**
+ * What today's daily plan says, as `lib/dailyPlan.ts` reads it for the date
+ * the backend published. The ticket compares; it computes none of this.
+ *
+ * It can PASS exactly one gate — `PLAN_NOT_WRITTEN`, its own — and can only
+ * turn the daily lock to FAIL or add a gate that fails or waits
+ * (`EVENT_STAND_ASIDE`). A plan never answers a gate the trader left open.
+ */
+export type PlanContext =
+  /** The date or the stored plans could not be read, so nothing can be matched. */
+  | { status: 'UNAVAILABLE'; reason: string }
+  | { status: 'NOT_WRITTEN'; date: string }
+  | {
+      status: 'WRITTEN'
+      date: string
+      /** Checklist items not complete, each saying what is missing. Empty: complete. */
+      missing: string[]
+      /** The strictest written across the plan and its amendments. Null: not written. */
+      lossLimit: number | null
+      maxAttempts: number | null
+      /** Every stand-aside window the plan or an amendment declares. */
+      windows: PlanEventWindow[]
+      /** The journal's figures for the plan's date. Null when the journal could not be read. */
+      day: { realizedLoss: number; lossesWithoutFees: number; attempts: number } | null
+    }
+
+/** Is `now` (ET minutes) inside the window? Start inclusive, end exclusive. */
+export function windowContains(w: PlanEventWindow, now: number): boolean {
+  return now >= w.start && now < w.end
+}
+
+const usd = (n: number) => `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
+/**
+ * Why the day is locked, from what this browser measured: the journal's
+ * stop-outs and the plan's written limits. Empty means nothing measured locks
+ * it, which is not the same as unlocked — the trader's own answer still stands.
+ *
+ * "Reaches" is `>=`: a $500 limit is hit by a $500 loss, and a maximum of two
+ * attempts is used up by the second.
+ */
+export function dailyLockReasons(journal: JournalContext | null | undefined, plan: PlanContext | null | undefined): string[] {
+  const out: string[] = []
+  if (journal && journal.stopOutsToday >= STOP_OUT_LOCK) {
+    out.push(`The journal in this browser holds ${journal.stopOutsToday} losing trades today (ET). ${STOP_OUT_LOCK} stop-outs lock the day.`)
+  }
+  if (plan?.status === 'WRITTEN' && plan.day) {
+    const d = plan.day
+    if (plan.lossLimit !== null && d.realizedLoss >= plan.lossLimit) {
+      const atLeast = d.lossesWithoutFees > 0
+        ? ` (at least: ${d.lossesWithoutFees} losing trade${d.lossesWithoutFees === 1 ? ' has' : 's have'} no fees entered and count at gross)`
+        : ''
+      out.push(`Realized loss on ${plan.date} is ${usd(d.realizedLoss)}${atLeast}, which reaches the plan's written daily limit of ${usd(plan.lossLimit)}.`)
+    }
+    if (plan.maxAttempts !== null && d.attempts >= plan.maxAttempts) {
+      out.push(`${d.attempts} attempt${d.attempts === 1 ? '' : 's'} taken on ${plan.date}, which uses the plan's maximum of ${plan.maxAttempts}.`)
+    }
+  }
+  return out
+}
+
+/** The plan's own gate: PASS only for a written plan whose checklist is complete. */
+export function planGate(plan: PlanContext | null | undefined): { status: GateStatus; detail: string } {
+  if (!plan) return { status: 'UNMEASURABLE', detail: 'No daily plan was consulted.' }
+  if (plan.status === 'UNAVAILABLE') return { status: 'UNMEASURABLE', detail: plan.reason }
+  if (plan.status === 'NOT_WRITTEN') {
+    return { status: 'UNANSWERED', detail: `No daily plan is written for ${plan.date} (ET, the backend's date). Write it on the Daily Plan page.` }
+  }
+  if (plan.missing.length) {
+    return { status: 'UNANSWERED', detail: `The daily plan for ${plan.date} is incomplete. ${plan.missing.join(' ')}` }
+  }
+  return { status: 'PASS', detail: `The daily plan for ${plan.date} is written and its pre-session checklist is complete.` }
+}
+
 export type TargetKind = 'INTERNAL' | 'EXTERNAL'
 
 export interface TicketTarget {
@@ -277,6 +367,8 @@ export interface TicketInput {
   clock: SessionClock | null
   /** The journal's record of this idea and today. Absent or null: not consulted. */
   journal?: JournalContext | null
+  /** Today's daily plan. Absent or null: not consulted, and the plan gate waits. */
+  plan?: PlanContext | null
 }
 
 export type GateStatus = 'PASS' | 'FAIL' | 'UNANSWERED' | 'UNMEASURABLE'
@@ -433,8 +525,8 @@ export function evaluateTicket(input: TicketInput): TicketResult {
     })
   }
 
-  // The journal can only turn these two gates to FAIL. When it does, the gate
-  // is measured rather than answered, and the record says so.
+  // The journal and the plan can only turn these two gates to FAIL. When they
+  // do, the gate is measured rather than answered, and the record says so.
   const j = input.journal
   if (j) {
     const first = gates.find((g) => g.id === 'firstAttempt')
@@ -444,17 +536,40 @@ export function evaluateTicket(input: TicketInput): TicketResult {
         detail: `The journal in this browser holds ${j.priorAttempts} earlier attempt${j.priorAttempts === 1 ? '' : 's'} at this setup ID. A new idea needs a new higher-timeframe trigger.`,
       })
     }
-    const lock = gates.find((g) => g.id === 'dailyLock')
-    if (lock && j.stopOutsToday >= STOP_OUT_LOCK) {
-      Object.assign(lock, {
-        status: 'FAIL', source: 'COMPUTED',
-        detail: `The journal in this browser holds ${j.stopOutsToday} losing trades today (ET). ${STOP_OUT_LOCK} stop-outs lock the day.`,
-      })
-    }
+  }
+  const lockReasons = dailyLockReasons(j, input.plan)
+  const lock = gates.find((g) => g.id === 'dailyLock')
+  if (lock && lockReasons.length) {
+    Object.assign(lock, { status: 'FAIL', source: 'COMPUTED', detail: lockReasons.join(' ') })
   }
 
   const s = sessionGate(input.sessionProfile, input.clock)
   gates.push({ id: 'session', code: 'SESSION_MODEL_MISSING', title: 'Session window', required: true, source: 'COMPUTED', ...s })
+
+  // The plan's own gate, and the only gate the plan can pass.
+  gates.push({ id: 'plan', code: 'PLAN_NOT_WRITTEN', title: 'Daily plan', required: true, source: 'COMPUTED', ...planGate(input.plan) })
+
+  // Stand-aside windows the plan declares. This gate exists only to fail or
+  // to wait: inside a window it fails, with the clock unknown it cannot be
+  // measured, and outside every window it is not on the ticket at all — so it
+  // never reads PASS, and the plan cannot answer anything by its absence.
+  const p = input.plan
+  if (p?.status === 'WRITTEN' && p.windows.length > 0) {
+    const now = input.clock?.nowMinutesEt
+    const list = p.windows.map((w) => `${w.name} ${clockText(w.start)}–${clockText(w.end)} ET`).join(', ')
+    const base = { id: 'eventStandAside' as const, code: 'EVENT_STAND_ASIDE' as const, title: 'Event stand-aside', required: true, source: 'COMPUTED' as const }
+    if (!input.clock || now === null || now === undefined || !Number.isFinite(now)) {
+      gates.push({ ...base, status: 'UNMEASURABLE', detail: `The ET clock is unknown, so whether now is inside a stand-aside window (${list}) cannot be measured.` })
+    } else {
+      const inside = p.windows.filter((w) => windowContains(w, now))
+      if (inside.length) {
+        gates.push({
+          ...base, status: 'FAIL',
+          detail: `${clockText(now)} ET is inside the plan's stand-aside window for ${inside.map((w) => `${w.name} (${w.time} ET, ${clockText(w.start)}–${clockText(w.end)})`).join(' and ')}.`,
+        })
+      }
+    }
+  }
 
   // Sizing, when there is enough to size.
   let sizing: SizingResult | null = null

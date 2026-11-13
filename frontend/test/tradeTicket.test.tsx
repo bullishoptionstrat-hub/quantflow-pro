@@ -8,12 +8,14 @@
 import { describe, expect, test, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { render, screen, fireEvent, within } from '@testing-library/react'
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react'
 import {
   ADDED_CODES, MODELS, README_CODES, SESSION_PROFILES,
   contractProblem, evaluateTicket, gateWaiting, minutesOf, sessionGate, ticketRecord, visibleGates,
-  type AnsweredGateId, type GateResult, type SessionClock, type TicketInput,
+  type AnsweredGateId, type GateResult, type PlanContext, type SessionClock, type TicketInput,
 } from '@/lib/tradeTicket'
+import { PLAN_STORAGE_KEY } from '@/lib/dailyPlanStore'
+import { completePlan } from './planFixtures'
 import { gexContext } from '@/lib/gexContext'
 import type { GEXResponse } from '@/lib/types'
 import { specFor } from '@/lib/contractSpecs'
@@ -55,9 +57,18 @@ function allPass(input: Omit<TicketInput, 'answers'>): TicketInput['answers'] {
 }
 
 /**
+ * Today's plan, written and complete, with nothing in it to tighten: no limit
+ * written to reach, no event window. `dailyPlan.test.tsx` holds the cases
+ * where it tightens; here it only lets the plan's own gate pass.
+ */
+const PLAN_READY: PlanContext = {
+  status: 'WRITTEN', date: '2026-11-09', missing: [], lossLimit: null, maxAttempts: null, windows: [], day: null,
+}
+
+/**
  * ES long, 10-point stop (40 ticks × $12.50 = $500 a contract), $1,000 budget:
  * 2 contracts. One external target 30 points away: 3R with no costs. 10:00 ET,
- * inside the OnePager NY AM window.
+ * inside the OnePager NY AM window. Today's plan is written and complete.
  */
 function complete(o: Partial<TicketInput> = {}): TicketInput {
   const base: Omit<TicketInput, 'answers'> = {
@@ -71,6 +82,7 @@ function complete(o: Partial<TicketInput> = {}): TicketInput {
     entry: 5000, stop: 4990, targets: [{ price: 5030, kind: 'EXTERNAL' }],
     riskBudget: 1000, costPerUnit: 0, slippageTicks: 0, minR: 2,
     clock: at('10:00'),
+    plan: PLAN_READY,
     ...o,
   }
   return { ...base, answers: o.answers ?? allPass(base) }
@@ -278,7 +290,7 @@ describe('a required computed gate that cannot be measured waits — any of them
 
   test('every required computed gate on a complete ticket would wait if it could not be measured', () => {
     const computed = evaluateTicket(complete()).gates.filter((g) => g.required && g.source === 'COMPUTED')
-    expect(computed.map((g) => g.id).sort()).toEqual(['reward', 'session'])
+    expect(computed.map((g) => g.id).sort()).toEqual(['plan', 'reward', 'session'])
     for (const g of computed) {
       expect(gateWaiting([{ ...g, status: 'UNMEASURABLE' }])).toEqual([`${g.title} cannot be measured: ${g.detail}`])
     }
@@ -385,8 +397,13 @@ describe('models and requirements tighten, never loosen', () => {
 })
 
 describe('blocker codes', () => {
-  test('every README code can be produced, plus the two added here', () => {
-    const t = complete({ model: 'AMD_IFVG', alsoRequire: { candle23: true, cisd: true } })
+  test('every README code can be produced, plus the ones added here', () => {
+    // EVENT_STAND_ASIDE is on the ticket only when it applies, so the plan here
+    // declares a window around 10:00.
+    const t = complete({
+      model: 'AMD_IFVG', alsoRequire: { candle23: true, cisd: true },
+      plan: { ...PLAN_READY, windows: [{ name: 'CPI', time: '10:00', start: minutesOf('09:55'), end: minutesOf('10:05') }] },
+    })
     const codes = new Set(evaluateTicket(t).gates.map((g) => g.code))
     for (const c of [...README_CODES, ...ADDED_CODES]) expect(codes).toContain(c)
   })
@@ -461,8 +478,46 @@ describe('the page', () => {
     }
   })
 
-  test('a ticket filled in by hand is approved, and one failed gate blocks it', () => {
+  /** Fill the ticket by hand: an ES long that passes every gate the trader answers. */
+  function fillByHand() {
+    const set = (label: string, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } })
+    set('INSTRUMENT', 'ES')
+    set('EXACT CONTRACT', 'ESZ6')
+    fireEvent.click(screen.getByRole('button', { name: 'LONG' }))
+    set('SETUP / IDEA ID', 'ES-1109-01')
+    set('MODEL', 'TRAP_FADE')
+    set('SESSION PROFILE', 'ONEPAGER')
+    for (const b of screen.getAllByRole('button', { name: /: pass$/ })) fireEvent.click(b)
+    set('HTF CONTEXT', '4H bullish')
+    set('POI', '1H iFVG')
+    set('LIQUIDITY EVENT', 'Swept ONL')
+    set('INVALIDATION', 'Close below 4989')
+    set('CANCEL CONDITION', 'No retest by 11:00')
+    set('MANAGEMENT PLAN', 'Hold to TP1')
+    set('PRE-ENTRY SCREENSHOT', 'es.png')
+    set('ENTRY', '5000')
+    set('STOP / INVALIDATION', '4990')
+    set('RISK BUDGET ($ THIS IDEA MAY LOSE)', '1000')
+    set('ROUND-TRIP COST ($ PER CONTRACT)', '0')
+    set('STOP SLIPPAGE (TICKS)', '0')
+    set('TP1 PRICE', '5030')
+    set('TP1 LIQUIDITY', 'EXTERNAL')
+  }
+
+  test('with no plan for the backend\'s date, a ticket filled in by hand waits on PLAN_NOT_WRITTEN', async () => {
+    window.localStorage.clear()
     render(<TicketPageUnderTest />)
+    fillByHand()
+    expect(screen.getByTestId('ticket-state').textContent).toBe('WAIT FOR TRIGGER')
+    expect(screen.getByTestId('waiting').textContent).toMatch(/No daily plan is written for 2026-11-09/)
+    expect(screen.getByTestId('ticket-plan-status').textContent).toMatch(/NO PLAN for 2026-11-09/)
+  })
+
+  test('a ticket filled in by hand is approved, and one failed gate blocks it', async () => {
+    window.localStorage.clear()
+    window.localStorage.setItem(PLAN_STORAGE_KEY, JSON.stringify([completePlan('2026-11-09')]))
+    render(<TicketPageUnderTest />)
+    await waitFor(() => expect(screen.getByTestId('ticket-plan-status').textContent).toMatch(/PLAN 2026-11-09 WRITTEN/))
     const set = (label: string, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } })
     set('INSTRUMENT', 'ES')
     set('EXACT CONTRACT', 'ESZ6')
