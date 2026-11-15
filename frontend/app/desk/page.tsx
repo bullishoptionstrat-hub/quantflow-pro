@@ -8,12 +8,12 @@ import { SESSION_TONE, describeSession, etClock, useMarketSession, type MarketSe
 import { useJournal } from '@/lib/journalStore'
 import { usePlans } from '@/lib/dailyPlanStore'
 import {
-  SCENARIO_KEYS, SCENARIO_LABELS, dayRisk, dealingRange, effectiveBody, eventClock, isFrozen,
+  SCENARIO_KEYS, SCENARIO_LABELS, dayRisk, dealingRange, effectiveBody, eventClock, eventWindow, isFrozen,
   planChecklist, planContextFor, planDateFrom, planWindows, zoneOf,
   type DailyPlan, type DayRisk,
 } from '@/lib/dailyPlan'
 import { deskLock, latestTicket, minutesText, type DeskLock } from '@/lib/desk'
-import { SESSION_PROFILES, STOP_OUT_LOCK, minutesOf, sessionGate, type PlanContext } from '@/lib/tradeTicket'
+import { SESSION_PROFILES, STOP_OUT_LOCK, minutesOf, sessionGate, windowContains, type PlanContext } from '@/lib/tradeTicket'
 import type { JournalEntry } from '@/lib/journal'
 import type { Panel as PanelState } from '@/lib/panel'
 import type { SourceState, SourceSummary } from '@/lib/sourceSummary'
@@ -72,17 +72,20 @@ export default function DeskPage() {
         <RiskPanel today={today} journalReady={journal.ready} journalError={journal.error} day={day} ctx={ctx} lock={lock} />
         <TicketPanel entries={journalOk ? journal.entries : null} ready={journal.ready} />
         <PlanPanel today={today} ready={store.ready} error={store.error} plan={plan} entries={journalOk ? journal.entries : null} />
-        <Panel title="GEX reference" code="CBOE · DELAYED · MODELLED" className="desk-span-5" data-testid="desk-gex">
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 14 }}>
-            <GexMini symbol="SPY" />
-            <GexMini symbol="QQQ" />
-          </div>
-          <div style={{ ...NOTE, marginTop: 8 }}>
-            Each ETF&apos;s own delayed chain. Modelled: GEX assumes a dealer position open interest does not show.
-            Context only — never a gate.
-          </div>
-        </Panel>
-        <SourcesPanel sources={sources} />
+        <div className="desk-span-5 desk-stack">
+          <EventsPanel today={today} ready={store.ready} plan={plan} now={session?.nowMinutesEt ?? null} />
+          <Panel title="GEX reference" code="CBOE · DELAYED · MODELLED" data-testid="desk-gex">
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 14 }}>
+              <GexMini symbol="SPY" />
+              <GexMini symbol="QQQ" />
+            </div>
+            <div style={{ ...NOTE, marginTop: 8 }}>
+              Each ETF&apos;s own delayed chain. Modelled: GEX assumes a dealer position open interest does not show.
+              Context only — never a gate.
+            </div>
+          </Panel>
+          <SourcesPanel sources={sources} />
+        </div>
       </div>
     </div>
   )
@@ -236,6 +239,11 @@ function TicketPanel({ entries, ready }: { entries: readonly JournalEntry[] | nu
                 <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-primary)' }}>{t.setupId}</span>
               </div>
               <Row k="Instrument">{t.contract ?? t.symbol} · {t.direction ?? '—'}</Row>
+              <Row k="Entry / stop" testId="desk-ticket-levels">{t.plan.entry === null ? '—' : px(t.plan.entry)} / {t.plan.stop === null ? '—' : px(t.plan.stop)}</Row>
+              <Row k="Size · planned risk" testId="desk-ticket-size">
+                {t.plan.units === null ? 'not sized' : `${t.plan.units} ${latest!.spec.unit}${t.plan.units === 1 ? '' : 's'} · ${t.plan.plannedRisk === null ? '—' : usd(t.plan.plannedRisk)}`}
+              </Row>
+              <Row k="Net R (blended, planned)">{t.plan.blendedNetR === null ? '—' : `${t.plan.blendedNetR.toFixed(2)}R`}</Row>
               <Row k="Journal status">{latest!.status}</Row>
               <Row k="Saved">{new Date(latest!.savedAt).toLocaleString()}</Row>
               {t.blockers.length > 0 && (
@@ -336,6 +344,53 @@ function PlanPanel({ today, ready, error, plan, entries }: {
   )
 }
 
+// ─── Events ────────────────────────────────────────────────────────────────
+
+/**
+ * Every stand-aside window the ticket enforces today — the plan's and any
+ * amendment's — with where the backend's ET clock stands against it. The
+ * same windows and the same arithmetic as `EVENT_STAND_ASIDE`; nothing here
+ * comes from a calendar feed.
+ */
+function EventsPanel({ today, ready, plan, now }: { today: string | null; ready: boolean; plan: DailyPlan | null; now: number | null }) {
+  const windows = plan ? planWindows(plan) : []
+  const body = plan ? effectiveBody(plan) : null
+  const incomplete = body ? body.events.filter((e) => eventWindow(e) === null).length : 0
+  const clockOk = now !== null && Number.isFinite(now)
+  return (
+    <Panel title="Stand-aside windows" code="TRADER INPUT · BACKEND CLOCK" data-testid="desk-events">
+      {today === null ? <div style={NOTE}>Today&apos;s date is unknown, so no plan&apos;s events can be read.</div>
+        : !ready ? <div style={NOTE}>Reading stored plans…</div>
+          : !plan ? <div style={NOTE}>No plan for {today}, so no events are declared.</div>
+            : (
+              <>
+                {windows.length === 0 && <div style={NOTE}>No event windows declared in today&apos;s plan.</div>}
+                {windows.map((w) => {
+                  const state = !clockOk ? { t: 'CLOCK UNKNOWN', c: 'var(--text-muted)' }
+                    : windowContains(w, now) ? { t: `STAND ASIDE NOW · until ${etClock(w.end)}`, c: '#fca5a5' }
+                      : now >= w.end ? { t: 'PASSED', c: 'var(--text-muted)' }
+                        : { t: `in ${minutesText(w.start - now)}`, c: 'var(--text-primary)' }
+                  return (
+                    <div key={w.name + w.start} style={KV}>
+                      <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-primary)' }}>
+                        {w.time} {w.name} <span style={K}>· aside {etClock(w.start)}–{etClock(w.end)}</span>
+                      </span>
+                      <span style={{ ...V, fontSize: 11, color: state.c }}>{state.t}</span>
+                    </div>
+                  )
+                })}
+                {incomplete > 0 && (
+                  <div style={{ ...NOTE, color: '#fcd34d', marginTop: 4 }}>
+                    {incomplete} declared event{incomplete === 1 ? ' is' : 's are'} missing a time or a stand-aside figure and set{incomplete === 1 ? 's' : ''} no window.
+                  </div>
+                )}
+                <div style={{ ...NOTE, marginTop: 6 }}>Calendar checked: {body?.eventsChecked || 'not written'}. Inside a window the ticket fails EVENT_STAND_ASIDE.</div>
+              </>
+            )}
+    </Panel>
+  )
+}
+
 // ─── Sources ───────────────────────────────────────────────────────────────
 
 const SOURCE_STYLE: Record<SourceState, { label: string; color: string }> = {
@@ -350,13 +405,13 @@ const SOURCE_ORDER: SourceState[] = ['connected', 'degraded', 'error', 'refused'
 
 function SourcesPanel({ sources }: { sources: PanelState<SourceSummary | null> }) {
   return (
-    <Panel title="Sources" code="API HEALTH" className="desk-span-12" data-testid="desk-sources">
+    <Panel title="Sources" code="API HEALTH" data-testid="desk-sources">
       {sources.status === 'loading' && <div style={NOTE}>Waiting for /api/health…</div>}
       {sources.status === 'unreachable' && <div style={NOTE}>The backend did not answer /api/health, so no source status is known.</div>}
       {sources.status === 'unauthorized' && <div style={NOTE}>The backend refused this session for /api/health.</div>}
       {sources.status === 'ok' && sources.data === null && <div style={NOTE}>The backend answered without a source list.</div>}
       {sources.status === 'ok' && sources.data !== null && (
-        <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'baseline' }}>
+        <div style={{ display: 'grid', gap: 5 }}>
           {SOURCE_ORDER.filter((s) => sources.data!.byState[s].length > 0).map((s) => (
             <span key={s} style={{ fontSize: 11 }}>
               <strong style={{ fontFamily: MONO, color: SOURCE_STYLE[s].color }}>{sources.data!.byState[s].length} {SOURCE_STYLE[s].label}</strong>{' '}
@@ -368,7 +423,7 @@ function SourcesPanel({ sources }: { sources: PanelState<SourceSummary | null> }
               SIMULATOR ON
             </span>
           )}
-          <Link href="/settings" style={{ ...LINK, marginLeft: 'auto' }}>Settings →</Link>
+          <Link href="/settings" style={LINK}>Settings →</Link>
         </div>
       )}
     </Panel>

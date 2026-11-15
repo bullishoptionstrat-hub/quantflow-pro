@@ -107,6 +107,7 @@ describe('empty states', () => {
     expect(screen.getByTestId('desk-clock').textContent).toMatch(/10:00 ET/)
     expect(screen.getByTestId('desk-plan-empty').textContent).toMatch(/No plan written for 2026-11-09/)
     expect(screen.getByTestId('desk-next-event').textContent).toMatch(/No plan, so no declared events/)
+    expect(screen.getByTestId('desk-events').textContent).toMatch(/No plan for 2026-11-09, so no events are declared/)
     expect(screen.getByTestId('desk-lock').textContent).toBe('UNKNOWN')
     expect(screen.getByTestId('desk-lock-reasons').textContent).toMatch(/No plan is written for 2026-11-09/)
     expect(screen.getByTestId('desk-pnl').textContent).toMatch(/no trade closed/)
@@ -136,6 +137,14 @@ describe('empty states', () => {
     render(<DeskPage />)
     expect((await screen.findByTestId('desk-gex-SPY-empty')).textContent).toMatch(/No Cboe chain received yet/)
   })
+
+  test('a chain answered for another symbol is not shown under QQQ', async () => {
+    GEX.bySymbol = { SPY: chain('SPY'), QQQ: chain('SPY') }
+    render(<DeskPage />)
+    await waitFor(() => expect(screen.getByTestId('desk-gex-SPY').textContent).toMatch(/680 · OI 25,000/))
+    expect((await screen.findByTestId('desk-gex-QQQ-empty')).textContent).toMatch(/answered for SPY, not QQQ/)
+    expect(screen.getByTestId('desk-gex-QQQ').textContent).not.toMatch(/680 · OI/)
+  })
 })
 
 // ─── Populated ─────────────────────────────────────────────────────────────
@@ -157,6 +166,8 @@ describe('populated', () => {
     expect(levels.getByText('discount')).toBeTruthy()      // 4988
 
     expect(screen.getByTestId('desk-next-event').textContent).toMatch(/CPI 08:30 ET · aside from 08:25 · in 25 min/)
+    expect(screen.getByTestId('desk-events').textContent).toMatch(/08:30 CPI · aside 08:25–08:45in 25 min/)
+    expect(screen.getByTestId('desk-events').textContent).toMatch(/Calendar checked: BLS release calendar/)
 
     expect(screen.getByTestId('desk-lock').textContent).toBe('CLEAR')
     expect(screen.getByTestId('desk-pnl').textContent).toMatch(/\$95\.00/)          // +2 points × $50 − $5 fees
@@ -165,6 +176,8 @@ describe('populated', () => {
     expect(screen.getByTestId('desk-attempts').textContent).toMatch(/1 \/ 2/)
 
     expect(screen.getByTestId('desk-ticket-state').textContent).toBe('APPROVED TRADE')
+    expect(screen.getByTestId('desk-ticket-levels').textContent).toMatch(/5,000 \/ 4,990/)
+    expect(screen.getByTestId('desk-ticket-size').textContent).toMatch(/2 contracts · \$1,000\.00/)   // 2 × 40 ticks × $12.50
     expect(screen.getByTestId('desk-ticket').textContent).toMatch(/As saved/)
 
     await waitFor(() => expect(screen.getByTestId('desk-gex-SPY').textContent).toMatch(/680 · OI 25,000/))
@@ -207,6 +220,7 @@ describe('populated', () => {
     expect(screen.getByTestId('desk-pnl').textContent).toMatch(/−\$510\.00/)
     expect(screen.getByRole('meter', { name: /Realized loss/ }).getAttribute('aria-valuenow')).toBe('100')
     expect(screen.getByTestId('desk-next-event').textContent).toMatch(/STAND ASIDE NOW · CPI until 08:45 ET/)
+    expect(screen.getByTestId('desk-events').textContent).toMatch(/STAND ASIDE NOW · until 08:45/)
     expect(screen.getByTestId('desk-ticket-state').textContent).toBe('BLOCKED')
     expect(screen.getByTestId('desk-ticket-blockers').textContent).toMatch(/TRADER_STATE_NOT_CLEAR/)
   })

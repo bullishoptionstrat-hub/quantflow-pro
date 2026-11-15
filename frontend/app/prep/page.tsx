@@ -6,10 +6,11 @@ import { useMarketSession } from '@/lib/marketSession'
 import { useJournal } from '@/lib/journalStore'
 import { usePlans } from '@/lib/dailyPlanStore'
 import { SESSION_PROFILES, type SessionProfileId } from '@/lib/tradeTicket'
+import type { JournalEntry } from '@/lib/journal'
 import {
   DATE_UNKNOWN, LEVEL_STATUSES, LEVEL_TYPES, LIQUIDITY, SCENARIO_KEYS, SCENARIO_LABELS,
   bodyFromDraft, createPlan, dealingRange, draftFromBody, editPlan, effectiveBody, emptyDraft, eventWindow,
-  isFrozen, planChecklist, planDateFrom, strictestLimits, zoneOf,
+  dayRisk, isFrozen, planChecklist, planDateFrom, strictestLimits, zoneOf,
   type DailyPlan, type DraftEvent, type DraftLevel, type PlanBody, type PlanDraft, type Scenario, type ScenarioKey,
 } from '@/lib/dailyPlan'
 
@@ -154,7 +155,7 @@ export default function PrepPage() {
             status={<span style={{ fontFamily: MONO, fontSize: 10, color: frozen ? '#fcd34d' : 'var(--text-muted)' }}>
               {todays === null ? 'NOT SAVED' : frozen ? 'FROZEN · EDITS ARE AMENDMENTS' : 'EDITABLE UNTIL THE FIRST TAKEN TRADE'}
             </span>}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8, marginBottom: 8 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 8, marginBottom: 8 }}>
               {checklist.map((i) => (
                 <div key={i.id} data-testid={`check-${i.id}`} style={{ fontSize: 12, padding: '6px 8px', borderRadius: 3, background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
                   <span style={{ fontFamily: MONO, fontWeight: 700, color: i.done ? '#22c55e' : '#fbbf24' }}>{i.done ? '✓' : '·'}</span>{' '}
@@ -309,6 +310,7 @@ export default function PrepPage() {
                   return <> The ticket reads the strictest written today: limit {s.lossLimit === null ? 'not written' : usd(s.lossLimit)}, maximum {s.maxAttempts ?? 'not written'}.</>
                 })()}
               </div>
+              <TodaySoFar today={today} entries={entries} plan={todays} />
             </Panel>
           </div>
 
@@ -346,6 +348,32 @@ export default function PrepPage() {
         {store.ready && past.length === 0 && <div style={NOTE}>No earlier plans in this browser.</div>}
         {past.map((p) => <PastPlan key={p.date} plan={p} />)}
       </Panel>
+    </div>
+  )
+}
+
+/**
+ * The journal's figures for the date against the SAVED plan's limits — the
+ * same `dayRisk` and strictest limits the ticket reads. Unsaved edits are not
+ * what the ticket enforces, so they are not what this measures against.
+ */
+function TodaySoFar({ today, entries, plan }: { today: string; entries: readonly JournalEntry[] | null; plan: DailyPlan | null }) {
+  if (entries === null) {
+    return <div data-testid="plan-today" style={{ ...NOTE, marginTop: 8 }}>The journal could not be read, so today&apos;s loss and attempts are unknown.</div>
+  }
+  const d = dayRisk(entries, today)
+  const lim = plan ? strictestLimits(plan) : null
+  const row = (k: string, v: string) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: '4px 0', borderTop: '1px solid var(--border)' }}>
+      <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{k}</span><span style={CALC}>{v}</span>
+    </div>
+  )
+  return (
+    <div data-testid="plan-today" style={{ marginTop: 10 }}>
+      <span style={LABEL}>{today} SO FAR · JOURNAL · BROWSER CALC</span>
+      {row('Realized loss / saved limit', `${usd(d.realizedLoss)} / ${lim?.lossLimit == null ? 'not saved' : usd(lim.lossLimit)}${d.lossesWithoutFees > 0 ? ' (at least)' : ''}`)}
+      {row('Attempts / saved maximum', `${d.attempts} / ${lim?.maxAttempts ?? 'not saved'}`)}
+      {row('Stop-outs', `${d.stopOuts}`)}
     </div>
   )
 }

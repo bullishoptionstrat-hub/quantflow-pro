@@ -327,7 +327,7 @@ describe('GEX context is beside the ticket, never in it', () => {
     join(__dirname, '..', '..', 'backend', 'test', 'fixtures', 'gex.json'), 'utf8'))
 
   test('the verdict is identical with and without GEX context, for every kind of ticket', () => {
-    const ctx = gexContext({ ...recorded(), spot: 760, asOf: '2026-09-15T19:46:01.000Z' })
+    const ctx = gexContext({ ...recorded(), spot: 760, asOf: '2026-09-15T19:46:01.000Z' }, 'SPY')
     const tickets: TicketInput[] = [
       complete(), complete({ side: null }), complete({ clock: null }), complete({ targets: [] }),
       complete({ riskBudget: 400 }), withAnswer('retest', 'FAIL'), withAnswer('smt', undefined),

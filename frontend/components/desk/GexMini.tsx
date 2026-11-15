@@ -46,7 +46,7 @@ export function GexMini({ symbol }: { symbol: 'SPY' | 'QQQ' }) {
     return () => { alive = false; clearInterval(id) }
   }, [symbol])
 
-  const ctx = panel.status === 'ok' ? gexContext(panel.data) : null
+  const ctx = panel.status === 'ok' ? gexContext(panel.data, symbol) : null
 
   return (
     <div data-testid={`desk-gex-${symbol}`} style={{ minWidth: 0 }}>

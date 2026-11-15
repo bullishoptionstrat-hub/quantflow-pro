@@ -141,6 +141,9 @@ describe('saving', () => {
     expect(p.amendments[0]!.body.lossLimit).toBe(900)
     expect(p.amendments[0]!.changed).toEqual(['lossLimit'])
     expect(screen.getByTestId('plan-amendments').textContent).toMatch(/changed lossLimit/)
+    // Measured against the saved plan: the raised limit does not loosen what the ticket reads.
+    expect(screen.getByTestId('plan-today').textContent).toMatch(/\$0\.00 \/ \$500\.00/)
+    expect(screen.getByTestId('plan-today').textContent).toMatch(/Attempts \/ saved maximum1 \/ 2/)
   })
 
   test('a field typed wrong is named, and nothing is saved', () => {

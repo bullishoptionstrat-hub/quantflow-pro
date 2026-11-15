@@ -214,9 +214,12 @@ body {
   grid-template-columns: repeat(12, minmax(0, 1fr));
   grid-auto-flow: row dense;
   gap: 12px;
-  align-items: start;
+  align-items: stretch;
 }
 .desk-grid > .hud-panel { margin-bottom: 0; min-width: 0; }
+/* A column of panels inside one grid cell, beside a taller one. */
+.desk-stack { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.desk-stack > .hud-panel { margin-bottom: 0; min-width: 0; }
 .desk-span-3 { grid-column: span 3; }
 .desk-span-4 { grid-column: span 4; }
 .desk-span-5 { grid-column: span 5; }
@@ -250,7 +253,7 @@ body {
   .desk-grid > .desk-span-7 { grid-column: span 12; }
 }
 @media (max-width: 900px) {
-  .desk-grid > .hud-panel { grid-column: 1 / -1; }
+  .desk-grid > .hud-panel, .desk-grid > .desk-stack { grid-column: 1 / -1; }
   .prep-grid, .prep-grid--three, .desk-scenarios { grid-template-columns: minmax(0, 1fr); }
 }
 

@@ -140,7 +140,7 @@ export function GexContextPanel({ symbol }: { symbol: string }) {
     }
   }, [chain])
 
-  const ctx = chain !== null && panel.status === 'ok' ? gexContext(panel.data) : null
+  const ctx = chain !== null && panel.status === 'ok' ? gexContext(panel.data, chain) : null
 
   return (
     <Panel

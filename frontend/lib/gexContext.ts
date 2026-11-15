@@ -190,15 +190,30 @@ function zeroDteOf(r: GEXResponse, spot: number | null): ZeroDteContext {
   }
 }
 
-export function gexContext(r: GEXResponse): GexContext {
+/**
+ * `requested` is the symbol the caller asked `/api/gex` for, and it is
+ * required: a chain answered for another symbol is not shown under this one's
+ * name. The route answers for the symbol it was asked, so a mismatch is a
+ * proxy, cache or replay serving the wrong body — and a chain whose `symbol`
+ * names nothing cannot be confirmed either way, so it is refused too.
+ */
+export function gexContext(r: GEXResponse, requested: string): GexContext {
+  const want = requested.trim().toUpperCase()
+  const answeredFor = typeof r.symbol === 'string' && r.symbol.trim() !== '' ? r.symbol.trim().toUpperCase() : null
+  const mismatch = answeredFor !== want
   const levels = Array.isArray(r.levels) ? r.levels : []
-  const available = r.realData === true && levels.length > 0
+  const available = !mismatch && r.realData === true && levels.length > 0
   const spot = available ? spotOf(r) : null
   const asOfMs = available && typeof r.asOf === 'string' ? Date.parse(r.asOf) : NaN
   return {
-    symbol: r.symbol,
+    symbol: want,
     available,
-    unavailableReason: available ? null : (r.unavailableReason ?? 'The backend has no chain for this symbol.'),
+    unavailableReason: available ? null
+      : mismatch
+        ? (answeredFor === null
+          ? `The response does not say which symbol it is for, so it is not shown as ${want}.`
+          : `The backend answered for ${answeredFor}, not ${want}, so nothing is shown under ${want}.`)
+        : (r.unavailableReason ?? 'The backend has no chain for this symbol.'),
     source: available ? r.source : null,
     delayedMinutes: available && finite(r.delayedMinutes) ? r.delayedMinutes : null,
     asOfMs: Number.isFinite(asOfMs) ? asOfMs : null,

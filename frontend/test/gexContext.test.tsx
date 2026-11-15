@@ -39,7 +39,7 @@ const resp = (levels: GEXLevel[], o: Partial<GEXResponse> = {}): GEXResponse => 
 })
 
 describe('against the recorded SPY chain', () => {
-  const ctx = gexContext(recorded())
+  const ctx = gexContext(recorded(), 'SPY')
 
   test('max call and put OI strikes, all expiries — hand-verified from gex.json', () => {
     // Call OI, largest four: 800 → 259,017; 790 → 158,191; 780 → 156,602; 775 → 143,920.
@@ -77,7 +77,7 @@ describe('against the recorded SPY chain', () => {
   })
 
   test('with the chain\'s own spot, distances are measured from it', () => {
-    const c = gexContext({ ...recorded(), spot: 760, spotField: 'current_price' })
+    const c = gexContext({ ...recorded(), spot: 760, spotField: 'current_price' }, 'SPY')
     expect(c.maxCallOi?.distance?.dollars).toBe(40)
     expect(c.maxCallOi?.distance?.pct).toBeCloseTo((40 / 760) * 100, 12)
     expect(c.maxPutOi?.distance?.dollars).toBe(-260)
@@ -109,6 +109,21 @@ describe('the tie rule: nearest spot, then the lower strike', () => {
 })
 
 describe('missing and empty', () => {
+  test('a chain answered for another symbol is not shown under the one asked for', () => {
+    const c = gexContext(resp([lvl(100, 5, 5)]), 'QQQ')          // resp() answers for SPY
+    expect(c.available).toBe(false)
+    expect(c.symbol).toBe('QQQ')
+    expect(c.maxCallOi).toBeNull()
+    expect(c.netGex.sign).toBe('UNKNOWN')
+    expect(c.unavailableReason).toMatch(/answered for SPY, not QQQ/)
+    expect(gexContext(resp([lvl(100, 5, 5)]), ' spy ').available).toBe(true)   // case and spaces are not identity
+    for (const symbol of ['', '  ', undefined, 7]) {
+      const u = gexContext(resp([lvl(100, 5, 5)], { symbol: symbol as string }), 'SPY')
+      expect(u.available).toBe(false)
+      expect(u.unavailableReason).toMatch(/does not say which symbol/)
+    }
+  })
+
   test('a strike with no readable open interest is skipped, not read as zero', () => {
     const levels = [lvl(90, undefined, null), lvl(100, Number.NaN, 'x'), lvl(110, 3, 2)]
     expect(maxOiStrike(levels, 'call', 100)).toMatchObject({ strike: 110, oi: 3 })
@@ -120,7 +135,7 @@ describe('missing and empty', () => {
   })
 
   test('empty levels: nothing is available and nothing is computed', () => {
-    const c = gexContext(resp([], { realData: false, source: null, unavailableReason: 'No Cboe chain has been received for SPY.' }))
+    const c = gexContext(resp([], { realData: false, source: null, unavailableReason: 'No Cboe chain has been received for SPY.' }), 'SPY')
     expect(c.available).toBe(false)
     expect(c.maxCallOi).toBeNull()
     expect(c.maxPutOi).toBeNull()
@@ -130,18 +145,18 @@ describe('missing and empty', () => {
 
   test('a null, zero or negative spot is unknown, and so is every distance', () => {
     for (const spot of [null, 0, -5, Number.NaN, undefined]) {
-      const c = gexContext(resp([lvl(100, 5, 5)], { spot: spot as number | null }))
+      const c = gexContext(resp([lvl(100, 5, 5)], { spot: spot as number | null }), 'SPY')
       expect(c.spot).toBeNull()
       expect(c.maxCallOi?.distance).toBeNull()
     }
   })
 
   test('a null same-day lens says there is none; it never falls back to the nearest expiry', () => {
-    const c = gexContext(resp([lvl(100, 5, 5)], { zeroDte: null }))
+    const c = gexContext(resp([lvl(100, 5, 5)], { zeroDte: null }), 'SPY')
     expect(c.zeroDte).toEqual({ status: 'NONE' })
     const older = resp([lvl(100, 5, 5)])
     delete (older as Partial<GEXResponse>).zeroDte
-    expect(gexContext(older).zeroDte).toEqual({ status: 'UNPUBLISHED' })
+    expect(gexContext(older, 'SPY').zeroDte).toEqual({ status: 'UNPUBLISHED' })
   })
 
   test('the net sign is the published total\'s, and unknown when there is none', () => {
@@ -279,7 +294,7 @@ describe('the GEX panel', () => {
   })
 
   test('no chain on the backend is an honest empty state, with its reason', async () => {
-    mockApi({ '/api/gex': resp([], { realData: false, source: null, unavailableReason: 'No Cboe chain has been received for QQQ.' }) })
+    mockApi({ '/api/gex': resp([], { symbol: 'QQQ', realData: false, source: null, unavailableReason: 'No Cboe chain has been received for QQQ.' }) })
     const { GexContextPanel } = await import('@/components/ticket/GexContextPanel')
     render(<GexContextPanel symbol="QQQ" />)
     await waitFor(() => expect(screen.getByTestId('gex-empty').textContent).toMatch(/No Cboe chain has been received for QQQ/))
