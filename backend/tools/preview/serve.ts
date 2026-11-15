@@ -126,8 +126,12 @@ const server = createServer((req, res) => {
   if (!resolve(file).startsWith(SITE)) { res.writeHead(403); return res.end(); }
 
   try {
+    // Read before the status line: a missing file used to throw after the 200
+    // was written, and the 404 below then threw ERR_HTTP_HEADERS_SENT out of
+    // the handler and ended the server on the first path it did not have.
+    const body = readFileSync(file);
     res.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream' });
-    res.end(readFileSync(file));
+    res.end(body);
   } catch {
     res.writeHead(404, { 'content-type': 'text/plain' });
     res.end('not found');
