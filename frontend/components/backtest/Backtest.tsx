@@ -204,22 +204,22 @@ export function Backtest() {
           </div>
           <div>
             <div style={label}>Underlyings (comma-separated)</div>
-            <input style={input} value={draft.underlyings} placeholder="SPY, QQQ, NVDA"
+            <input style={input} aria-label="Underlyings (comma-separated)" value={draft.underlyings} placeholder="SPY, QQQ, NVDA"
               onChange={(e) => setDraft({ ...draft, underlyings: e.target.value })} />
           </div>
           <div>
             <div style={label}>Min premium ($)</div>
-            <input style={input} value={draft.minPremium} placeholder="100000" inputMode="numeric"
+            <input style={input} aria-label="Min premium ($)" value={draft.minPremium} placeholder="100000" inputMode="numeric"
               onChange={(e) => setDraft({ ...draft, minPremium: e.target.value })} />
           </div>
           <div>
             <div style={label}>Min size (contracts)</div>
-            <input style={input} value={draft.minSize} placeholder="50" inputMode="numeric"
+            <input style={input} aria-label="Min size (contracts)" value={draft.minSize} placeholder="50" inputMode="numeric"
               onChange={(e) => setDraft({ ...draft, minSize: e.target.value })} />
           </div>
           <div>
             <div style={label}>Min score</div>
-            <input style={input} value={draft.minScore} placeholder="70" inputMode="numeric"
+            <input style={input} aria-label="Min score" value={draft.minScore} placeholder="70" inputMode="numeric"
               onChange={(e) => setDraft({ ...draft, minScore: e.target.value })} />
           </div>
         </div>
@@ -236,7 +236,7 @@ export function Backtest() {
             cursor: 'pointer', fontFamily: "'JetBrains Mono', monospace",
           }}>RESET</button>
           <div style={{ flex: 1 }} />
-          <input style={{ ...input, width: 180 }} value={presetName} placeholder="Name this scanner…"
+          <input style={{ ...input, width: 180 }} value={presetName} aria-label="Scanner name" placeholder="Name this scanner…"
             onChange={(e) => setPresetName(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') onSavePreset() }} />
           <button onClick={onSavePreset} disabled={!presetName.trim()} style={{

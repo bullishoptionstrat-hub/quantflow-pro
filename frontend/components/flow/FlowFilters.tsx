@@ -49,6 +49,7 @@ export function FlowFilters() {
       {/* Ticker search */}
       <input
         type="text"
+        aria-label="Ticker filter"
         placeholder="Ticker…"
         value={filters.ticker}
         onChange={e => setFilters({ ticker: e.target.value.toUpperCase() })}
@@ -56,27 +57,27 @@ export function FlowFilters() {
       />
 
       {/* Option type */}
-      <select value={filters.optionType} onChange={e => setFilters({ optionType: e.target.value as Filters['optionType'] })} style={selectStyle}>
+      <select aria-label="Option type" value={filters.optionType} onChange={e => setFilters({ optionType: e.target.value as Filters['optionType'] })} style={selectStyle}>
         {OPTION_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
       </select>
 
       {/* Order type */}
-      <select value={filters.orderType} onChange={e => setFilters({ orderType: e.target.value as Filters['orderType'] })} style={selectStyle}>
+      <select aria-label="Order type" value={filters.orderType} onChange={e => setFilters({ orderType: e.target.value as Filters['orderType'] })} style={selectStyle}>
         {ORDER_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
       </select>
 
       {/* Sentiment */}
-      <select value={filters.sentiment} onChange={e => setFilters({ sentiment: e.target.value as Filters['sentiment'] })} style={selectStyle}>
+      <select aria-label="Sentiment" value={filters.sentiment} onChange={e => setFilters({ sentiment: e.target.value as Filters['sentiment'] })} style={selectStyle}>
         {SENTIMENTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
       </select>
 
       {/* Min premium */}
-      <select value={filters.minPremium} onChange={e => setFilters({ minPremium: Number(e.target.value) })} style={selectStyle}>
+      <select aria-label="Minimum premium" value={filters.minPremium} onChange={e => setFilters({ minPremium: Number(e.target.value) })} style={selectStyle}>
         {PREMIUM_LEVELS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
       </select>
 
       {/* Heat filter */}
-      <select value={filters.minHeat} onChange={e => setFilters({ minHeat: Number(e.target.value) })} style={selectStyle}>
+      <select aria-label="Minimum heat" value={filters.minHeat} onChange={e => setFilters({ minHeat: Number(e.target.value) })} style={selectStyle}>
         {HEAT_LEVELS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
       </select>
 

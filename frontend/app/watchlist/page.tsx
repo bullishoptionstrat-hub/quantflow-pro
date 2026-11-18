@@ -60,6 +60,7 @@ export default function WatchlistPage() {
       <div style={{ display: 'flex', gap: 8, marginBottom: 24 }}>
         <input
           type="text"
+          aria-label="Add ticker"
           placeholder="Add ticker (e.g. AAPL)"
           value={input}
           onChange={e => setInput(e.target.value.toUpperCase())}

@@ -214,6 +214,7 @@ export function StrategyBuilder() {
                 <input
                   type="number"
                   value={useSpot ?? ''}
+                  aria-label="Spot price"
                   placeholder="enter a spot"
                   onChange={e => {
                     edited.current = true
@@ -235,34 +236,34 @@ export function StrategyBuilder() {
             </div>
             <div style={{ marginBottom: 12 }}>
               <label style={{ display: 'block', fontSize: 10, color: 'var(--text-muted)', marginBottom: 4, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' }}>DAYS TO EXPIRY: {daysToExpiry}</label>
-              <input type="range" min={1} max={180} value={daysToExpiry} onChange={e => setDaysToExpiry(Number(e.target.value))} style={{ width: '100%', accentColor: '#8b5cf6' }} />
+              <input type="range" aria-label="Days to expiry" min={1} max={180} value={daysToExpiry} onChange={e => setDaysToExpiry(Number(e.target.value))} style={{ width: '100%', accentColor: '#8b5cf6' }} />
             </div>
             <div style={{ marginBottom: 12 }}>
               {/* Was `r: 0.05` in the Greeks call and a default parameter of
                   `computePLCurve` — two copies of an assumed interest rate,
                   neither of them on screen. */}
               <label style={{ display: 'block', fontSize: 10, color: 'var(--text-muted)', marginBottom: 4, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' }}>RISK-FREE (assumed): {rate}%</label>
-              <input type="range" min={0} max={12} step={1} value={rate} onChange={e => setRate(Number(e.target.value))} style={{ width: '100%', accentColor: '#8b5cf6' }} />
+              <input type="range" aria-label="Risk-free rate, percent" min={0} max={12} step={1} value={rate} onChange={e => setRate(Number(e.target.value))} style={{ width: '100%', accentColor: '#8b5cf6' }} />
             </div>
             {legs.map((leg, i) => (
               <div key={leg.key} style={{ background: 'var(--bg-secondary)', borderRadius: 6, padding: 12, marginBottom: 10, border: '1px solid var(--border)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
                   <span style={{ fontSize: 12, fontWeight: 700, color: '#a78bfa' }}>LEG {i + 1}</span>
                   {legs.length > 1 && (
-                    <button onClick={() => removeLeg(i)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 14 }}>✕</button>
+                    <button onClick={() => removeLeg(i)} aria-label={`Remove leg ${i + 1}`} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 14 }}>✕</button>
                   )}
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
                   <div>
                     <label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block', marginBottom: 3, fontWeight: 600, letterSpacing: '0.06em' }}>TYPE</label>
-                    <select value={leg.optionType} onChange={e => updateLeg(i, 'optionType', e.target.value)} style={selectStyle}>
+                    <select aria-label={`Leg ${i + 1} type`} value={leg.optionType} onChange={e => updateLeg(i, 'optionType', e.target.value)} style={selectStyle}>
                       <option value="C">CALL</option>
                       <option value="P">PUT</option>
                     </select>
                   </div>
                   <div>
                     <label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block', marginBottom: 3, fontWeight: 600, letterSpacing: '0.06em' }}>ACTION</label>
-                    <select value={leg.action} onChange={e => updateLeg(i, 'action', e.target.value)} style={selectStyle}>
+                    <select aria-label={`Leg ${i + 1} action`} value={leg.action} onChange={e => updateLeg(i, 'action', e.target.value)} style={selectStyle}>
                       <option value="BUY">BUY</option>
                       <option value="SELL">SELL</option>
                     </select>
@@ -271,23 +272,23 @@ export function StrategyBuilder() {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
                   <div>
                     <label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block', marginBottom: 3, fontWeight: 600, letterSpacing: '0.06em' }}>STRIKE</label>
-                    <input type="number" value={leg.strike} onChange={e => updateLeg(i, 'strike', Number(e.target.value))} style={inputStyle} step={5} />
+                    <input aria-label={`Leg ${i + 1} strike`} type="number" value={leg.strike} onChange={e => updateLeg(i, 'strike', Number(e.target.value))} style={inputStyle} step={5} />
                   </div>
                   <div>
                     <label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block', marginBottom: 3, fontWeight: 600, letterSpacing: '0.06em' }}>
                       ENTRY $ {leg.entryFromModel && <span style={{ color: '#fbbf24', fontWeight: 700 }}>· MODEL</span>}
                     </label>
-                    <input type="number" value={leg.entryPrice} onChange={e => updateLeg(i, 'entryPrice', Number(e.target.value))} style={inputStyle} step={0.01} min={0} />
+                    <input aria-label={`Leg ${i + 1} entry price`} type="number" value={leg.entryPrice} onChange={e => updateLeg(i, 'entryPrice', Number(e.target.value))} style={inputStyle} step={0.01} min={0} />
                   </div>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                   <div>
                     <label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block', marginBottom: 3, fontWeight: 600, letterSpacing: '0.06em' }}>IV: {leg.iv}%</label>
-                    <input type="range" min={5} max={200} value={leg.iv} onChange={e => updateLeg(i, 'iv', Number(e.target.value))} style={{ width: '100%', accentColor: '#f97316' }} />
+                    <input type="range" aria-label={`Leg ${i + 1} implied volatility`} min={5} max={200} value={leg.iv} onChange={e => updateLeg(i, 'iv', Number(e.target.value))} style={{ width: '100%', accentColor: '#f97316' }} />
                   </div>
                   <div>
                     <label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block', marginBottom: 3, fontWeight: 600, letterSpacing: '0.06em' }}>QTY</label>
-                    <input type="number" value={leg.qty} onChange={e => updateLeg(i, 'qty', Math.max(1, parseInt(e.target.value) || 1))} style={inputStyle} min={1} max={100} />
+                    <input aria-label={`Leg ${i + 1} quantity`} type="number" value={leg.qty} onChange={e => updateLeg(i, 'qty', Math.max(1, parseInt(e.target.value) || 1))} style={inputStyle} min={1} max={100} />
                   </div>
                 </div>
               </div>

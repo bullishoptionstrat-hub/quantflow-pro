@@ -188,3 +188,20 @@ Skipped this round: the accessibility/keyboard audit (larger, deserves its own P
 2. **Pre-entry snapshot on `/ticket`** (`lib/ticketSummary.ts`). The frozen ticket record as plain text for a screenshot or paste: state, "NOT AN ORDER", plan figures (`—` when absent), every gate with its source, blockers, score labelled ranking-only, the record's own note. It reads the record and nothing else.
 
 Skipped again: the accessibility/keyboard audit across every page (still its own PR), the /prep pre-session checklist (it already exists, derived from the plan's fields), and the standing skip list.
+
+## Chosen 2026-11-18 (after #150)
+
+Both $0 and needing no user decision. Gap-through-stop grading and the
+same-bar-both-levels classification are untouched (decisions pending).
+
+1. **Accessibility floor across every page.** `frontend/test/a11y.test.tsx`
+   renders each `page.tsx` found under `app/` with the backend unreachable and
+   requires a name on every form control and button, no positive `tabIndex`,
+   and a heading. Layout gets a skip link to a focusable `<main id="main">`;
+   verdicts, errors and the feed connection are live regions.
+2. **CSV formula guard closes the leading-whitespace gap, and covers the third
+   exporter.** `FORMULA_LEAD` guards any leading whitespace (spreadsheets trim
+   it before deciding a cell is a formula). The flow feed's export was a bare
+   `join(',')` with no guard at all; it now goes through `lib/flowCsv.ts`.
+
+Not done: (c) the n<30 indicator consistency check across pages.

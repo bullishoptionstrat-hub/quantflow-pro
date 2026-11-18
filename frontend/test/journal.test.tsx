@@ -479,6 +479,15 @@ describe('journal CSV export', () => {
     expect(csv).toContain(`"'=HYPERLINK(""x"")"`)
   })
 
+  test('formula text behind leading whitespace is guarded', () => {
+    for (const id of [' =1+1', '\t@SUM(A1)', '\u00a0-2']) {
+      const csv = journalCsv([entry({}, ticket({ setupId: id }))], 'x')
+      const row = csv.trim().split('\n').at(-1)!
+      // The ticket may normalise the ID; either way no cell may open as a formula.
+      for (const c of row.split(',')) expect(c.replace(/^"/, ''), JSON.stringify(id)).not.toMatch(/^\s*[=+@]|^\s+-/)
+    }
+  })
+
   test('the page offers the download only when there is something to export', () => {
     render(<JournalPage />)
     expect((screen.getByTestId('journal-csv') as HTMLButtonElement).disabled).toBe(true)

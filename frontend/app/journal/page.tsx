@@ -114,7 +114,7 @@ export default function JournalPage() {
         </p>
       </div>
 
-      {error && <div data-testid="journal-error" className="card" style={{ padding: 12, marginBottom: 16, color: '#fca5a5', fontSize: 12 }}>{error}</div>}
+      {error && <div data-testid="journal-error" role="alert" className="card" style={{ padding: 12, marginBottom: 16, color: '#fca5a5', fontSize: 12 }}>{error}</div>}
       {rejected > 0 && (
         <div className="card" style={{ padding: 12, marginBottom: 16, color: '#fcd34d', fontSize: 12 }}>
           {rejected} stored entr{rejected === 1 ? 'y fails' : 'ies fail'} the shape check. They are kept in storage, not shown, and not counted.

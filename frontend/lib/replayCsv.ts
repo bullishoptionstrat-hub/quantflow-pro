@@ -13,7 +13,7 @@
  * - An absent value is an empty cell, never 0. `netR`, entry and target are
  *   null on most ideas, and a 0 there reads as a measured zero.
  * - A text cell that a spreadsheet would read as a formula (`= + - @`, tab,
- *   CR) is prefixed with `'`. Numbers are written as numbers and never
+ *   CR, or any leading whitespace) is prefixed with `'`. Numbers are written as numbers and never
  *   prefixed, so a negative R stays a number.
  * - Commas, quotes and newlines are quoted per RFC 4180.
  * - Nothing here computes: every value is copied from the report.
@@ -50,10 +50,18 @@ export const REPLAY_CSV_COLUMNS = [
   'outcome_state', 'outcome_r', 'decided_at', 'gap_minutes', 'outcome_detail',
 ] as const
 
+/**
+ * A spreadsheet trims leading whitespace before deciding a cell is a formula,
+ * so ` =1+1` and `\t=1` are formulas too. Any leading whitespace (space, tab,
+ * CR, LF, NBSP and other Unicode spaces) is guarded, and so is a formula
+ * character after it.
+ */
+export const FORMULA_LEAD = /^(?:\s|[=+\-@])/
+
 /** A text cell: formula-guarded, then quoted if it needs it. */
 export function textCell(s: string | null | undefined): string {
   if (s === null || s === undefined) return ''
-  const guarded = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s
+  const guarded = FORMULA_LEAD.test(s) ? `'${s}` : s
   return /[",\n\r]/.test(guarded) ? `"${guarded.replace(/"/g, '""')}"` : guarded
 }
 

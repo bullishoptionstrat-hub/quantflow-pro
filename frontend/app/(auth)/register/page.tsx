@@ -76,8 +76,9 @@ export default function RegisterPage() {
 
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
-                  <label className="block text-zinc-400 text-xs font-mono mb-1.5 uppercase tracking-wider">Email</label>
+                  <label className="block text-zinc-400 text-xs font-mono mb-1.5 uppercase tracking-wider" htmlFor="register-email">Email</label>
                   <input
+                    id="register-email"
                     type="email"
                     required
                     value={email}
@@ -87,8 +88,9 @@ export default function RegisterPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-zinc-400 text-xs font-mono mb-1.5 uppercase tracking-wider">Password</label>
+                  <label className="block text-zinc-400 text-xs font-mono mb-1.5 uppercase tracking-wider" htmlFor="register-password">Password</label>
                   <input
+                    id="register-password"
                     type="password"
                     required
                     value={password}
@@ -98,8 +100,9 @@ export default function RegisterPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-zinc-400 text-xs font-mono mb-1.5 uppercase tracking-wider">Confirm Password</label>
+                  <label className="block text-zinc-400 text-xs font-mono mb-1.5 uppercase tracking-wider" htmlFor="register-confirm-password">Confirm Password</label>
                   <input
+                    id="register-confirm-password"
                     type="password"
                     required
                     value={confirmPassword}

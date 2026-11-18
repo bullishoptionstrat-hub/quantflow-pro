@@ -468,7 +468,7 @@ export default function TicketPage() {
             {copied === 'failed' && <span style={{ fontSize: 11, color: '#fca5a5' }}>The browser refused the clipboard; select the text below instead.</span>}
           </div>
         )}
-        <textarea data-testid="ticket-json" readOnly value={record} rows={10}
+        <textarea data-testid="ticket-json" aria-label="Ticket record (JSON)" readOnly value={record} rows={10}
           style={{ ...INPUT, fontSize: 11, color: 'var(--text-secondary)', resize: 'vertical' }} />
       </Panel>
 

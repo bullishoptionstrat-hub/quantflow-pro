@@ -33,7 +33,7 @@ export function Sidebar() {
   }).length
 
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" aria-label="Sidebar">
       {/* Logo */}
       <div className="sidebar__brand">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -87,7 +87,7 @@ export function Sidebar() {
         */}
         <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
           <span style={{ width: 7, height: 7, borderRadius: '50%', background: connected ? '#22c55e' : '#f97316', display: 'inline-block' }} />
-          <span style={{ color: connected ? '#86efac' : '#fdba74', fontFamily: "'JetBrains Mono', monospace" }}>
+          <span role="status" style={{ color: connected ? '#86efac' : '#fdba74', fontFamily: "'JetBrains Mono', monospace" }}>
             {connected ? '● FEED CONNECTED' : '◌ FEED DISCONNECTED'}
           </span>
         </div>

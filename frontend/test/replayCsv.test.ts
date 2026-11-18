@@ -80,6 +80,16 @@ describe('cell rules', () => {
     expect(textCell('@SUM')).toBe("'@SUM")
     expect(numCell(-1)).toBe('-1')
   })
+  test('leading whitespace before a formula character is guarded too', () => {
+    for (const lead of [' ', '  ', '\t', '\r', '\n', '\u00a0', '\u2003']) {
+      for (const f of ['=', '+', '-', '@']) {
+        const cell = textCell(`${lead}${f}1+1`)
+        expect(cell.replace(/^"/, '').startsWith("'"), JSON.stringify(lead + f)).toBe(true)
+      }
+    }
+    expect(textCell(' plain')).toBe("' plain")
+    expect(textCell('a =b')).toBe('a =b')
+  })
   test('commas, quotes and newlines are quoted', () => {
     expect(textCell('a,b')).toBe('"a,b"')
     expect(textCell('a"b')).toBe('"a""b"')

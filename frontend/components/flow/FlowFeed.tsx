@@ -9,6 +9,7 @@ import { FlowStats } from './FlowStats'
 import { TableSkeleton } from '@/components/ui/Skeleton'
 import { formatTime, formatExpiry } from '@/lib/utils'
 import { matchesFilters } from '@/lib/flowFilter'
+import { flowCsv } from '@/lib/flowCsv'
 import type { FlowEvent } from '@/lib/types'
 
 const COL_HEADERS = [
@@ -75,19 +76,11 @@ export function FlowFeed() {
     // `synthetic` column comes along for the same reason it is shown per row:
     // a credentialed deployment can have observed and constructed prints side
     // by side, and a spreadsheet cannot see the badge.
-    const meta = [
-      `# quantflow flow export — ${sorted.length} of ${flowEvents.length} signals held this session`,
-      `# filters: ticker=${filters.ticker || 'any'} premium>=${filters.minPremium} type=${filters.optionType} order=${filters.orderType} sentiment=${filters.sentiment} heat>=${filters.minHeat}${filters.unusualOnly ? ' unusualOnly' : ''}`,
-    ].join('\n') + '\n'
-    // Provenance travels with the file (F-16). The store has always known each
-    // row's dataset and rights class; the wire did not, so a spreadsheet left
-    // the building knowing less about itself than the row nobody exports.
-    // `datasets` is semicolon-joined because commas are the delimiter.
-    const header = 'Time,Ticker,Expiry,Strike,Type,Order,Size,Premium,Heat,Sentiment,Synthetic,Datasets,RightsDisplay\n'
-    const rows = sorted.map(e =>
-      [formatTime(e.created_at),e.underlying,e.expiry,e.strike,e.option_type,e.order_type,e.total_size,e.total_premium,e.heat_score,e.sentiment,e.synthetic ? 'yes' : 'no',(e.datasets ?? []).join(';') || 'UNKNOWN',e.rights_display ?? 'UNKNOWN_DATASET'].join(',')
-    ).join('\n')
-    const blob = new Blob([meta + header + rows], { type: 'text/csv' })
+    // Provenance travels with the file (F-16): `Datasets` and `RightsDisplay`
+    // are columns. Cell rules (formula guard, quoting, empty not 0) are
+    // `lib/flowCsv.ts`, shared with the journal and replay exporters.
+    const csv = flowCsv(sorted, flowEvents.length, filters, formatTime)
+    const blob = new Blob([csv], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
