@@ -126,7 +126,8 @@ export function preflightBars(symbol: string, text: string, timestampMarks: Time
     }
   }
   const groups = groupRejected(res.rejected)
-  const count = (c: RejectCode) => groups.find((g) => g.code === c)?.rows ?? 0
+  // A kind with no group had no rows: the count of an empty filter, not a default.
+  const count = (c: RejectCode) => res.rejected.filter((r) => r.reasons.some((x) => rejectCode(x) === c)).length
 
   // Per ET date: which bars sit inside the published regular session.
   const byDate = new Map<string, number[]>()
