@@ -66,7 +66,16 @@ export function parseZonedTimestamp(raw: string): number | string {
   if (/^\d{13}$/.test(s)) return Number(s);
   if (!ZONED_ISO.test(s)) return `timestamp ${JSON.stringify(raw)} is neither epoch ms nor ISO-8601 with a zone`;
   const ms = Date.parse(s);
-  return Number.isFinite(ms) ? ms : `timestamp ${JSON.stringify(raw)} is not a real instant`;
+  if (!Number.isFinite(ms)) return `timestamp ${JSON.stringify(raw)} is not a real instant`;
+  // Date.parse rolls an impossible wall clock forward (02-30 -> 03-02, 24:00 ->
+  // the next day), so the stated fields must survive the round trip.
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d{1,3})?(Z|([+-])(\d{2}):(\d{2}))$/.exec(s)!;
+  const off = m[7] === 'Z' ? 0 : (m[8] === '-' ? -1 : 1) * (Number(m[9]) * 60 + Number(m[10]));
+  if (m[7] !== 'Z' && (Number(m[9]) > 23 || Number(m[10]) > 59)) return `timestamp ${JSON.stringify(raw)} has an impossible offset`;
+  const wall = new Date(ms + off * 60_000);
+  const same = wall.getUTCFullYear() === Number(m[1]) && wall.getUTCMonth() + 1 === Number(m[2])
+    && wall.getUTCDate() === Number(m[3]) && wall.getUTCHours() === Number(m[4]) && wall.getUTCMinutes() === Number(m[5]);
+  return same ? ms : `timestamp ${JSON.stringify(raw)} is not a real calendar instant`;
 }
 
 /** A strictly decimal number; '' and anything else is a reason. */
