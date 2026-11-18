@@ -172,3 +172,12 @@ engines and fixtures. Not picked: the post-trade review flow (the journal
 already freezes the ticket beside the fill; a review view is next), the
 accessibility audit (partly covered by the chart's keyboard range input), the
 delayed chain view (Cboe CDN refused here).
+
+## Chosen 2026-11-18 (after #147)
+
+Two $0 upgrades that need no decision from the operator:
+
+1. **GEX chart clock reads the chain's `asOf`.** `GEXChart` printed `updatedAt` (when this server answered) as the chart's time, so a 15-minute-delayed chain looked current. This closes the open item in CLAUDE.md's `/api/gex` note. No backend change; the field already exists.
+2. **Post-trade review on `/journal`.** Planned (frozen ticket) against recorded entry, stop, units, average exit vs targets, net R, costs, process vs outcome, violations and the one repeat/avoid action. Built from existing journal data only; no new storage, no new metric.
+
+Skipped this round: the accessibility/keyboard audit (larger, deserves its own PR), and everything on the standing skip list (delayed chain grid, paid data, production migrations, secrets, playbook definitions, real sensitivity grid).

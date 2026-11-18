@@ -5,6 +5,7 @@ import { useStore } from '@/store/useStore'
 import { apiFetch } from '@/lib/apiFetch'
 import { formatNumber } from '@/lib/utils'
 import type { GEXResponse, GEXLevel } from '@/lib/types'
+import { chainClockText, gexContext } from '@/lib/gexContext'
 
 /**
  * Dealer gamma exposure, from the chain the backend actually has.
@@ -196,7 +197,7 @@ export function GEXChart() {
           <span style={{ fontWeight: 700, fontSize: 13 }}>LARGEST GAMMA EXPOSURE</span>
           {gex && (
             <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
-              {gex.levels.length} strikes · {new Date(gex.updatedAt).toLocaleTimeString()}
+              {gex.levels.length} strikes · {chainClockText(gexContext(gex, selectedTicker))}
             </span>
           )}
         </div>

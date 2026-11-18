@@ -6,6 +6,7 @@ import {
 } from '@/lib/journal'
 import { mergeImport, serializeJournal, useJournal } from '@/lib/journalStore'
 import { Panel } from '@/components/hud/Panel'
+import { postTradeReview, QUADRANT_TEXT } from '@/lib/postTradeReview'
 import { BREAKDOWN_DIMENSIONS, journalBreakdown, type BreakdownDimension } from '@/lib/journalBreakdown'
 
 /**
@@ -141,7 +142,7 @@ export default function JournalPage() {
         </div>
       )}
 
-      {ordered.map((e) => <EntryCard key={e.id} entry={e} ev={evals.get(e.id)!} onPatch={(p) => patch(e.id, p)} />)}
+      {ordered.map((e) => <EntryCard key={e.id} entry={e} ev={evals.get(e.id)!} all={entries} onPatch={(p) => patch(e.id, p)} />)}
 
       <Panel title="Export / import" code="THIS BROWSER" style={{ marginTop: 16 }}
         actions={<button type="button" style={BUTTON} onClick={() => setShowExport((s) => !s)}>{showExport ? 'Hide export' : 'Export JSON'}</button>}>
@@ -157,7 +158,7 @@ export default function JournalPage() {
   )
 }
 
-function EntryCard({ entry: e, ev, onPatch }: { entry: JournalEntry; ev: EntryEvaluation; onPatch: (p: Partial<JournalEntry>) => void }) {
+function EntryCard({ entry: e, ev, all, onPatch }: { entry: JournalEntry; ev: EntryEvaluation; all: readonly JournalEntry[]; onPatch: (p: Partial<JournalEntry>) => void }) {
   const t = e.ticket
   const [fillPrice, setFillPrice] = useState(t.plan.entry === null ? '' : String(t.plan.entry))
   const [fillUnits, setFillUnits] = useState(t.plan.units === null ? '' : String(t.plan.units))
@@ -280,6 +281,7 @@ function EntryCard({ entry: e, ev, onPatch }: { entry: JournalEntry; ev: EntryEv
       {taken && (
         <details>
           <summary style={{ fontSize: 11, color: 'var(--text-secondary)', cursor: 'pointer' }}>Review</summary>
+          <PostTradeReviewTable entry={e} all={all} />
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', margin: '8px 0' }}>
             {SELF_TAGS.map((tag) => (
               <label key={tag} style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'flex', gap: 4, alignItems: 'center' }}>
@@ -338,5 +340,35 @@ function BreakdownPanel({ entries }: { entries: Parameters<typeof journalBreakdo
         )}
       {b.overlapping && b.measured > 0 && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }}>A trade can carry several tags, so tag rows overlap and do not sum to the total.</div>}
     </Panel>
+  )
+}
+
+const fmt = (n: number | null, d = 2) => (n === null ? '—' : n.toFixed(d))
+
+/** Planned (frozen ticket) against recorded, from the journal entry alone. */
+function PostTradeReviewTable({ entry, all }: { entry: JournalEntry; all: readonly JournalEntry[] }) {
+  const r = postTradeReview(entry, all)
+  return (
+    <div data-testid="post-trade-review" style={{ margin: '8px 0', fontFamily: MONO, fontSize: 11 }}>
+      <table className="flow-table" aria-label="Planned against actual">
+        <thead><tr><th>ITEM</th><th>PLANNED</th><th>ACTUAL</th><th>TICKS AGAINST YOU</th><th>NOTE</th></tr></thead>
+        <tbody>
+          {r.rows.map((row) => (
+            <tr key={row.label}>
+              <td>{row.label}</td><td>{fmt(row.planned, row.label === 'UNITS' ? 0 : 2)}</td>
+              <td>{fmt(row.actual, row.label === 'UNITS' ? 0 : 2)}</td>
+              <td>{row.adverseTicks === null ? '—' : String(row.adverseTicks)}</td><td>{row.note ?? ''}</td>
+            </tr>
+          ))}
+          <tr><td>R (NET)</td><td>{fmt(r.plannedR)}</td><td>{fmt(r.realizedR)}</td><td></td><td>{r.realizedR === null ? 'not measured' : ''}</td></tr>
+          <tr><td>COSTS $</td><td>{fmt(r.plannedCost)}</td><td>{fmt(r.actualFees)}</td><td></td><td>{r.actualFees === null ? 'fees not entered' : ''}</td></tr>
+        </tbody>
+      </table>
+      <div data-testid="review-verdict" style={{ marginTop: 6, color: 'var(--text-secondary)' }}>
+        PROCESS {r.process ?? '—'} · OUTCOME {r.outcome ?? '—'} · {r.quadrant ? QUADRANT_TEXT[r.quadrant] : 'quadrant needs a reviewed, measured, non-breakeven trade'}
+      </div>
+      <div style={{ color: 'var(--text-secondary)' }}>VIOLATIONS: {r.violations.length ? r.violations.join(', ') : 'none tagged'}</div>
+      <div data-testid="review-next" style={{ color: 'var(--text-secondary)' }}>NEXT TIME: {r.nextAction ?? 'not written'}</div>
+    </div>
   )
 }

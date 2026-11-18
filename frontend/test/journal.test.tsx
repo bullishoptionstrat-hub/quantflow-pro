@@ -19,6 +19,7 @@ import {
 import type { MarketSession } from '@/lib/marketSession'
 import JournalPage from '@/app/journal/page'
 import TicketPage from '@/app/ticket/page'
+import { postTradeReview, quadrantOf } from '@/lib/postTradeReview'
 
 const CLOCK = vi.hoisted(() => ({
   session: {
@@ -334,5 +335,85 @@ describe('the pages', () => {
     fireEvent.change(screen.getByLabelText('SETUP / IDEA ID'), { target: { value: 'es-1109-02' } })
     expect(screen.getByTestId('ticket-state').textContent).toBe('BLOCKED')
     expect(screen.getByTestId('blockers').textContent).toMatch(/ONE_ATTEMPT_ALREADY_USED/)
+  })
+})
+
+describe('post-trade review', () => {
+  test('planned against actual, ticks signed against the trader', () => {
+    const t = ticket()
+    const units = t.plan.units!
+    expect(units).toBeGreaterThan(0)
+    const e = closed(5000.5, [exit(5029, units)], 10, { reviewed: true }, t)
+    const r = postTradeReview(e, [e])
+    const row = (l: string) => r.rows.find((x) => x.label === l)!
+    expect(row('ENTRY')).toMatchObject({ planned: 5000, actual: 5000.5, adverseTicks: 2 })
+    expect(row('STOP')).toMatchObject({ planned: 4990, actual: 4990, adverseTicks: 0, note: 'not moved' })
+    expect(row('UNITS')).toMatchObject({ planned: units, actual: units })
+    expect(row('AVG EXIT vs TARGETS')).toMatchObject({ planned: 5030, actual: 5029, adverseTicks: 4 })
+    expect(r.realizedR).toBeCloseTo(evaluateEntry(e, [e]).realized!.r!, 10)
+    expect(r.plannedR).toBe(t.plan.blendedNetR)
+    expect(r.plannedCost).toBe(5 * units)
+    expect(r.actualFees).toBe(10)
+    expect(r.quadrant).toBe('EARNED')
+  })
+
+  test('a short reverses the sign; a widened stop counts against you', () => {
+    const t = ticket({ side: 'SHORT', entry: 5000, stop: 5010, targets: [{ price: 4970, kind: 'EXTERNAL' }] })
+    const units = t.plan.units!
+    const e = closed(4999.5, [exit(4975, units)], 10, { actualStop: 5012, reviewed: true }, t)
+    const r = postTradeReview(e, [e])
+    expect(r.rows.find((x) => x.label === 'ENTRY')!.adverseTicks).toBe(2)
+    expect(r.rows.find((x) => x.label === 'STOP')).toMatchObject({ actual: 5012, adverseTicks: 8, note: 'moved' })
+    expect(r.rows.find((x) => x.label === 'AVG EXIT vs TARGETS')!.adverseTicks).toBe(20)
+    expect(r.violations).toContain('WIDENED_STOP')
+    expect(r.quadrant).toBe('LUCKY')
+  })
+
+  test('nothing recorded is null, never zero', () => {
+    const e = entry({ status: 'PLANNED' })
+    const r = postTradeReview(e, [e])
+    for (const row of r.rows) expect(row.actual).toBeNull()
+    for (const row of r.rows) expect(row.adverseTicks).toBeNull()
+    expect(r.realizedR).toBeNull()
+    expect(r.actualFees).toBeNull()
+    expect(r.quadrant).toBeNull()
+    expect(r.nextAction).toBeNull()
+  })
+
+  test('missing fees: no realized R, no quadrant', () => {
+    const t = ticket(); const u = t.plan.units!
+    const e = closed(5000, [exit(4990, u)], null, { reviewed: true }, t)
+    const r = postTradeReview(e, [e])
+    expect(r.realizedR).toBeNull()
+    expect(r.outcome).toBeNull()
+    expect(r.quadrant).toBeNull()
+  })
+
+  test('quadrants need a reviewed, decided trade', () => {
+    expect(quadrantOf('CLEAN', 'WIN')).toBe('EARNED')
+    expect(quadrantOf('CLEAN', 'LOSS')).toBe('GOOD_LOSS')
+    expect(quadrantOf('VIOLATION', 'WIN')).toBe('LUCKY')
+    expect(quadrantOf('VIOLATION', 'LOSS')).toBe('DESERVED')
+    expect(quadrantOf('UNREVIEWED', 'WIN')).toBeNull()
+    expect(quadrantOf('CLEAN', 'BREAKEVEN')).toBeNull()
+    expect(quadrantOf(null, 'WIN')).toBeNull()
+    expect(quadrantOf('CLEAN', null)).toBeNull()
+  })
+
+  test('the one repeat/avoid action is carried, trimmed', () => {
+    const e = entry({ review: { worked: '', failed: '', nextAction: '  wait for the close  ', afterScreenshot: '' } })
+    expect(postTradeReview(e, [e]).nextAction).toBe('wait for the close')
+  })
+})
+
+describe('post-trade review on the page', () => {
+  test('a taken entry shows planned against actual and the next action', () => {
+    const t = ticket(); const u = t.plan.units!
+    const e = closed(5000.5, [exit(5029, u)], 10, { reviewed: true, review: { worked: '', failed: '', nextAction: 'size from the stop', afterScreenshot: '' } }, t)
+    window.localStorage.setItem(STORAGE_KEY, serializeJournal([e], []))
+    render(<JournalPage />)
+    expect(screen.getByTestId('post-trade-review')).toBeDefined()
+    expect(screen.getByTestId('review-verdict').textContent).toMatch(/PROCESS CLEAN · OUTCOME WIN · clean process, winning outcome/)
+    expect(screen.getByTestId('review-next').textContent).toBe('NEXT TIME: size from the stop')
   })
 })
