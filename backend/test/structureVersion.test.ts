@@ -165,7 +165,7 @@ test('nothing in the engine reads the clock, randomness, the environment or a ti
   }
 });
 
-test('nothing outside the engine calls it yet: no route, no connector, no recorder', () => {
+test('nothing outside the engine calls it but the setup engine: no route, no connector, no recorder', () => {
   const walk = (dir: string, out: string[] = []): string[] => {
     for (const e of readdirSync(dir)) {
       const full = join(dir, e);
@@ -176,10 +176,13 @@ test('nothing outside the engine calls it yet: no route, no connector, no record
   };
   const callers = walk(SRC)
     .filter((f) => !f.startsWith(STRUCTURE + '/'))
+    // The setup engine (src/setups/) is the one deliberate consumer, added with
+    // its own purity test; it has no bar source either, so it serves nothing.
+    .filter((f) => !f.startsWith(join(SRC, 'setups') + '/'))
     .filter((f) => specifiers(stripComments(readFileSync(f, 'utf8')))
       .some((s) => s.startsWith('.') && resolve(dirname(f), s).startsWith(STRUCTURE)))
     .map((f) => relative(SRC, f));
   assert.deepEqual(callers, [],
-    'the structure engine has no bar source, so nothing may serve it yet. When Phase A adds one, ' +
+    'the structure engine has no live bar source; only src/setups/ may call it. When Phase A adds one, ' +
     'wire it deliberately and change this test in the same commit.');
 });

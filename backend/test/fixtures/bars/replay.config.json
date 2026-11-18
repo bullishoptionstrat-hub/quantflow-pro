@@ -1,0 +1,5 @@
+{
+  "symbols": ["SPY", "QQQ"],
+  "timestampMarks": "OPEN",
+  "costs": { "roundTripPerUnit": 0.02 }
+}
