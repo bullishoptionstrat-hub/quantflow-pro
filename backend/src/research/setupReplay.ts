@@ -14,6 +14,7 @@ import { createHash } from 'node:crypto';
 import { importBarsCsv, BarDataset, TimestampMarks } from '../market/barImport';
 import { evaluateSetups, EMPTY_LEDGER, AttemptLedger, SetupIdea, TERMINAL_STATES } from '../setups';
 import { SETUP_METHOD_VERSION, DEFAULT_SETUP_PARAMS } from '../setups/params';
+import { gradeIdea, summariseOutcomes, IdeaOutcome } from './setupOutcome';
 import type { SetupParams } from '../setups/params';
 
 export interface ReplayConfig {
@@ -92,6 +93,7 @@ export function runSetupReplay(input: ReplayInput): ReplayResult {
   const byTerminal: Record<string, number> = {};
   const byBlocked: Record<string, number> = {};
   let structureMethodVersion: string | null = null;
+  const graded: (IdeaOutcome & { symbol: string })[] = [];
   for (const [s, p] of [[cfg.symbols[0], cfg.symbols[1]], [cfg.symbols[1], cfg.symbols[0]]] as const) {
     const r = evaluateSetups(datasets[s]!.bars, {
       pair: datasets[p]!.bars, costs: cfg.costs, ledger, ...(cfg.params !== undefined ? { params: cfg.params } : {}),
@@ -102,6 +104,7 @@ export function runSetupReplay(input: ReplayInput): ReplayResult {
     for (const i of r.ideas) {
       const t = terminalOf(i);
       byTerminal[t] = (byTerminal[t] ?? 0) + 1;
+      graded.push({ symbol: s, ...gradeIdea(i, datasets[s]!.bars) });
       if (t === 'BLOCKED') for (const reason of i.history[i.history.length - 1]!.reasons) byBlocked[reason.code] = (byBlocked[reason.code] ?? 0) + 1;
     }
     runs.push({ symbol: r.symbol, pairSymbol: r.pairSymbol, asOf: r.asOf, setupMethodVersion: r.methodVersion, ideas: r.ideas });
@@ -111,13 +114,14 @@ export function runSetupReplay(input: ReplayInput): ReplayResult {
     status: 'OK',
     report: {
       kind: 'SETUP_REPLAY',
-      scope: 'Signal events only. No outcome, P&L, hit rate or win rate is computed or implied; the definitions are untuned, versioned hypotheses.',
+      scope: 'Signal events, and for each ACTIONABLE idea which of its target or invalidation the later imported bars touched first, in net R. A bar touching both is AMBIGUOUS, bars ending first is OPEN, and no hit rate or mean R is published below the sample floor. Not P&L: fills, slippage past the stop and position size are not modelled; the definitions are untuned, versioned hypotheses.',
       configHash: sha(stableStringify(input.config)),
       setupMethodVersion: SETUP_METHOD_VERSION,
       structureMethodVersion,
       paramsInForce: { ...DEFAULT_SETUP_PARAMS, ...(cfg.params ?? {}) },
       datasets: cfg.symbols.map((s) => datasetSummary(datasets[s]!)),
       counts: { ideas: Object.values(byTerminal).reduce((a, b) => a + b, 0), byTerminalState: byTerminal, blockedByReason: byBlocked },
+      outcomes: { rule: 'research/setupOutcome', ideas: graded, summary: summariseOutcomes(graded) },
       runs,
       ledger,
     },
