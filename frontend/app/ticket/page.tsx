@@ -1,4 +1,5 @@
 'use client'
+import { ticketSummary } from '@/lib/ticketSummary'
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { CONTRACT_SPECS, SPEC_SOURCE, specFor } from '@/lib/contractSpecs'
 import { etClock, useMarketSession } from '@/lib/marketSession'
@@ -184,7 +185,9 @@ export default function TicketPage() {
     setTargets((ts) => ts.map((t, j) => (j === i ? { ...t, ...patch } : t)))
 
   const specStatus = preset ? SPEC_SOURCE.status : symbol === 'CUSTOM' ? 'CUSTOM' : 'NONE'
-  const record = JSON.stringify(ticketRecord(input, result, new Date().toISOString(), specStatus, origin), null, 2)
+  const recordObj = ticketRecord(input, result, new Date().toISOString(), specStatus, origin)
+  const record = JSON.stringify(recordObj, null, 2)
+  const summary = ticketSummary(recordObj)
   const saveToJournal = () => {
     const spec = input.spec
     if (!spec) { setSaveMsg('Choose an instrument first.'); return }
@@ -467,6 +470,11 @@ export default function TicketPage() {
         )}
         <textarea data-testid="ticket-json" readOnly value={record} rows={10}
           style={{ ...INPUT, fontSize: 11, color: 'var(--text-secondary)', resize: 'vertical' }} />
+      </Panel>
+
+      <Panel title="Pre-entry snapshot" code="BROWSER CALC">
+        <pre data-testid="ticket-summary" aria-label="Ticket summary, plain text"
+          style={{ margin: 0, fontSize: 11, whiteSpace: 'pre-wrap', color: 'var(--text-secondary)' }}>{summary}</pre>
       </Panel>
 
       <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6 }}>
