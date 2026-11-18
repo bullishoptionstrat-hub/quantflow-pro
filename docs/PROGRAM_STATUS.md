@@ -27,6 +27,7 @@ Exactly these labels are used:
 | Outcome grading of setups / ledger (Phase D) | NOT STARTED | Needs a bar source first. |
 | `/setups` page and `POST /api/setups/replay` | IMPLEMENTED, NOT RUNTIME-VERIFIED | `setupsRoute.test.ts` (route output equals the CLI's for the fixture, body cap, named refusals, no store writes, `requireAuth` only) and `frontend/test/setupReplay.test.tsx`. Not opened in a browser against a running backend; no real bars. |
 | Replay idea → ticket link (`frontend/lib/replayIdea.ts`) | IMPLEMENTED, NOT RUNTIME-VERIFIED | `frontend/test/replayIdea.test.tsx`, including a tighten-only invariant over 400 generated tickets. The recorded fixture has no ACTIONABLE idea, so the link has only been exercised on a constructed one. |
+| Bar-import preflight (`backend/src/market/barPreflight.ts`, `POST /api/setups/preflight`, PREFLIGHT panel on `/setups`) | IMPLEMENTED, NOT RUNTIME-VERIFIED | `backend/test/barPreflight.test.ts` (recorded fixture held to the route) and `frontend/test/barPreflight.test.tsx`. Synthetic and hand-built CSVs only. |
 | Journal sync to Supabase | NOT STARTED | |
 | TradingView webhook to ticket prefill | NOT STARTED | |
 | Real options-event source for the flow engine | REQUIRES USER DECISION | `docs/PROVIDER_DECISION_RECORD.md`: cost and OPRA non-display licensing. |
@@ -127,3 +128,23 @@ An ACTIONABLE replay idea with a finite entry, invalidation and target on the ri
 | Page drops the setup ID | killed (1) |
 | Direction overwrites a chosen one | killed (1) |
 | Non-hash ID accepted | killed (1) |
+
+## Bar-import preflight (2026-11-18)
+
+`market/barPreflight.ts` runs `importBarsCsv`, the replay's own parser, and summarises its output per file: rejected rows grouped by reason (`CELL_COUNT`, `TIMESTAMP`, `NOT_DECIMAL`, `OFF_MINUTE`, `BAR_SHAPE`, `DUPLICATE`, `OUT_OF_ORDER`, `OTHER`; a row counted once per kind), gap count and minutes, gap minutes inside the calendar's published regular session, and each ET date against that session (bars, RTH bars over RTH minutes, coverage, bars outside RTH). A half day is measured against its 13:00 close. A date past the calendar's coverage is `UNKNOWN` and nothing is computed for it; weekend and holiday bars are named, not dropped. `POST /api/setups/preflight` takes the replay's body and reads only the timestamp convention (no default) and the files. The `/setups` PREFLIGHT button needs the symbols, both files and the convention, not the cost. Nothing is filled, repaired or stored. The replay is not gated on a preflight.
+
+| Mutation (one at a time) | Result |
+|---|---|
+| A row counted once per reason, not per kind | killed (1) |
+| The close minute counted inside RTH | killed (1) |
+| An UNKNOWN date assumed in gap minutes | killed (2) |
+| An UNKNOWN day measured | killed (1) |
+| Assumed 09:30-16:00 for every session | killed (1) |
+| Date walk skips days | killed (2) |
+| Thin-day threshold loosened to 90% | killed (1) |
+| Off-minute folded into TIMESTAMP | killed (2) |
+| Route defaults the convention | killed (1) |
+| Weekend bars not warned | killed (2) |
+| Panel renders a null RTH gap as 0 | killed (1) |
+| Panel does not require the convention | killed (1) |
+| Panel renders any OK body as a preflight | killed (1) |
