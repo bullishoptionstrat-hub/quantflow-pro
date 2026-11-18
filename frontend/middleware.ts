@@ -90,6 +90,7 @@ export const config = {
     '/prep/:path*',
     '/risk/:path*',
     '/settings/:path*',
+    '/setups/:path*',
     '/ticket/:path*',
     '/watchlist/:path*',
     '/login/:path*',

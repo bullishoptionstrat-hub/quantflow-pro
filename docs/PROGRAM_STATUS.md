@@ -25,11 +25,12 @@ Exactly these labels are used:
 | Live bars (Phase A) | BLOCKED BY ENVIRONMENT | The network policy refuses the vendor host, and there is no key. |
 | Setup engine fed by live data | BLOCKED BY DATA | Depends on Phase A or a user import. |
 | Outcome grading of setups / ledger (Phase D) | NOT STARTED | Needs a bar source first. |
-| `/setups` page and import route | NOT STARTED | Next after this milestone. |
+| `/setups` page and `POST /api/setups/replay` | IMPLEMENTED, NOT RUNTIME-VERIFIED | `setupsRoute.test.ts` (route output equals the CLI's for the fixture, body cap, named refusals, no store writes, `requireAuth` only) and `frontend/test/setupReplay.test.tsx`. Not opened in a browser against a running backend; no real bars. |
 | Journal sync to Supabase | NOT STARTED | |
 | TradingView webhook to ticket prefill | NOT STARTED | |
 | Real options-event source for the flow engine | REQUIRES USER DECISION | `docs/PROVIDER_DECISION_RECORD.md`: cost and OPRA non-display licensing. |
-| Merge of this milestone's PR | REQUIRES USER DECISION | Opened as a draft; not merged. |
+| Setup engine PR #139 | MERGED | Merge commit `df1c711`. |
+| Merge of the setups-page PR | REQUIRES USER DECISION | Opened as a draft; not merged. |
 
 ## Free-data feasibility
 
@@ -75,3 +76,18 @@ The rules pin (`the rules are pinned to SETUP_RULES_VERSION`) fails on every edi
 - Next, in order: a read-only `/setups` page and import route over the same engine; journal sync to Supabase; TradingView webhook to ticket prefill; then Phase D once any bar source exists.
 - The setup definitions (`backend/src/setups/sweepReclaim.ts` header) are proposed interpretations, versioned by `SETUP_METHOD_VERSION`. Changing a rule means bumping `SETUP_RULES_VERSION`.
 - Before trusting a replay on real data, import a real CSV and check its gap list and rejected rows in the report.
+
+## Mutation pass (setups page and route)
+
+Each mutation was applied once, run against `backend/test/setupsRoute.test.ts` or `frontend/test/setupReplay.test.tsx` only, then restored.
+
+| Mutation | Result |
+|---|---|
+| Body cap raised fourfold | killed: "a body over the cap is refused with 413" |
+| Route fills a missing cost with 0 | killed: "missing costs are refused by name" |
+| Route mounted on `requireAuthOrDemo` | killed: "mounted on requireAuth ... never the demo tier" |
+| Unknown body fields accepted | killed: "a missing CSV, a non-string CSV and an unknown field are each named" |
+| Page defaults the timestamp convention to OPEN | killed: "empty: every required field is named" |
+| Page drops the empty-cost check | killed: all four page tests (the required-list text the tests match changes) |
+| Refusal reasons not rendered | killed: "error: a refusal is listed reason by reason" |
+| Route imports the store | killed: "the route and the replay write nothing" |

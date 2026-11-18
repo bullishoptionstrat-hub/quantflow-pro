@@ -48,6 +48,7 @@ import trackRecordRouter from './routes/trackRecord';
 import backtestRouter from './routes/backtest';
 import macroRouter from './routes/macro';
 import sentimentRouter from './routes/sentiment';
+import setupsRouter from './routes/setups';
 import { rateLimiter } from './middleware/rateLimiter';
 import { makeShutdown, drainWrites } from './lifecycle';
 import {
@@ -80,6 +81,11 @@ app.use(helmet({ contentSecurityPolicy: false }));
 // talking to the backend directly, i.e. local development. (`CORS_ORIGINS` is
 // declared above, with the Socket.IO server that shares it.)
 app.use(cors({ origin: CORS_ORIGINS, credentials: true }));
+// Setup replay parses user-uploaded bars and runs the structure and setup
+// engines per call, so it is never on the demo tier. It is mounted ahead of the
+// global parser so an unauthenticated body is never parsed, with its own body
+// cap (inside the router) and its own rate bucket.
+app.use('/api/setups', rateLimiter(10, 60_000, 'setups'), requireAuth, setupsRouter);
 app.use(express.json({ limit: '1mb' }));
 app.use(rateLimiter(200, 60_000));
 
