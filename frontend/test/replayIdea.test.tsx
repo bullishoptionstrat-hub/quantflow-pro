@@ -40,7 +40,7 @@ const METHOD = 'setup-rules/1:e7e97035152cb647'
 function idea(o: Partial<ReplayIdeaLike> = {}): ReplayIdeaLike {
   return {
     ideaId: HASH, setup: 'SWEEP_AND_RECLAIM', side: 'LONG', symbol: 'SPY',
-    entry: 590, invalidation: 589, target: 593,
+    entry: 590, invalidation: 589, target: { name: 'RANGE_HIGH', price: 593 },
     history: [{ state: 'CONTEXT_READY', knownAt: 1 }, { state: 'ACTIONABLE', knownAt: 1767624000000 }],
     ...o,
   }
@@ -139,7 +139,7 @@ function genTicket(r: () => number): TicketInput {
 
 describe('tighten-only, over generated tickets', () => {
   const r = rng(20261118)
-  const cases = Array.from({ length: 400 }, () => ({ input: genTicket(r), p: prefill(r() < 0.5 ? {} : { side: 'SHORT', entry: 590, invalidation: 591, target: 587 }) }))
+  const cases = Array.from({ length: 400 }, () => ({ input: genTicket(r), p: prefill(r() < 0.5 ? {} : { side: 'SHORT', entry: 590, invalidation: 591, target: { name: 'RANGE_LOW', price: 587 } }) }))
 
   test('the prefill touches only the fields a trader could type, and only where empty', () => {
     for (const { input, p } of cases) {
@@ -248,7 +248,7 @@ describe('the replay page links ACTIONABLE ideas only', () => {
   test('the recorded fixture has no ACTIONABLE idea, so no link; one constructed ACTIONABLE idea gets one', async () => {
     const report = structuredClone(replay)
     const run = report.report.runs[0]
-    const base = idea({ side: 'SHORT', entry: 590, invalidation: 591, target: 587 })
+    const base = idea({ side: 'SHORT', entry: 590, invalidation: 591, target: { name: 'RANGE_LOW', price: 587 } })
     const constructed = { ...run.ideas[0], ...base, history: base.history.map((t) => ({ ...t, bar: 'SPY:1m:0', events: [], reasons: [] })) }
     run.ideas = [...run.ideas, constructed]
     vi.doMock('@/lib/apiFetch', () => ({ apiFetch: vi.fn(async () => ({ ok: true, status: 200, json: async () => report })) }))

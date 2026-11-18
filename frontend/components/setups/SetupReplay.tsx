@@ -18,7 +18,7 @@ import { BarPreflight } from '@/components/setups/BarPreflight'
 const MONO = "'JetBrains Mono', monospace"
 
 interface Transition { state: string; knownAt: number; bar: string; reasons: { code: string; detail: string }[] }
-interface Idea { ideaId: string; setup: string; side: string; symbol: string; netR: number | null; entry?: number | null; invalidation?: number | null; target?: number | null; history: Transition[] }
+interface Idea { ideaId: string; setup: string; side: string; symbol: string; netR: number | null; entry?: number | null; invalidation?: number | null; target?: { name: string; price: number } | null; history: Transition[] }
 interface Dataset { symbol: string; contentId: string; provenance: string; timestampMarks: string; rejected: unknown[]; gaps: unknown[] }
 export interface ReplayReport {
   scope: string
