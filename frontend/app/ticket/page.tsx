@@ -1,5 +1,5 @@
 'use client'
-import { useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { CONTRACT_SPECS, SPEC_SOURCE, specFor } from '@/lib/contractSpecs'
 import { etClock, useMarketSession } from '@/lib/marketSession'
 import { createEntry, etDate, priorAttempts, stopOutsOn } from '@/lib/journal'
@@ -7,6 +7,7 @@ import { useJournal } from '@/lib/journalStore'
 import { planContextFor, planDateFrom } from '@/lib/dailyPlan'
 import { usePlans } from '@/lib/dailyPlanStore'
 import { Panel } from '@/components/hud/Panel'
+import { parseIdeaLink, prefillNote, type IdeaPrefill } from '@/lib/replayIdea'
 import { PlanContextPanel } from '@/components/ticket/PlanContextPanel'
 import { TICKET_STATE_STYLE } from '@/components/ticket/stateStyle'
 import { GexContextPanel } from '@/components/ticket/GexContextPanel'
@@ -15,7 +16,7 @@ import {
   MODELS, NARRATIVE_FIELDS, SESSION_PROFILES, STRICT_MIN_R,
   evaluateTicket, ticketRecord, visibleGates,
   type AnsweredGateId, type Answer, type DecisionState, type ModelId, type Narrative,
-  type SessionProfileId, type TargetKind, type TicketInput,
+  type SessionProfileId, type TargetKind, type TicketInput, type TicketOrigin,
 } from '@/lib/tradeTicket'
 
 /**
@@ -95,6 +96,26 @@ export default function TicketPage() {
   const [copied, setCopied] = useState<'idle' | 'copied' | 'failed'>('idle')
 
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
+  const [idea, setIdea] = useState<IdeaPrefill | { error: string } | null>(null)
+
+  // A replay idea link fills only fields that are still empty, once, on load.
+  // It answers no gate; see lib/replayIdea.ts.
+  useEffect(() => {
+    let parsed: ReturnType<typeof parseIdeaLink> = null
+    try { parsed = parseIdeaLink(new URLSearchParams(window.location.search)) } catch { parsed = null }
+    setIdea(parsed)
+    if (!parsed || 'error' in parsed) return
+    const p = parsed
+    setSymbol((v) => (v === '' && p.symbol !== '' ? p.symbol : v))
+    setSide((v) => v ?? p.side)
+    setSetupId((v) => (v.trim() === '' ? p.ideaId : v))
+    setEntry((v) => (v.trim() === '' ? String(p.entry) : v))
+    setStop((v) => (v.trim() === '' ? String(p.stop) : v))
+    setTargets((ts) => (ts.every((t) => t.price.trim() === '') ? [{ price: String(p.target), share: '100', kind: '' }] : ts))
+  }, [])
+  const origin: TicketOrigin | null = idea && !('error' in idea) && setupId.trim() === idea.ideaId
+    ? { kind: 'REPLAY_IDEA', ideaId: idea.ideaId, setup: idea.setup, setupMethodVersion: idea.setupMethodVersion, actionableAt: idea.actionableAt }
+    : null
 
   const { panel } = useMarketSession()
   const clock = panel.status === 'ok' ? panel.data : null
@@ -163,12 +184,12 @@ export default function TicketPage() {
     setTargets((ts) => ts.map((t, j) => (j === i ? { ...t, ...patch } : t)))
 
   const specStatus = preset ? SPEC_SOURCE.status : symbol === 'CUSTOM' ? 'CUSTOM' : 'NONE'
-  const record = JSON.stringify(ticketRecord(input, result, new Date().toISOString(), specStatus), null, 2)
+  const record = JSON.stringify(ticketRecord(input, result, new Date().toISOString(), specStatus, origin), null, 2)
   const saveToJournal = () => {
     const spec = input.spec
     if (!spec) { setSaveMsg('Choose an instrument first.'); return }
     const now = new Date().toISOString()
-    const made = createEntry(ticketRecord(input, result, now, specStatus), { tickSize: spec.tickSize, tickValue: spec.tickValue, unit: spec.unit }, now)
+    const made = createEntry(ticketRecord(input, result, now, specStatus, origin), { tickSize: spec.tickSize, tickValue: spec.tickValue, unit: spec.unit }, now)
     if ('error' in made) { setSaveMsg(made.error); return }
     const err = journal.update((es) => [...es, made.entry])
     setSaveMsg(err ?? `Saved to the journal as ${made.entry.ticket.setupId}, ${result.state}.`)
@@ -193,6 +214,11 @@ export default function TicketPage() {
         </p>
       </div>
 
+      {idea && (
+        <p data-testid="idea-prefill" style={{ fontSize: 12, color: 'error' in idea ? 'var(--warn)' : 'var(--text-muted)', marginBottom: 12 }}>
+          {'error' in idea ? idea.error : prefillNote(idea)}
+        </p>
+      )}
       <Panel title="Verdict" code="BROWSER CALC" aria-live="polite">
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
           <span data-testid="ticket-state" style={{ color: style.color, background: style.bg, fontWeight: 800, fontSize: 13, padding: '4px 12px', borderRadius: 4, fontFamily: MONO }}>

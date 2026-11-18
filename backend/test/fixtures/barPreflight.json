@@ -1,0 +1,146 @@
+{
+  "status": "OK",
+  "kind": "BAR_PREFLIGHT",
+  "scope": "What each file holds, read by the replay's own bar parser. Nothing is filled, repaired or stored.",
+  "symbols": [
+    {
+      "symbol": "SPY",
+      "status": "OK",
+      "refused": [],
+      "lines": 1171,
+      "keptBars": 1170,
+      "coverage": {
+        "firstTOpen": 1767623400000,
+        "lastClosedAt": 1767819600000
+      },
+      "rejectedRows": 0,
+      "rejectedByCode": [],
+      "duplicates": 0,
+      "outOfOrder": 0,
+      "gaps": {
+        "count": 2,
+        "missingMinutes": 2100,
+        "insideRthMinutes": 0,
+        "largest": {
+          "afterTOpen": 1767646740000,
+          "beforeTOpen": 1767709800000,
+          "missingMinutes": 1050
+        }
+      },
+      "days": [
+        {
+          "date": "2026-01-05",
+          "session": "REGULAR",
+          "bars": 390,
+          "rthBars": 390,
+          "rthMinutes": 390,
+          "rthCoverage": 1,
+          "outsideRthBars": 0
+        },
+        {
+          "date": "2026-01-06",
+          "session": "REGULAR",
+          "bars": 390,
+          "rthBars": 390,
+          "rthMinutes": 390,
+          "rthCoverage": 1,
+          "outsideRthBars": 0
+        },
+        {
+          "date": "2026-01-07",
+          "session": "REGULAR",
+          "bars": 390,
+          "rthBars": 390,
+          "rthMinutes": 390,
+          "rthCoverage": 1,
+          "outsideRthBars": 0
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "FLAWED",
+      "status": "OK",
+      "refused": [],
+      "lines": 111,
+      "keptBars": 106,
+      "coverage": {
+        "firstTOpen": 1767623400000,
+        "lastClosedAt": 1768057260000
+      },
+      "rejectedRows": 4,
+      "rejectedByCode": [
+        {
+          "code": "TIMESTAMP",
+          "rows": 1,
+          "firstLines": [
+            109
+          ],
+          "example": "timestamp \"2026-01-05 16:40\" is neither epoch ms nor ISO-8601 with a zone"
+        },
+        {
+          "code": "BAR_SHAPE",
+          "rows": 1,
+          "firstLines": [
+            110
+          ],
+          "example": "h 9 is below max(o, c) 10.5"
+        },
+        {
+          "code": "DUPLICATE",
+          "rows": 1,
+          "firstLines": [
+            13
+          ],
+          "example": "duplicates the minute 2026-01-05T14:40:00.000Z"
+        },
+        {
+          "code": "OUT_OF_ORDER",
+          "rows": 1,
+          "firstLines": [
+            108
+          ],
+          "example": "is out of order: 2026-01-05T14:20:00.000Z is before 2026-01-05T16:29:00.000Z"
+        }
+      ],
+      "duplicates": 1,
+      "outOfOrder": 1,
+      "gaps": {
+        "count": 2,
+        "missingMinutes": 7125,
+        "insideRthMinutes": 1845,
+        "largest": {
+          "afterTOpen": 1767630540000,
+          "beforeTOpen": 1768057200000,
+          "missingMinutes": 7110
+        }
+      },
+      "days": [
+        {
+          "date": "2026-01-05",
+          "session": "REGULAR",
+          "bars": 105,
+          "rthBars": 105,
+          "rthMinutes": 390,
+          "rthCoverage": 0.2692307692307692,
+          "outsideRthBars": 0
+        },
+        {
+          "date": "2026-01-10",
+          "session": "WEEKEND",
+          "bars": 1,
+          "rthBars": 0,
+          "rthMinutes": null,
+          "rthCoverage": null,
+          "outsideRthBars": 1
+        }
+      ],
+      "warnings": [
+        "4 rows were rejected and will not be replayed.",
+        "Bars on 2026-01-10 (WEEKEND), when the calendar says the regular session was closed.",
+        "1845 minutes of the published regular session are missing.",
+        "Under 95% of the regular session on 2026-01-05."
+      ]
+    }
+  ]
+}
