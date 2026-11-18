@@ -14,6 +14,7 @@
     "research:setup-replay": "tsx tools/research/setupReplay.ts",
     "research:structure-replay": "tsx tools/research/structureReplay.ts",
     "research:prereg-check": "tsx tools/research/preregCheck.ts",
+    "research:grid": "tsx tools/research/sensitivityGrid.ts",
     "collection:doctor": "tsx tools/collection/doctor.ts",
     "security:exposure": "tsx tools/security/exposure.ts ..",
     "security:verify": "tsx tools/security/verifyRevoked.ts",

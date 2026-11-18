@@ -97,6 +97,9 @@ export function runStructureReplay(input: { config: unknown; csv: Record<string,
       counts: { events: r.events.length, byKind },
       notComputed,
       events: r.events,
+      // The primary symbol's closed bars, so a chart can draw what the engine read.
+      // Every bar here has closed; no forming bar is ever published.
+      bars: own.bars.map((b) => ({ tOpen: b.tOpen, closedAt: b.closedAt, o: b.o, h: b.h, l: b.l, c: b.c })),
     },
   };
 }
