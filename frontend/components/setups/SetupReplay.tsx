@@ -4,6 +4,7 @@ import { apiFetch } from '@/lib/apiFetch'
 import { Panel } from '@/components/hud/Panel'
 import { ideaLinkQuery, ideaPrefill } from '@/lib/replayIdea'
 import { BarPreflight } from '@/components/setups/BarPreflight'
+import { replayCsv } from '@/lib/replayCsv'
 
 /**
  * Replay the setup engine over bars the trader imports.
@@ -144,6 +145,17 @@ export function SetupReplay() {
   )
 }
 
+/** The report as CSV, with its method versions, config hash and datasets in the header. */
+function downloadCsv(report: ReplayReport) {
+  const blob = new Blob([replayCsv(report)], { type: 'text/csv' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `quantflow-setup-replay-${report.configHash.slice(0, 12)}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 function Report({ report }: { report: ReplayReport }) {
   return (
     <>
@@ -156,6 +168,7 @@ function Report({ report }: { report: ReplayReport }) {
             <div key={d.symbol}>{d.symbol} · {d.provenance} · {d.timestampMarks} · dataset {d.contentId} · {d.rejected.length} rows refused · {d.gaps.length} gaps</div>
           ))}
         </div>
+        <button onClick={() => downloadCsv(report)} style={{ marginTop: 8, fontFamily: MONO }}>DOWNLOAD CSV</button>
         <h4>Ideas by terminal state ({report.counts.ideas})</h4>
         <ul style={{ fontFamily: MONO, fontSize: 12 }}>
           {Object.entries(report.counts.byTerminalState).map(([k, v]) => <li key={k}>{k}: {v}</li>)}
