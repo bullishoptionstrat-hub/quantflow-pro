@@ -26,6 +26,11 @@ export interface ReplayReport {
   datasets: Dataset[]
   counts: { ideas: number; byTerminalState: Record<string, number>; blockedByReason: Record<string, number> }
   runs: { symbol: string; pairSymbol: string; ideas: Idea[] }[]
+  /** Absent from a backend older than outcome grading. */
+  outcomes?: {
+    summary: { byState: Record<string, number>; decided: number; minSample: number; hitRate: number | null; meanR: number | null; suppressed: string | null }
+    ideas: { ideaId: string; symbol: string; state: string; r: number | null; decidedAt: number | null; gapMinutes: number; detail: string }[]
+  }
 }
 
 type State =
@@ -156,6 +161,7 @@ function Report({ report }: { report: ReplayReport }) {
           ? <p style={{ fontSize: 12 }}>No idea was blocked.</p>
           : <ul style={{ fontFamily: MONO, fontSize: 12 }}>{Object.entries(report.counts.blockedByReason).map(([k, v]) => <li key={k}>{k}: {v}</li>)}</ul>}
       </Panel>
+      <Outcomes report={report} />
       {report.runs.map((r) => (
         <Panel key={r.symbol} title={`${r.symbol} · SMT ${r.pairSymbol}`} code="USER IMPORT">
           {r.ideas.length === 0 ? <p style={{ fontSize: 12 }}>No idea formed on these bars.</p> : r.ideas.map((i) => (
@@ -169,5 +175,36 @@ function Report({ report }: { report: ReplayReport }) {
         </Panel>
       ))}
     </>
+  )
+}
+
+/**
+ * Which level the later imported bars touched first, per ACTIONABLE idea.
+ * The rate and mean R are rendered only when the backend published them: below
+ * its sample floor it sends null with a reason, and the page shows the reason.
+ */
+function Outcomes({ report }: { report: ReplayReport }) {
+  const o = report.outcomes
+  if (!o) return <Panel title="OUTCOMES" code="BACKEND"><p style={{ fontSize: 12 }}>This backend does not grade outcomes.</p></Panel>
+  const s = o.summary
+  return (
+    <Panel title="OUTCOMES · TARGET OR INVALIDATION FIRST" code="USER IMPORT">
+      <ul style={{ fontFamily: MONO, fontSize: 12 }}>
+        {Object.entries(s.byState).map(([k, v]) => <li key={k}>outcome {k}: {v}</li>)}
+      </ul>
+      {s.hitRate === null || s.meanR === null
+        ? <p style={{ fontSize: 12 }} data-testid="outcome-suppressed">No rate shown: {s.suppressed ?? `fewer than ${s.minSample} decided ideas`}.</p>
+        : <p style={{ fontFamily: MONO, fontSize: 12 }} data-testid="outcome-rate">
+            target first {(s.hitRate * 100).toFixed(1)}% of {s.decided} decided · mean {s.meanR.toFixed(2)}R net of costs
+          </p>}
+      <p style={{ fontSize: 11 }}>Untuned definitions on imported bars. Not P&amp;L and not evidence of an edge.</p>
+      {o.ideas.length > 0 && (
+        <ol style={{ fontFamily: MONO, fontSize: 11 }}>
+          {o.ideas.map((x) => (
+            <li key={x.ideaId}>{x.symbol} {x.state}{x.r === null ? '' : ` ${x.r.toFixed(2)}R`}{x.gapMinutes > 0 ? ` · ${x.gapMinutes} min missing` : ''} — {x.detail}</li>
+          ))}
+        </ol>
+      )}
+    </Panel>
   )
 }

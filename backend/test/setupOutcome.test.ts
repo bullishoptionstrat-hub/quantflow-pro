@@ -114,10 +114,11 @@ test('on the fixture replay, every graded idea agrees with the engine\'s COMPLET
   const ideas = (rep.runs as any[]).flatMap((x) => x.ideas as SetupIdea[]);
   const byId = new Map((rep.outcomes.ideas as IdeaOutcome[]).map((x) => [x.ideaId, x]));
   for (const i of ideas) {
-    const g = byId.get(i.ideaId)!;
+    const g = byId.get(i.ideaId);
+    if (!i.history.some((h) => h.state === 'ACTIONABLE')) { assert.equal(g, undefined); continue; }
+    assert.ok(g);
     const done = i.history.find((h) => h.state === 'COMPLETED');
     if (done) assert.equal(g.decidedAt, done.knownAt, `${i.ideaId}: grader and engine disagree on the deciding bar`);
-    if (!i.history.some((h) => h.state === 'ACTIONABLE')) assert.equal(g.state, 'NOT_GRADED');
   }
 });
 

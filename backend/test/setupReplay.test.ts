@@ -36,14 +36,16 @@ test('the report carries hashes, versions and counts; no P&L, and no rate below 
   for (const d of rep.datasets) { assert.match(d.contentId, /^[0-9a-f]{64}$/); assert.equal(d.provenance, 'USER_IMPORT'); }
   assert.equal(typeof rep.setupMethodVersion, 'string');
   assert.equal(typeof rep.structureMethodVersion, 'string');
-  assert.match(rep.scope, /Not P&L/);
+  assert.match(rep.scope, /not P&L/);
   const total = Object.values(rep.counts.byTerminalState as Record<string, number>).reduce((a, b) => a + b, 0);
   assert.equal(total, rep.counts.ideas);
   const text = JSON.stringify(rep);
   for (const banned of ['"pnl"', '"winRate"', '"profit"']) assert.ok(!text.includes(banned), banned);
   const sum = rep.outcomes.summary;
   if (sum.decided < 30) { assert.equal(sum.hitRate, null); assert.equal(sum.meanR, null); assert.match(sum.suppressed, /INSUFFICIENT_SAMPLE/); }
-  assert.equal(rep.outcomes.ideas.length, rep.counts.ideas);
+  const states = Object.values(sum.byState as Record<string, number>).reduce((a, b) => a + b, 0);
+  assert.equal(states, rep.counts.ideas, 'every idea is counted in exactly one outcome state');
+  assert.ok(rep.outcomes.ideas.every((x: any) => x.state !== 'NOT_GRADED'));
 });
 
 test('a missing cost, a missing timestamp convention or a missing file is refused, never defaulted', () => {
