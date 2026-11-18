@@ -1,0 +1,14 @@
+{
+  "version": "prereg/1",
+  "id": "PR-000",
+  "status": "DRAFT",
+  "frozenAt": null,
+  "question": "",
+  "grid": {},
+  "primaryMetric": null,
+  "selectionRule": null,
+  "minDecided": null,
+  "datasets": [],
+  "holdout": [],
+  "dataExaminedBeforeFreeze": null
+}
