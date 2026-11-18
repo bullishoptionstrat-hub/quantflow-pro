@@ -128,3 +128,24 @@ Two picked, both no spend and no decision:
 
 Not picked: the delayed chain view (Cboe CDN refused here), journal sync
 (production migration), anything needing paid data.
+
+## Choice after #145 (2026-11-18)
+
+Two picked, both no spend and no decision, both frontend-only over data the
+page already has:
+
+1. **Per-idea drill-down on `/setups`.** Each idea's transitions render as a
+   timeline: minutes since the first transition, `knownAt`, state, the cited
+   bar and its close, cited events and blockers. `lib/ideaTimeline.ts` checks
+   the engine's own fields against each other and flags, never repairs: a
+   transition knowable before its cited bar closed (`BEFORE_BAR_CLOSE`), rows
+   out of `knownAt` order, unreadable bar ids or clocks. Every recorded
+   engine idea in `setupReplayEpisodes.json` passes with no flag.
+2. **Journal breakdown by model / instrument / session profile / process /
+   tag.** Counts and summed R per bucket; a rate only where that bucket alone
+   reaches n=30. Tag buckets overlap and the page says so.
+
+Not picked: the candlestick structure chart (larger, and the structure page
+already lists events), the grid runner (worth doing, but it is a research
+tool that runs the engines and deserves its own review), the delayed chain
+view (Cboe CDN refused here).
