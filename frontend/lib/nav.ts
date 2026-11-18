@@ -33,6 +33,7 @@ export const NAV: readonly NavItem[] = [
   { href: '/power-alerts', icon: '🔥', label: 'Power Alerts',     badge: null,  group: 'flow',      short: 'Alerts' },
   { href: '/heat-map',     icon: '🗺', label: 'Heat Map',         badge: null,  group: 'flow' },
   { href: '/gex',          icon: 'Γ',  label: 'GEX Levels',       badge: null,  group: 'analytics', short: 'GEX' },
+  { href: '/structure',    icon: '⌗',  label: 'Structure Map',    badge: 'NEW', group: 'analytics' },
   { href: '/setups',       icon: '⟲',  label: 'Setup Replay',     badge: 'NEW', group: 'analytics' },
   { href: '/backtest',     icon: '⏮', label: 'Scanner Backtest', badge: 'NEW', group: 'analytics' },
   { href: '/macro',        icon: '📊', label: 'Macro',            badge: 'NEW', group: 'analytics' },

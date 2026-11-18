@@ -12,6 +12,7 @@
     "preview:capture": "tsx tools/preview/capture.ts",
     "preview": "tsx tools/preview/serve.ts",
     "research:setup-replay": "tsx tools/research/setupReplay.ts",
+    "research:structure-replay": "tsx tools/research/structureReplay.ts",
     "collection:doctor": "tsx tools/collection/doctor.ts",
     "security:exposure": "tsx tools/security/exposure.ts ..",
     "security:verify": "tsx tools/security/verifyRevoked.ts",

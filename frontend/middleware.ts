@@ -91,6 +91,7 @@ export const config = {
     '/risk/:path*',
     '/settings/:path*',
     '/setups/:path*',
+    '/structure/:path*',
     '/ticket/:path*',
     '/watchlist/:path*',
     '/login/:path*',

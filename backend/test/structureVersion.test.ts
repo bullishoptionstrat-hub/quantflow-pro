@@ -165,7 +165,7 @@ test('nothing in the engine reads the clock, randomness, the environment or a ti
   }
 });
 
-test('nothing outside the engine calls it but the setup engine: no route, no connector, no recorder', () => {
+test('nothing outside the engine calls it but the setup engine and the import-only structure replay: no connector, no recorder', () => {
   const walk = (dir: string, out: string[] = []): string[] => {
     for (const e of readdirSync(dir)) {
       const full = join(dir, e);
@@ -179,6 +179,9 @@ test('nothing outside the engine calls it but the setup engine: no route, no con
     // The setup engine (src/setups/) is the one deliberate consumer, added with
     // its own purity test; it has no bar source either, so it serves nothing.
     .filter((f) => !f.startsWith(join(SRC, 'setups') + '/'))
+    // The read-only structure replay over user-imported bars (/structure). It
+    // has no live source either: it analyses a file the caller uploads.
+    .filter((f) => f !== join(SRC, 'research', 'structureReplay.ts'))
     .filter((f) => specifiers(stripComments(readFileSync(f, 'utf8')))
       .some((s) => s.startsWith('.') && resolve(dirname(f), s).startsWith(STRUCTURE)))
     .map((f) => relative(SRC, f));
