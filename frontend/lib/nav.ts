@@ -19,32 +19,34 @@ export interface NavItem {
   group: NavGroup
   /** The mobile bar's label. Only pages that have one appear there. */
   short?: string
+  /** `g` then this key jumps here (`components/hud/Hotkeys.tsx`). Unique across NAV. */
+  key: string
 }
 
 export const NAV: readonly NavItem[] = [
   // The God's Plan day starts here: the overview, then the pre-session map.
-  { href: '/desk',         icon: '◫',  label: 'Desk',             badge: 'NEW', group: 'desk',      short: 'Desk' },
-  { href: '/prep',         icon: '📋', label: 'Daily Plan',       badge: 'NEW', group: 'desk' },
+  { href: '/desk',         icon: '◫',  label: 'Desk',             badge: 'NEW', group: 'desk',      short: 'Desk', key: 'd' },
+  { href: '/prep',         icon: '📋', label: 'Daily Plan',       badge: 'NEW', group: 'desk', key: 'p' },
   // "Options Flow", not "Live Flow": the tape is whatever the backend sends,
   // and on a keyless deployment that is simulated. Each row says whether it
   // was observed or constructed; the menu entry should not say it for them.
-  { href: '/flow',         icon: '⚡', label: 'Options Flow',     badge: null,  group: 'flow',      short: 'Flow' },
-  { href: '/dark-pool',    icon: '🌑', label: 'Dark Pool',        badge: null,  group: 'flow' },
-  { href: '/power-alerts', icon: '🔥', label: 'Power Alerts',     badge: null,  group: 'flow',      short: 'Alerts' },
-  { href: '/heat-map',     icon: '🗺', label: 'Heat Map',         badge: null,  group: 'flow' },
-  { href: '/gex',          icon: 'Γ',  label: 'GEX Levels',       badge: null,  group: 'analytics', short: 'GEX' },
-  { href: '/structure',    icon: '⌗',  label: 'Structure Map',    badge: 'NEW', group: 'analytics' },
-  { href: '/setups',       icon: '⟲',  label: 'Setup Replay',     badge: 'NEW', group: 'analytics' },
-  { href: '/backtest',     icon: '⏮', label: 'Scanner Backtest', badge: 'NEW', group: 'analytics' },
-  { href: '/macro',        icon: '📊', label: 'Macro',            badge: 'NEW', group: 'analytics' },
-  { href: '/news',         icon: '📰', label: 'News & Sentiment', badge: 'NEW', group: 'analytics' },
-  { href: '/ticket',       icon: '🧾', label: 'Trade Ticket',     badge: 'NEW', group: 'tools',     short: 'Ticket' },
-  { href: '/journal',      icon: '📓', label: 'Trade Journal',    badge: 'NEW', group: 'tools' },
-  { href: '/risk',         icon: '🎯', label: 'Risk & Size',      badge: 'NEW', group: 'tools',     short: 'Risk' },
-  { href: '/calculator',   icon: '🧮', label: 'P/L Calculator',   badge: null,  group: 'tools',     short: 'Calc' },
-  { href: '/optimizer',    icon: '⚙', label: 'Optimizer',        badge: null,  group: 'tools' },
-  { href: '/watchlist',    icon: '★',  label: 'Watchlist',        badge: null,  group: 'tools',     short: 'Watch' },
-  { href: '/settings',     icon: '⚙', label: 'Settings',         badge: null,  group: 'tools' },
+  { href: '/flow',         icon: '⚡', label: 'Options Flow',     badge: null,  group: 'flow',      short: 'Flow', key: 'f' },
+  { href: '/dark-pool',    icon: '🌑', label: 'Dark Pool',        badge: null,  group: 'flow', key: 'o' },
+  { href: '/power-alerts', icon: '🔥', label: 'Power Alerts',     badge: null,  group: 'flow',      short: 'Alerts', key: 'a' },
+  { href: '/heat-map',     icon: '🗺', label: 'Heat Map',         badge: null,  group: 'flow', key: 'h' },
+  { href: '/gex',          icon: 'Γ',  label: 'GEX Levels',       badge: null,  group: 'analytics', short: 'GEX', key: 'x' },
+  { href: '/structure',    icon: '⌗',  label: 'Structure Map',    badge: 'NEW', group: 'analytics', key: 'm' },
+  { href: '/setups',       icon: '⟲',  label: 'Setup Replay',     badge: 'NEW', group: 'analytics', key: 's' },
+  { href: '/backtest',     icon: '⏮', label: 'Scanner Backtest', badge: 'NEW', group: 'analytics', key: 'b' },
+  { href: '/macro',        icon: '📊', label: 'Macro',            badge: 'NEW', group: 'analytics', key: 'e' },
+  { href: '/news',         icon: '📰', label: 'News & Sentiment', badge: 'NEW', group: 'analytics', key: 'n' },
+  { href: '/ticket',       icon: '🧾', label: 'Trade Ticket',     badge: 'NEW', group: 'tools',     short: 'Ticket', key: 't' },
+  { href: '/journal',      icon: '📓', label: 'Trade Journal',    badge: 'NEW', group: 'tools', key: 'j' },
+  { href: '/risk',         icon: '🎯', label: 'Risk & Size',      badge: 'NEW', group: 'tools',     short: 'Risk', key: 'r' },
+  { href: '/calculator',   icon: '🧮', label: 'P/L Calculator',   badge: null,  group: 'tools',     short: 'Calc', key: 'c' },
+  { href: '/optimizer',    icon: '⚙', label: 'Optimizer',        badge: null,  group: 'tools', key: 'z' },
+  { href: '/watchlist',    icon: '★',  label: 'Watchlist',        badge: null,  group: 'tools',     short: 'Watch', key: 'w' },
+  { href: '/settings',     icon: '⚙', label: 'Settings',         badge: null,  group: 'tools', key: ',' },
 ]
 
 export const NAV_GROUPS: readonly { id: NavGroup; label: string }[] = [
@@ -101,4 +103,10 @@ export function rankNav(query: string, items: readonly NavItem[] = NAV): NavItem
   })
   scored.sort((a, b) => b.score - a.score || a.index - b.index)
   return scored.map((s) => s.item)
+}
+
+/** The page the chord `g` + `key` names, or `null`. Case-insensitive for letters. */
+export function hotkeyTarget(key: string, items: readonly NavItem[] = NAV): NavItem | null {
+  const k = key.length === 1 ? key.toLowerCase() : key
+  return items.find((n) => n.key === k) ?? null
 }
