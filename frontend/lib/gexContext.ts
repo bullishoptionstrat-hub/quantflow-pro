@@ -266,3 +266,14 @@ export function distanceText(d: Distance): string {
   const abs = Math.abs(d.dollars).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   return `${sign(d.dollars)}$${abs} (${sign(d.pct)}${Math.abs(d.pct).toFixed(2)}%) from spot`
 }
+
+/**
+ * The GEX chart's clock line. It names the chain's own as-of, never the
+ * response's `updatedAt` (which is when this server answered, not when the
+ * chain was true). With no readable chain time it says which absence it is.
+ */
+export function chainClockText(ctx: GexContext): string {
+  if (!ctx.available) return 'no chain'
+  if (ctx.asOfMs !== null) return `chain as of ${etDateTime(ctx.asOfMs)}`
+  return ctx.asOfPublished ? 'chain carried no time' : 'chain time not published by backend'
+}
