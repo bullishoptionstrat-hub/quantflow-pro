@@ -142,7 +142,7 @@ export default function PrepPage() {
         </p>
       </div>
 
-      {store.error && <div data-testid="plan-error" className="card" style={{ padding: 12, marginBottom: 16, color: '#fca5a5', fontSize: 12 }}>{store.error}</div>}
+      {store.error && <div data-testid="plan-error" role="alert" className="card" style={{ padding: 12, marginBottom: 16, color: '#fca5a5', fontSize: 12 }}>{store.error}</div>}
       {store.rejected > 0 && (
         <div className="card" style={{ padding: 12, marginBottom: 16, color: '#fcd34d', fontSize: 12 }}>
           {store.rejected} stored plan{store.rejected === 1 ? '' : 's'} failed the shape check or repeat a date. Kept in storage, not shown, not read by the ticket.
@@ -164,7 +164,7 @@ export default function PrepPage() {
                 </div>
               ))}
             </div>
-            <div style={NOTE} data-testid="plan-saved-status">
+            <div style={NOTE} data-testid="plan-saved-status" role="status">
               Shown as drafted. Every item is derived from its fields; none can be ticked.{' '}
               {todays === null
                 ? 'Nothing is saved for today yet, so the ticket waits on PLAN_NOT_WRITTEN.'
@@ -320,7 +320,7 @@ export default function PrepPage() {
               {todays === null ? 'Save plan' : frozen ? 'Record amendment' : 'Save plan'}
             </button>
             {parsed.errors.length > 0 && (
-              <ul data-testid="plan-errors" style={{ margin: 0, paddingLeft: 18, color: '#fca5a5', fontSize: 12 }}>
+              <ul data-testid="plan-errors" role="alert" style={{ margin: 0, paddingLeft: 18, color: '#fca5a5', fontSize: 12 }}>
                 {parsed.errors.map((e) => <li key={e}>{e}</li>)}
               </ul>
             )}

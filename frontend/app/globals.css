@@ -69,6 +69,21 @@ body {
   outline-offset: 2px;
 }
 
+/* Skip link: off-screen until focused, then the first thing on the page. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 8px;
+  z-index: 1000;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--accent-cyan);
+}
+.skip-link:focus {
+  left: 8px;
+}
+
 /* Mono data */
 .mono, td, .data-cell {
   font-family: 'JetBrains Mono', monospace;

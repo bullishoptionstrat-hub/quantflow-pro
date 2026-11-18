@@ -26,6 +26,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {/* One /api/health poll for the sidebar, the status strip and the
             trade ticket, so they cannot show two verdicts at 09:30. */}
         <MarketSessionProvider>
+          {/* First focusable element: skips the sidebar and status chrome. */}
+          <a href="#main" className="skip-link">Skip to content</a>
           <div className="main-layout">
             <Sidebar />
             <div className="main-content">
@@ -35,7 +37,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <TopBar />
               </div>
               <PowerAlertBanner />
-              <main className="page-content">
+              <main id="main" tabIndex={-1} className="page-content">
                 {children}
               </main>
               <footer className="text-center py-3 border-t border-[var(--border)] text-[var(--text-muted)] text-xs">

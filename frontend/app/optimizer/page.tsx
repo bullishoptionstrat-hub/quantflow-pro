@@ -315,7 +315,7 @@ export default function OptimizerPage() {
             <label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block', marginBottom: 6, fontWeight: 600, letterSpacing: '0.08em' }}>
               {p.label}: <span style={{ color: 'var(--text-secondary)', fontFamily: "'JetBrains Mono', monospace" }}>{p.value}{p.suffix}</span>
             </label>
-            <input type="range" min={p.min} max={p.max} value={p.value} step={p.step}
+            <input type="range" aria-label={p.label} min={p.min} max={p.max} value={p.value} step={p.step}
               onChange={e => p.setter(Number(e.target.value))} style={{ width: '100%', accentColor: '#8b5cf6' }} />
           </div>
         ))}

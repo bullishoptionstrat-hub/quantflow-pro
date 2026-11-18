@@ -154,9 +154,12 @@ test('the flow wire carries its own provenance (F-16)', () => {
 
 test('the CSV export carries the lineage too, and the axis is named', () => {
   const csv = readFileSync(
-    join(__dirname, '..', '..', 'frontend', 'components', 'flow', 'FlowFeed.tsx'),
+    join(__dirname, '..', '..', 'frontend', 'lib', 'flowCsv.ts'),
     'utf8',
   );
+  assert.match(readFileSync(
+    join(__dirname, '..', '..', 'frontend', 'components', 'flow', 'FlowFeed.tsx'), 'utf8',
+  ), /flowCsv\(/, 'the feed exports through lib/flowCsv.ts');
   assert.match(csv, /Datasets,RightsDisplay/,
     'the export header names both provenance columns');
   assert.match(csv, /e\.datasets/, 'and the rows actually read them');
