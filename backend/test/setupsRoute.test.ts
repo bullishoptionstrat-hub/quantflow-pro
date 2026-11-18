@@ -87,3 +87,8 @@ test('the route is mounted on requireAuth, ahead of the global JSON parser, neve
   assert.doesNotMatch(mount[0], /requireAuthOrDemo|limitDemoTraffic/);
   assert.ok(server.indexOf(mount[0]) < server.indexOf("app.use(express.json("), 'mounted before the global parser');
 });
+
+test('the recorded replay the frontend tests render is what the CLI produces today', () => {
+  const recorded = readFileSync(join(__dirname, 'fixtures', 'setupReplay.json'), 'utf8');
+  assert.equal(recorded, stableStringify(runSetupReplay({ config, csv })));
+});
