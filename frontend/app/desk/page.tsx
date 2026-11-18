@@ -1,7 +1,9 @@
 'use client'
 import Link from 'next/link'
 import type { CSSProperties, ReactNode } from 'react'
+import { useState } from 'react'
 import { Panel } from '@/components/hud/Panel'
+import { DESK_PANELS, useDeskLayout, ALWAYS_SHOWN } from '@/lib/deskLayout'
 import { GexMini } from '@/components/desk/GexMini'
 import { TICKET_STATE_STYLE } from '@/components/ticket/stateStyle'
 import { SESSION_TONE, describeSession, etClock, useMarketSession, type MarketSession } from '@/lib/marketSession'
@@ -57,6 +59,9 @@ export default function DeskPage() {
   )
   const day = today && journalOk ? dayRisk(journal.entries, today) : null
   const lock = deskLock(today, day ? day.stopOuts : null, ctx)
+  const layout = useDeskLayout()
+  const [layoutNote, setLayoutNote] = useState<string | null>(null)
+  const shown = (id: (typeof DESK_PANELS)[number]['id']) => !layout.hidden.has(id)
 
   return (
     <div>
@@ -67,13 +72,35 @@ export default function DeskPage() {
         </span>
       </div>
 
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }} data-testid="desk-layout">
+        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>PANELS · THIS BROWSER</span>
+        {DESK_PANELS.map((p) => {
+          const locked = ALWAYS_SHOWN.includes(p.id)
+          return (
+            <button key={p.id} type="button" aria-pressed={shown(p.id)} disabled={locked || layout.error !== null}
+              title={locked ? 'Carries the daily lock; always shown' : undefined}
+              onClick={() => setLayoutNote(layout.toggle(p.id))}
+              style={{ fontSize: 11, padding: '2px 8px', opacity: shown(p.id) ? 1 : 0.55 }}>
+              {shown(p.id) ? '☑' : '☐'} {p.title}
+            </button>
+          )
+        })}
+      </div>
+      {(layout.error ?? layoutNote) && (
+        <div role="status" style={{ fontSize: 12, color: 'var(--accent-amber, var(--text-muted))', marginBottom: 10 }} data-testid="desk-layout-note">
+          {layout.error ?? layoutNote}
+        </div>
+      )}
+
       <div className="desk-grid">
-        <SessionPanel session={session} status={panel.status} today={today} plan={plan} />
+        {shown('session') && <SessionPanel session={session} status={panel.status} today={today} plan={plan} />}
         <RiskPanel today={today} journalReady={journal.ready} journalError={journal.error} day={day} ctx={ctx} lock={lock} />
-        <TicketPanel entries={journalOk ? journal.entries : null} ready={journal.ready} />
-        <PlanPanel today={today} ready={store.ready} error={store.error} plan={plan} entries={journalOk ? journal.entries : null} />
+        {shown('ticket') && <TicketPanel entries={journalOk ? journal.entries : null} ready={journal.ready} />}
+        {shown('plan') && <PlanPanel today={today} ready={store.ready} error={store.error} plan={plan} entries={journalOk ? journal.entries : null} />}
+        {(shown('events') || shown('gex') || shown('sources')) && (
         <div className="desk-span-5 desk-stack">
-          <EventsPanel today={today} ready={store.ready} plan={plan} now={session?.nowMinutesEt ?? null} />
+          {shown('events') && <EventsPanel today={today} ready={store.ready} plan={plan} now={session?.nowMinutesEt ?? null} />}
+          {shown('gex') && (
           <Panel title="GEX reference" code="CBOE · DELAYED · MODELLED" data-testid="desk-gex">
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 14 }}>
               <GexMini symbol="SPY" />
@@ -84,8 +111,10 @@ export default function DeskPage() {
               Context only — never a gate.
             </div>
           </Panel>
-          <SourcesPanel sources={sources} />
+          )}
+          {shown('sources') && <SourcesPanel sources={sources} />}
         </div>
+        )}
       </div>
     </div>
   )
