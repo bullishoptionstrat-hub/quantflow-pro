@@ -33,6 +33,9 @@ describe('replay CSV on engine output', () => {
     expect(header).toBe(REPLAY_CSV_COLUMNS.join(','))
     expect(rows.map((r) => r[col('idea_id')])).toEqual(ideas.map((i) => i.ideaId))
     for (const r of rows) expect(r.length).toBe(REPLAY_CSV_COLUMNS.length)
+    // terminal_state is the LAST transition: an idea's first state is never its outcome.
+    expect(rows.map((r) => r[col('terminal_state')])).toEqual(ideas.map((i) => i.history[i.history.length - 1]!.state))
+    expect(new Set(rows.map((r) => r[col('terminal_state')])).size).toBeGreaterThan(1)
   })
 
   test('below the sample floor the file carries the suppression, not a rate', () => {
