@@ -9,7 +9,7 @@
  * directories under `app/` in both directions.
  */
 
-export type NavGroup = 'flow' | 'analytics' | 'tools'
+export type NavGroup = 'desk' | 'flow' | 'analytics' | 'tools'
 
 export interface NavItem {
   href: string
@@ -22,6 +22,9 @@ export interface NavItem {
 }
 
 export const NAV: readonly NavItem[] = [
+  // The God's Plan day starts here: the overview, then the pre-session map.
+  { href: '/desk',         icon: '◫',  label: 'Desk',             badge: 'NEW', group: 'desk',      short: 'Desk' },
+  { href: '/prep',         icon: '📋', label: 'Daily Plan',       badge: 'NEW', group: 'desk' },
   // "Options Flow", not "Live Flow": the tape is whatever the backend sends,
   // and on a keyless deployment that is simulated. Each row says whether it
   // was observed or constructed; the menu entry should not say it for them.
@@ -43,6 +46,7 @@ export const NAV: readonly NavItem[] = [
 ]
 
 export const NAV_GROUPS: readonly { id: NavGroup; label: string }[] = [
+  { id: 'desk', label: 'DESK' },
   { id: 'flow', label: 'FLOW' },
   { id: 'analytics', label: 'ANALYTICS' },
   { id: 'tools', label: 'TOOLS' },

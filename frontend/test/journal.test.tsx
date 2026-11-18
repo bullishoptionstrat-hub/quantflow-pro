@@ -43,6 +43,8 @@ function ticketInput(o: Partial<TicketInput> = {}): TicketInput {
     entry: 5000, stop: 4990, targets: [{ price: 5030, kind: 'EXTERNAL' }],
     riskBudget: 2000, costPerUnit: 5, slippageTicks: 1, minR: 2,
     clock: { state: 'OPEN', nowMinutesEt: minutesOf('10:00'), closeMinutesEt: minutesOf('16:00') },
+    // Today's plan, written and complete, with nothing to tighten.
+    plan: { status: 'WRITTEN', date: '2026-11-09', missing: [], lossLimit: null, maxAttempts: null, windows: [], day: null },
     ...o,
   }
   const answers: TicketInput['answers'] = {}

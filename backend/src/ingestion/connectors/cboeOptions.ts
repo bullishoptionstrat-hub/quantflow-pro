@@ -21,6 +21,7 @@
  */
 import axios from 'axios';
 import { numeric } from '../optionalNumber';
+import { instantEt } from '../../market/civil';
 
 export interface CboeGexLevel {
   strike: number;
@@ -121,7 +122,14 @@ export interface CboeZeroDte {
 
 export interface CboeSnapshot {
   symbol: string;
+  /**
+   * The underlying price the chain carried, which is the price every GEX and
+   * DEX figure in this snapshot is scaled by. Always positive: a chain without
+   * one is refused, not published.
+   */
   spot: number;
+  /** Which of the chain's own fields supplied `spot`. */
+  spotField: 'current_price' | 'close';
   /** 30-day implied volatility, or `null` where the chain did not carry it. */
   iv30: number | null;
   gex: CboeGexLevel[];
@@ -134,7 +142,21 @@ export interface CboeSnapshot {
   tradeDate: string | null;
   unusual: CboeUnusualContract[];
   contractCount: number;
-  asOf: string;
+  /**
+   * The instant the chain's underlying last traded, as an ISO string in UTC,
+   * read from the chain's own `data.last_trade_time` by `cboeTimeToIso`.
+   * `null` when Cboe sent none or sent one that cannot be read.
+   *
+   * This was `d.last_trade_time ?? new Date().toISOString()`: a chain that
+   * arrived without a clock was stamped with this server's receipt time, in
+   * the same field as the vendor's own, so nothing downstream could tell a
+   * measured as-of from the moment the poll happened to land. It also passed
+   * the vendor's string through unconverted, and that string has no zone, so
+   * every browser read it in its own local time.
+   */
+  asOf: string | null;
+  /** `data.last_trade_time` exactly as Cboe sent it, or `null`. */
+  asOfVendor: string | null;
   delayedMinutes: number;
   source: 'cboe';
 }
@@ -185,7 +207,7 @@ function parseOsi(osi: string): { symbol: string; expiry: string; right: 'C' | '
  *
  *   gamma x OI x 100 (contract multiplier) x spot^2 x 0.01
  *
- * spot appears squared, not linearly: gamma is dTheta/dSpot per $1, so one
+ * spot appears squared, not linearly: gamma is dDelta/dSpot per $1, so one
  * factor of spot converts share-gamma to dollar-gamma and the second scales
  * a $1 move into a 1% move. Convention here is call gamma positive, put gamma
  * negative, which is what puts the gamma flip where desks expect it.
@@ -206,6 +228,51 @@ function dexFor(delta: number, oi: number, spot: number): number {
   return delta * oi * 100 * spot;
 }
 
+/**
+ * A Cboe chain timestamp as an ISO instant in UTC, or `null`.
+ *
+ * Cboe sends `data.last_trade_time` with **no zone**, e.g.
+ * `"2026-11-11T14:46:01"`. It is read as a New York wall clock, and that is a
+ * measurement, not a guess. Fetched on 2026-11-11 at 20:01:55 UTC, the `_VIX`
+ * chain carried a top-level generation stamp `"2026-11-11 20:01:15"` (UTC —
+ * forty seconds before the fetch) and `data.last_trade_time`
+ * `"2026-11-11T14:46:01"`. Read as New York time that is 19:46:01 UTC, 15m14s
+ * before the file was generated, which is the delay Cboe publishes. Read as
+ * UTC it would be five hours old; read as Chicago time it would postdate the
+ * file that contains it. The per-contract trade times in the same file ran
+ * 09:33 to 14:46, the New York session. One sample, so a future change of
+ * format shows up as a `null` here or an implausible age on the ticket, never
+ * as a confident wrong clock: a string that does not match this shape is
+ * refused rather than handed to `Date.parse`, which would read it in this
+ * server's own timezone.
+ *
+ * Why not `quoteTimestamp` in `twelveData.ts`: it reads epoch seconds or
+ * milliseconds, and falls back to `Date.now()` for anything else — which for
+ * this string is every value. That fallback is receipt time in the vendor's
+ * field, the exact thing this function exists to refuse.
+ *
+ * A string carrying an explicit `Z` or offset is read as given. A New York
+ * wall-clock time that does not exist (the spring-forward gap) is `null`.
+ */
+export function cboeTimeToIso(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const s = raw.trim();
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/.test(s)) {
+    const ms = Date.parse(s);
+    return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+  }
+  const m = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2}):(\d{2})(\.\d{1,3})?$/.exec(s);
+  if (!m) return null;
+  const hour = Number(m[2]);
+  const minute = Number(m[3]);
+  const second = Number(m[4]);
+  if (hour > 23 || minute > 59 || second > 59) return null;
+  const base = instantEt(m[1]!, hour, minute);
+  if (base === null) return null;
+  const millis = m[5] ? Math.round(Number(m[5]) * 1000) : 0;
+  return new Date(base + second * 1000 + millis).toISOString();
+}
+
 export async function fetchCboeChain(symbol: string): Promise<CboeSnapshot | null> {
   const upper = symbol.toUpperCase();
   const cboeSym = CBOE_SYMBOL[upper] ?? upper;
@@ -220,9 +287,13 @@ export async function fetchCboeChain(symbol: string): Promise<CboeSnapshot | nul
   if (!Array.isArray(rows) || rows.length === 0) return null;
 
   // Gated on `spot > 0`: no spot means no snapshot, since every GEX figure
-  // below is scaled by it.
-  const spot = numeric(d.current_price) ?? numeric(d.close) ?? 0;
-  if (!(spot > 0)) return null;
+  // below is scaled by it. `current_price` first and `close` only when the
+  // chain sent no current price at all, as before — and the field that
+  // answered is kept, because the ticket shows distances from this number.
+  const currentPrice = numeric(d.current_price);
+  const spotField: CboeSnapshot['spotField'] = currentPrice !== null ? 'current_price' : 'close';
+  const spot = currentPrice ?? numeric(d.close);
+  if (spot === null || !(spot > 0)) return null;
 
   // The chain's own date, not `new Date()`. The server's clock can be in any
   // timezone and the question — "does this contract expire today?" — is asked
@@ -331,6 +402,7 @@ export async function fetchCboeChain(symbol: string): Promise<CboeSnapshot | nul
   const snap: CboeSnapshot = {
     symbol: upper,
     spot,
+    spotField,
     iv30: numeric(d.iv30),
     gex: [...byStrike.values()].sort((a, b) => a.strike - b.strike),
     // Gated on there being some: an empty level list under a real expiry would
@@ -345,7 +417,8 @@ export async function fetchCboeChain(symbol: string): Promise<CboeSnapshot | nul
     tradeDate,
     unusual: unusual.slice(0, 40),
     contractCount: rows.length,
-    asOf: d.last_trade_time ?? new Date().toISOString(),
+    asOf: cboeTimeToIso(d.last_trade_time),
+    asOfVendor: typeof d.last_trade_time === 'string' ? d.last_trade_time : null,
     delayedMinutes: DELAYED_MINUTES,
     source: 'cboe',
   };

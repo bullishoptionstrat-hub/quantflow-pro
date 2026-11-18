@@ -121,9 +121,67 @@ test('GEXLevel matches what /api/gex returns', () => {
   assert.ok(!('level_type' in level), 'the backend does not classify strikes — the UI must not imply it does');
 });
 
-test('GEXResponse carries the provenance the chart must not ignore', () => {
+/**
+ * `GEXResponse` fields that postdate the recorded `gex.json`.
+ *
+ * The recording holds 446 real SPY levels from a live Cboe chain and cannot be
+ * re-recorded from a container whose network policy refuses the Cboe CDN;
+ * re-capturing from a boot with no chain would replace those levels with zero,
+ * and hand-editing a recording is what this file exists to forbid. So these
+ * fields are checked against the **live router** instead, driven below with a
+ * populated chain, and each name is asserted absent from the recording — the
+ * day `gex.json` is re-recorded with them, this list fails until it is emptied,
+ * so it cannot outlive its reason.
+ */
+const GEX_POSTDATES_FIXTURE = ['asOf', 'asOfVendor', 'spot', 'spotField', 'rights'] as const;
+
+/** `/api/gex?symbol=SPY` from the real router, over a chain in Cboe's shape. */
+async function liveGexResponse(): Promise<Record<string, unknown>> {
+  const axios = require('axios');
+  const target = axios.default ?? axios;
+  const realGet = target.get;
+  target.get = async () => ({
+    data: {
+      timestamp: '2026-11-11 20:01:15',
+      data: {
+        current_price: 580.25, last_trade_time: '2026-11-11T14:46:01',
+        options: [{ option: 'SPY261218C00580000', open_interest: 1200, gamma: 0.02, delta: 0.5, volume: 0, last_trade_price: 3.1 }],
+      },
+    },
+  });
+  try {
+    const { fetchCboeChain } = require('../src/ingestion/connectors/cboeOptions');
+    await fetchCboeChain('SPY');
+  } finally {
+    target.get = realGet;
+  }
+  const express = require('express');
+  const app = express();
+  app.use('/api/gex', require('../src/routes/gex').default);
+  const server = app.listen(0);
+  await new Promise((r) => server.once('listening', r));
+  try {
+    const res = await fetch(`http://127.0.0.1:${server.address().port}/api/gex?symbol=SPY`);
+    return await res.json() as Record<string, unknown>;
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+}
+
+test('GEXResponse carries the provenance the chart must not ignore', async () => {
   const gex = load('gex');
-  assertDeclaredFieldsExist('GEXResponse', gex);
+  const live = await liveGexResponse();
+  for (const f of GEX_POSTDATES_FIXTURE) {
+    assert.ok(!(f in gex), `${f} is in the recording now — remove it from GEX_POSTDATES_FIXTURE`);
+    assert.ok(f in live, `the live /api/gex must publish ${f}`);
+  }
+  for (const k of Object.keys(gex)) {
+    assert.ok(k in live, `the recording carries ${k} and the live route no longer does`);
+  }
+  // The recording witnesses everything it can; the live route witnesses only
+  // the fields that postdate it, and nothing else is let through on its word.
+  const postdated = Object.fromEntries(GEX_POSTDATES_FIXTURE.map((f) => [f, live[f]]));
+  assertDeclaredFieldsExist('GEXResponse', [gex, postdated]);
   // The route's own comment: "a fabricated gamma flip looks exactly like a real one."
   assert.equal(typeof gex.realData, 'boolean');
   assert.ok(['cboe', 'synthetic'].includes(gex.source));

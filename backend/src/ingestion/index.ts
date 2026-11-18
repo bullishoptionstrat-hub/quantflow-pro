@@ -12,7 +12,7 @@
  */
 import axios from 'axios';
 import WebSocket from 'ws';
-import { fetchCboeChain, getCboeSnapshot, getCboeSymbols } from './connectors/cboeOptions';
+import { fetchCboeChain, getCboeSnapshot, getCboeSymbols, type CboeSnapshot } from './connectors/cboeOptions';
 import { fetchOccVolume, getOccVolume } from './connectors/occ';
 import { describeHttpError } from './httpError';
 import { trackWrite, isShuttingDown } from '../lifecycle';
@@ -186,7 +186,7 @@ const MAX_DP_PRINTS = 200;
 
 let flowEvents: FlowEvent[] = [];
 let darkPoolPrints: DarkPoolPrint[] = [];
-let gexCache: Record<string, { levels: GEXLevel[]; fetchedAt: number }> = {};
+let gexCache: Record<string, { chain: GexChain; fetchedAt: number }> = {};
 
 let ioInstance: any = null;
 let ingestionActive = false;
@@ -356,6 +356,43 @@ export function getDarkPoolPrints(): DarkPoolPrint[] {
   return [...darkPoolPrints];
 }
 
+/**
+ * One chain's aggregation together with the clock and spot it was computed
+ * from. They travel as one record because they are only meaningful together:
+ * the 60-second fallback below used to keep the *levels* from the previous
+ * chain while anything reading the snapshot directly got the next one's, so a
+ * reader could have been shown one chain's strikes beside another chain's time.
+ */
+export interface GexChain {
+  levels: GEXLevel[];
+  zeroDte: CboeSnapshot['zeroDte'];
+  /** The chain's own as-of, an ISO instant, or null. Never this server's clock. */
+  asOf: string | null;
+  /** The vendor's timestamp string exactly as sent, or null. */
+  asOfVendor: string | null;
+  /** The underlying price every figure in `levels` is scaled by. */
+  spot: number;
+  spotField: CboeSnapshot['spotField'];
+}
+
+export function getGexChain(symbol: string): GexChain | null {
+  const snap = getCboeSnapshot(symbol);
+  if (snap && snap.gex.length > 0) {
+    const chain: GexChain = {
+      levels: snap.gex, zeroDte: snap.zeroDte,
+      asOf: snap.asOf, asOfVendor: snap.asOfVendor,
+      spot: snap.spot, spotField: snap.spotField,
+    };
+    gexCache[symbol] = { chain, fetchedAt: Date.now() };
+    return chain;
+  }
+
+  // The last real chain, briefly, so a poll in flight does not blank the page.
+  const cached = gexCache[symbol];
+  if (cached && Date.now() - cached.fetchedAt < 60_000) return cached.chain;
+  return null;
+}
+
 export function getGEXLevels(symbol: string): GEXLevel[] {
   // CBOE publishes per-contract gamma, delta and open interest, so this is a
   // direct computation from the vendor's own numbers.
@@ -373,21 +410,12 @@ export function getGEXLevels(symbol: string): GEXLevel[] {
   // thrown away, with a stale price map sitting in the tree for the next
   // caller to pick up. An empty list is the honest answer to "CBOE has not
   // been polled for this symbol", and the page has an empty state for it.
-  const snap = getCboeSnapshot(symbol);
-  if (snap && snap.gex.length > 0) {
-    gexCache[symbol] = { levels: snap.gex, fetchedAt: Date.now() };
-    return snap.gex;
-  }
-
-  // The last real chain, briefly, so a poll in flight does not blank the page.
-  const cached = gexCache[symbol];
-  if (cached && Date.now() - cached.fetchedAt < 60_000) return cached.levels;
-  return [];
+  return getGexChain(symbol)?.levels ?? [];
 }
 
 /** The same aggregation restricted to contracts expiring today, if any. */
 export function getZeroDteLevels(symbol: string) {
-  return getCboeSnapshot(symbol)?.zeroDte ?? null;
+  return getGexChain(symbol)?.zeroDte ?? null;
 }
 
 export function getFlowStats() {
