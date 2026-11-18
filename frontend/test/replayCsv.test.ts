@@ -48,7 +48,7 @@ describe('replay CSV on engine output', () => {
   test('ACTIONABLE ideas carry their levels and outcome; absent values are empty, never 0', () => {
     const graded = new Map(report.outcomes!.ideas.map((o) => [o.ideaId, o]))
     let actionable = 0
-    for (const [n, i] of ideas.entries()) {
+    ideas.forEach((i, n) => {
       const r = rows[n]!
       const a = i.history.find((t) => t.state === 'ACTIONABLE')
       if (a) {
@@ -67,7 +67,7 @@ describe('replay CSV on engine output', () => {
       if (i.entry === null || i.entry === undefined) expect(r[col('entry')]).toBe('')
       if (!i.target) expect(r[col('target_price')]).toBe('')
       if (!graded.has(i.ideaId)) expect(r[col('outcome_r')]).toBe('')
-    }
+    })
     expect(actionable).toBeGreaterThanOrEqual(5)
   })
 })
