@@ -177,3 +177,17 @@ test('POST /preflight: one report per symbol, the convention has no default, a n
   const none = await post('/preflight', { config: { timestampMarks: 'OPEN' }, csv: {} });
   assert.equal(none.status, 400);
 });
+
+test('the recorded preflight fixture is what the route answers today', async () => {
+  const FLAWED = readFileSync(join(FIX, 'FLAWED_SPY_1m.csv'), 'utf8');
+  const r = await post('/preflight', { config: { timestampMarks: 'OPEN' }, csv: { SPY, FLAWED } });
+  const out = join(__dirname, 'fixtures', 'barPreflight.json');
+  if (process.env.RECORD_PREFLIGHT === '1') require('node:fs').writeFileSync(out, JSON.stringify(r.json, null, 2) + '\n');
+  assert.deepEqual(JSON.parse(readFileSync(out, 'utf8')), r.json);
+  const f = r.json.symbols[1];
+  // 15 removed in the morning, the rest of 2026-01-05 after 11:30 ET (270), and
+  // four full sessions before the Saturday bar (4 x 390).
+  assert.equal(f.gaps.insideRthMinutes, 15 + 270 + 4 * 390);
+  assert.deepEqual(f.rejectedByCode.map((g: any) => g.code), ['TIMESTAMP', 'BAR_SHAPE', 'DUPLICATE', 'OUT_OF_ORDER']);
+  assert.ok(f.days.some((d: any) => d.session === 'WEEKEND'));
+});

@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { apiFetch } from '@/lib/apiFetch'
 import { Panel } from '@/components/hud/Panel'
 import { ideaLinkQuery, ideaPrefill } from '@/lib/replayIdea'
+import { BarPreflight } from '@/components/setups/BarPreflight'
 
 /**
  * Replay the setup engine over bars the trader imports.
@@ -129,6 +130,8 @@ export function SetupReplay() {
           {state.kind === 'running' ? 'REPLAYING…' : 'REPLAY'}
         </button>
       </Panel>
+
+      <BarPreflight inputs={inp} />
 
       {state.kind === 'refused' && (
         <Panel title="REFUSED" code="BACKEND">
