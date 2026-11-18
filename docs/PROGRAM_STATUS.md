@@ -91,3 +91,21 @@ Each mutation was applied once, run against `backend/test/setupsRoute.test.ts` o
 | Page drops the empty-cost check | killed: all four page tests (the required-list text the tests match changes) |
 | Refusal reasons not rendered | killed: "error: a refusal is listed reason by reason" |
 | Route imports the store | killed: "the route and the replay write nothing" |
+
+## Replay outcome grading (2026-11-18)
+
+`backend/src/research/setupOutcome.ts` grades each ACTIONABLE idea from the same imported bars: the first bar opening at or after the ACTIONABLE `knownAt` that touches the target (`TARGET_FIRST`, +net R) or the invalidation (`STOP_FIRST`, -1R on the gate's cost basis). A bar touching both is `AMBIGUOUS_SAME_BAR`; bars ending first is `OPEN`; gaps inside the window are counted, not bridged. No hit rate or mean R below 30 decided ideas (`MIN_PUBLISHABLE_SAMPLE`). It lives in `research/`, so `SETUP_RULES_VERSION` is unchanged. Not P&L: fills, slippage past the stop and size are not modelled. The synthetic fixture produces no ACTIONABLE idea, so every published number so far is suppressed; agreement with the engine's `COMPLETED` bar is tested through the real state machine.
+
+| Mutation (one at a time, `setupOutcome.test.ts` or `setupReplay.test.tsx`) | Result |
+|---|---|
+| Trigger bar read | killed (3 tests) |
+| Same-bar touch of both read as target | killed: "a bar touching both is AMBIGUOUS" |
+| Stop scored 0R | killed: "stop first is -1R" |
+| Gross R at target | killed (2 tests) |
+| Sample floor 29 | killed: "no rate below 30" |
+| Ambiguous counted toward the floor | killed (2 tests) |
+| Gaps not reported | killed: "a gap ... is reported" |
+| SHORT stop read as LONG | killed: "SHORT mirrors LONG" |
+| OPEN scored as a loss | killed: "bars ending first is OPEN" |
+| Missing net R graded | killed: "... is NOT_GRADED" |
+| Page renders a rate when suppressed | killed (2 tests) |

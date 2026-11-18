@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { importBarsCsv } from '../src/market/barImport';
+import { importBarsCsv, parseZonedTimestamp } from '../src/market/barImport';
 import { syntheticCsv } from '../tools/fixtures/syntheticBars';
 
 const opts = { symbol: 'SPY', timestampMarks: 'OPEN' as const, source: 'test' };
@@ -70,4 +70,13 @@ test('the committed synthetic fixtures are the generator output, byte for byte, 
     assert.equal(r.rejected.length, 0);
     assert.ok(r.bars.some((b) => b.v === null));
   }
+});
+
+test('an impossible calendar instant is refused, not rolled into the next day', () => {
+  for (const s of ['2026-02-30T14:30:00Z', '2026-02-31T14:30Z', '2026-04-31T09:30:00-04:00', '2026-03-02T24:00Z', '2026-03-02T09:30-24:00']) {
+    const r = parseZonedTimestamp(s);
+    assert.equal(typeof r, 'string', `${s} must be refused, got ${r}`);
+  }
+  assert.equal(parseZonedTimestamp('2026-03-02T14:30:00Z'), Date.parse('2026-03-02T14:30:00Z'));
+  assert.equal(parseZonedTimestamp('2026-03-02T09:30-05:00'), Date.parse('2026-03-02T14:30:00Z'));
 });

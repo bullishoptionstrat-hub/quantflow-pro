@@ -26,7 +26,7 @@ test('the CLI writes the same bytes twice', () => {
   assert.equal(readFileSync(join(dir, 'a.json'), 'utf8'), readFileSync(join(dir, 'b.json'), 'utf8'));
 });
 
-test('the report carries hashes, versions and counts, and no outcome or P&L', () => {
+test('the report carries hashes, versions and counts; no P&L, and no rate below the sample floor', () => {
   const r = runSetupReplay({ config, csv });
   assert.equal(r.status, 'OK');
   if (r.status !== 'OK') return;
@@ -36,11 +36,16 @@ test('the report carries hashes, versions and counts, and no outcome or P&L', ()
   for (const d of rep.datasets) { assert.match(d.contentId, /^[0-9a-f]{64}$/); assert.equal(d.provenance, 'USER_IMPORT'); }
   assert.equal(typeof rep.setupMethodVersion, 'string');
   assert.equal(typeof rep.structureMethodVersion, 'string');
-  assert.match(rep.scope, /No outcome, P&L/);
+  assert.match(rep.scope, /not P&L/);
   const total = Object.values(rep.counts.byTerminalState as Record<string, number>).reduce((a, b) => a + b, 0);
   assert.equal(total, rep.counts.ideas);
   const text = JSON.stringify(rep);
-  for (const banned of ['"pnl"', '"winRate"', '"hitRate"', '"profit"', '"outcome"']) assert.ok(!text.includes(banned), banned);
+  for (const banned of ['"pnl"', '"winRate"', '"profit"']) assert.ok(!text.includes(banned), banned);
+  const sum = rep.outcomes.summary;
+  if (sum.decided < 30) { assert.equal(sum.hitRate, null); assert.equal(sum.meanR, null); assert.match(sum.suppressed, /INSUFFICIENT_SAMPLE/); }
+  const states = Object.values(sum.byState as Record<string, number>).reduce((a, b) => a + b, 0);
+  assert.equal(states, rep.counts.ideas, 'every idea is counted in exactly one outcome state');
+  assert.ok(rep.outcomes.ideas.every((x: any) => x.state !== 'NOT_GRADED'));
 });
 
 test('a missing cost, a missing timestamp convention or a missing file is refused, never defaulted', () => {

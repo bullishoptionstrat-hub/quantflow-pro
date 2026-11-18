@@ -97,4 +97,41 @@ describe('setup replay page', () => {
     expect(document.body.textContent).toContain(rep.datasets[0].contentId)
     expect(document.body.textContent).not.toMatch(/win rate:|P&L:|\d+(\.\d+)?% win/i)
   })
+
+  async function runWith(body: unknown) {
+    mockApi(body)
+    const { SetupReplay } = await import('@/components/setups/SetupReplay')
+    render(<SetupReplay />)
+    await fillAll()
+    await waitFor(() => expect((screen.getByText('REPLAY') as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(screen.getByText('REPLAY'))
+    await waitFor(() => expect(screen.getByText('REPLAY REPORT')).toBeDefined())
+  }
+
+  test('outcomes: below the sample floor the reason is shown and no rate is', async () => {
+    await runWith(replay)
+    const s = replay.report.outcomes.summary
+    expect(s.hitRate).toBeNull()
+    for (const [k, v] of Object.entries(s.byState)) expect(screen.getByText(`outcome ${k}: ${v}`)).toBeDefined()
+    expect(screen.getByTestId('outcome-suppressed').textContent).toContain('INSUFFICIENT_SAMPLE')
+    expect(screen.queryByTestId('outcome-rate')).toBeNull()
+    expect(document.body.textContent).not.toMatch(/target first \d/)
+  })
+
+  test('outcomes: a published rate and mean R are rendered with the decided count', async () => {
+    const body = structuredClone(replay)
+    body.report.outcomes.summary = { byState: { TARGET_FIRST: 12, STOP_FIRST: 18, AMBIGUOUS_SAME_BAR: 2, OPEN: 1, NOT_GRADED: 0 }, decided: 30, minSample: 30, hitRate: 0.4, meanR: 0.4, suppressed: null }
+    body.report.outcomes.ideas = [{ ideaId: 'a', symbol: 'SPY', state: 'STOP_FIRST', r: -1, decidedAt: 1, gapMinutes: 3, detail: 'reached the invalidation 98' }]
+    await runWith(body)
+    expect(screen.getByTestId('outcome-rate').textContent).toBe('target first 40.0% of 30 decided · mean 0.40R net of costs')
+    expect(document.body.textContent).toContain('SPY STOP_FIRST -1.00R · 3 min missing')
+  })
+
+  test('outcomes: an older backend without outcomes says so rather than showing zeros', async () => {
+    const body = structuredClone(replay)
+    delete body.report.outcomes
+    await runWith(body)
+    expect(screen.getByText('This backend does not grade outcomes.')).toBeDefined()
+    expect(screen.queryByText(/outcome TARGET_FIRST/)).toBeNull()
+  })
 })

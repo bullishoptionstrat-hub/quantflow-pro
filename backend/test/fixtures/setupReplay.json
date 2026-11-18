@@ -69,6 +69,24 @@
       "used": {},
       "version": 1
     },
+    "outcomes": {
+      "ideas": [],
+      "rule": "research/setupOutcome",
+      "summary": {
+        "byState": {
+          "AMBIGUOUS_SAME_BAR": 0,
+          "NOT_GRADED": 405,
+          "OPEN": 0,
+          "STOP_FIRST": 0,
+          "TARGET_FIRST": 0
+        },
+        "decided": 0,
+        "hitRate": null,
+        "meanR": null,
+        "minSample": 30,
+        "suppressed": "INSUFFICIENT_SAMPLE: 0 decided ideas, 30 required"
+      }
+    },
     "paramsInForce": {
       "displacementWindowBars": 5,
       "expiryBars": 30,
@@ -19724,7 +19742,7 @@
         "symbol": "QQQ"
       }
     ],
-    "scope": "Signal events only. No outcome, P&L, hit rate or win rate is computed or implied; the definitions are untuned, versioned hypotheses.",
+    "scope": "Signal events, and for each ACTIONABLE idea which of its target or invalidation the later imported bars touched first, in net R. A bar touching both is AMBIGUOUS, bars ending first is OPEN, and no hit rate or mean R is published below the sample floor. It is not P&L, because fills, slippage past the stop and position size are not modelled, and the definitions are untuned, versioned hypotheses.",
     "setupMethodVersion": "setup-rules/1:e7e97035152cb647",
     "structureMethodVersion": "structure-rules/1:38dc0545263ffbd9"
   },
