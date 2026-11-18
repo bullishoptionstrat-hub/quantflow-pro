@@ -667,7 +667,19 @@ export type TicketRecord = ReturnType<typeof ticketRecord>
  * The ticket as a record: what was decided, on what, and why. It is written
  * for a journal, not sent anywhere, and it says so in `note`.
  */
-export function ticketRecord(input: TicketInput, result: TicketResult, createdAt: string, specStatus: string) {
+/**
+ * Where a ticket's prefilled numbers came from. Null for a ticket typed by
+ * hand. It annotates the record; it is never an input to a gate.
+ */
+export interface TicketOrigin {
+  kind: 'REPLAY_IDEA'
+  ideaId: string
+  setup: string
+  setupMethodVersion: string
+  actionableAt: number
+}
+
+export function ticketRecord(input: TicketInput, result: TicketResult, createdAt: string, specStatus: string, origin: TicketOrigin | null = null) {
   const s = result.sizing
   return {
     schema: TICKET_SCHEMA,
@@ -678,6 +690,7 @@ export function ticketRecord(input: TicketInput, result: TicketResult, createdAt
     contract: input.contract.trim().toUpperCase() || null,
     specStatus,
     setupId: input.setupId.trim(),
+    origin,
     direction: input.side,
     model: input.model,
     sessionProfile: input.sessionProfile,

@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { apiFetch } from '@/lib/apiFetch'
 import { Panel } from '@/components/hud/Panel'
+import { ideaLinkQuery, ideaPrefill } from '@/lib/replayIdea'
 
 /**
  * Replay the setup engine over bars the trader imports.
@@ -16,7 +17,7 @@ import { Panel } from '@/components/hud/Panel'
 const MONO = "'JetBrains Mono', monospace"
 
 interface Transition { state: string; knownAt: number; bar: string; reasons: { code: string; detail: string }[] }
-interface Idea { ideaId: string; setup: string; side: string; symbol: string; netR: number | null; history: Transition[] }
+interface Idea { ideaId: string; setup: string; side: string; symbol: string; netR: number | null; entry?: number | null; invalidation?: number | null; target?: number | null; history: Transition[] }
 interface Dataset { symbol: string; contentId: string; provenance: string; timestampMarks: string; rejected: unknown[]; gaps: unknown[] }
 export interface ReplayReport {
   scope: string
@@ -170,6 +171,7 @@ function Report({ report }: { report: ReplayReport }) {
               <ol>{i.history.map((t, n) => (
                 <li key={n}>{fmtTime(t.knownAt)} {t.state}{t.reasons.length > 0 ? ` — ${t.reasons.map((x) => `${x.code}: ${x.detail}`).join('; ')}` : ''}</li>
               ))}</ol>
+              <IdeaTicketLink idea={i} method={report.setupMethodVersion} />
             </details>
           ))}
         </Panel>
@@ -206,5 +208,20 @@ function Outcomes({ report }: { report: ReplayReport }) {
         </ol>
       )}
     </Panel>
+  )
+}
+
+/**
+ * Open an ACTIONABLE idea as a ticket. The link fills the instrument,
+ * direction, setup ID (the idea's content hash), entry, stop and target, and
+ * nothing else: every gate on the ticket still starts unanswered.
+ */
+function IdeaTicketLink({ idea, method }: { idea: Idea; method: string }) {
+  const p = ideaPrefill(idea, method)
+  if ('reason' in p) return null
+  return (
+    <a href={ideaLinkQuery(p)} data-testid="idea-ticket-link" style={{ fontSize: 11 }}>
+      Open as ticket (setup ID {p.ideaId.slice(0, 12)}…, gates unanswered)
+    </a>
   )
 }
