@@ -19,6 +19,7 @@
 import express, { Router, Request, Response } from 'express';
 import { runSetupReplay } from '../research/setupReplay';
 import { preflightBars } from '../market/barPreflight';
+import { runStructureReplay } from '../research/structureReplay';
 
 /** Whole request body, both CSVs and the config together. */
 export const SETUP_REPLAY_MAX_BYTES = 2 * 1024 * 1024;
@@ -71,6 +72,20 @@ router.post('/preflight', (req: Request, res: Response) => {
     scope: 'What each file holds, read by the replay\'s own bar parser. Nothing is filled, repaired or stored.',
     symbols: symbols.map((k) => preflightBars(k, csv[k], marks as 'OPEN' | 'CLOSE')),
   });
+});
+
+/**
+ * POST /api/setups/structure — the structure engine's events over uploaded
+ * bars. Body { config: { symbol, pairSymbol?, timestampMarks, params? }, csv }.
+ * Calls `runStructureReplay`, the function `research:structure-replay` calls.
+ * Same tier, body cap and rate bucket as /replay: it runs the engine per call.
+ * Read-only: nothing is decided, graded or stored.
+ */
+router.post('/structure', (req: Request, res: Response) => {
+  const pre = bodyRefusals(req.body);
+  if (pre.length > 0) return res.status(400).json({ status: 'REFUSED', reasons: pre });
+  const result = runStructureReplay({ config: req.body.config, csv: req.body.csv as Record<string, string> });
+  return res.status(result.status === 'OK' ? 200 : 400).json(result);
 });
 
 /** A body over the cap is refused by name, not with an HTML stack page. */

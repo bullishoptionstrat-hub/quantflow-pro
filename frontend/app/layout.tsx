@@ -7,6 +7,7 @@ import { PowerAlertBanner } from '@/components/alerts/PowerAlertBanner'
 import { DemoBanner } from '@/components/layout/DemoBanner'
 import { StatusStrip } from '@/components/hud/StatusStrip'
 import { CommandPalette } from '@/components/hud/CommandPalette'
+import { Hotkeys } from '@/components/hud/Hotkeys'
 import { MarketSessionProvider } from '@/lib/marketSession'
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -44,6 +45,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <MobileNav />
           </div>
           <CommandPalette />
+          <Hotkeys />
         </MarketSessionProvider>
       </body>
     </html>

@@ -113,6 +113,8 @@ const LEDGER: Record<string, string> = {
     'A tally key seen for the first time starts its count at zero; the key exists only because an idea reached that terminal state, so no absent reading is filled.',
   'research/setupReplay.ts: byBlocked[reason.code] ?? 0':
     'A tally key seen for the first time starts its count at zero; the key exists only because a BLOCKED idea named that reason, so no absent reading is filled.',
+  'research/structureReplay.ts: byKind[e.kind] ?? 0':
+    'A tally key seen for the first time starts its count at zero; the key exists only because the engine published an event of that kind, so no absent reading is filled.',
   // ── Guarded: the zero is read back and rejected within a few lines, so it
   // is a way of spelling "skip", not a value that reaches anyone.
   'ingestion/connectors/cboeOptions.ts: rawOi ?? 0':
