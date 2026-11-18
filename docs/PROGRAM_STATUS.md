@@ -24,7 +24,8 @@ Exactly these labels are used:
 | Setup replay (`npm run research:setup-replay`) | IMPLEMENTED, NOT RUNTIME-VERIFIED | Byte-identical report on two runs over the synthetic fixtures. Signal events only: no P&L, hit rate or win rate. |
 | Live bars (Phase A) | BLOCKED BY ENVIRONMENT | The network policy refuses the vendor host, and there is no key. |
 | Setup engine fed by live data | BLOCKED BY DATA | Depends on Phase A or a user import. |
-| Outcome grading of setups / ledger (Phase D) | NOT STARTED | Needs a bar source first. |
+| Replay outcome grading (`backend/src/research/setupOutcome.ts`) | IMPLEMENTED, NOT RUNTIME-VERIFIED | `setupOutcome.test.ts`; no rate below 30 decided ideas. Imported bars only. Live outcome ledger (Phase D) still needs a bar source. |
+| `/structure` page, chart, pre-registration validator, grid runner, journal CSV, ticket snapshot | IMPLEMENTED, NOT RUNTIME-VERIFIED | Fixture and unit tests only; see `docs/AUDIT_2026-11-18.md`. No real plan frozen, no real bars. |
 | `/setups` page and `POST /api/setups/replay` | IMPLEMENTED, NOT RUNTIME-VERIFIED | `setupsRoute.test.ts` (route output equals the CLI's for the fixture, body cap, named refusals, no store writes, `requireAuth` only) and `frontend/test/setupReplay.test.tsx`. Not opened in a browser against a running backend; no real bars. |
 | Replay idea → ticket link (`frontend/lib/replayIdea.ts`) | IMPLEMENTED, NOT RUNTIME-VERIFIED | `frontend/test/replayIdea.test.tsx`, including a tighten-only invariant over 400 generated tickets. The recorded fixture has no ACTIONABLE idea, so the link has only been exercised on a constructed one. |
 | Bar-import preflight (`backend/src/market/barPreflight.ts`, `POST /api/setups/preflight`, PREFLIGHT panel on `/setups`) | IMPLEMENTED, NOT RUNTIME-VERIFIED | `backend/test/barPreflight.test.ts` (recorded fixture held to the route) and `frontend/test/barPreflight.test.tsx`. Synthetic and hand-built CSVs only. |
@@ -32,7 +33,7 @@ Exactly these labels are used:
 | TradingView webhook to ticket prefill | NOT STARTED | |
 | Real options-event source for the flow engine | REQUIRES USER DECISION | `docs/PROVIDER_DECISION_RECORD.md`: cost and OPRA non-display licensing. |
 | Setup engine PR #139 | MERGED | Merge commit `df1c711`. |
-| Merge of the setups-page PR | REQUIRES USER DECISION | Opened as a draft; not merged. |
+| Setups-page and follow-up PRs (#140–#149) | MERGED | #149 merge commit `a256252`. |
 
 ## Free-data feasibility
 
@@ -75,7 +76,7 @@ The rules pin (`the rules are pinned to SETUP_RULES_VERSION`) fails on every edi
 
 ## Handoff
 
-- Next, in order: a read-only `/setups` page and import route over the same engine; journal sync to Supabase; TradingView webhook to ticket prefill; then Phase D once any bar source exists.
+- Next, in order: journal sync to Supabase; TradingView webhook to ticket prefill; then Phase D once any bar source exists.
 - The setup definitions (`backend/src/setups/sweepReclaim.ts` header) are proposed interpretations, versioned by `SETUP_METHOD_VERSION`. Changing a rule means bumping `SETUP_RULES_VERSION`.
 - Before trusting a replay on real data, import a real CSV and check its gap list and rejected rows in the report.
 

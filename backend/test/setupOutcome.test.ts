@@ -147,3 +147,10 @@ test('driven through the real state machine, the grader agrees with COMPLETED an
   assert.equal(g.r, i.netR);
   assert.ok(g.r! >= 2, 'the gate passed it, so its net R is at least 2');
 });
+
+test('missing bars straight after ACTIONABLE are counted as a gap (audit 2026-11-18)', () => {
+  // ACTIONABLE at T0+2M; bars 2 and 3 are missing, so the first graded bar opens at T0+4M.
+  const o = gradeIdea(idea(), mk([FLAT, FLAT, FLAT, FLAT, [100, 106.5, 99.5, 106]], [2, 3]));
+  assert.equal(o.state, 'TARGET_FIRST');
+  assert.equal(o.gapMinutes, 2);
+});

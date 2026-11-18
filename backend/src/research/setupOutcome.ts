@@ -15,7 +15,8 @@
  *   is `AMBIGUOUS_SAME_BAR`: a 1-minute bar does not say which came first, and
  *   calling it a win is the flattering guess.
  * - Bars running out before either touch is `OPEN`, never a loss or a win.
- * - A gap in the bars inside the graded window is reported (`gapMinutes`), not
+ * - A gap in the bars inside the graded window, including any between the
+ *   ACTIONABLE instant and the first graded bar, is reported (`gapMinutes`), not
  *   bridged: a touch may have happened in the missing minutes.
  * - R is net of the round-trip cost, on the same basis the reward gate used:
  *   a target hit is `+netR`; a stop hit is `-1`, because the gate's risk
@@ -65,7 +66,11 @@ export function gradeIdea(idea: SetupIdea, bars: readonly Bar[]): IdeaOutcome {
   let prev: Bar | null = null;
   for (const b of bars) {
     if (b.tOpen < at) continue;
-    if (prev !== null) gapMinutes += Math.max(0, (b.tOpen - prev.tOpen) / MINUTE - 1);
+    // The first graded bar should open at the ACTIONABLE instant; minutes
+    // missing before it are a gap too (audit 2026-11-18).
+    gapMinutes += prev !== null
+      ? Math.max(0, (b.tOpen - prev.tOpen) / MINUTE - 1)
+      : Math.max(0, (b.tOpen - at) / MINUTE);
     prev = b;
     barsRead++;
     const hitTarget = long ? b.h >= tgt : b.l <= tgt;
