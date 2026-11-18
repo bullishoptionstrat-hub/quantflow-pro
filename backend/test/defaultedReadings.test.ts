@@ -109,6 +109,8 @@ const exemption = (operand: string) =>
  * raw source line, which reformatting does.
  */
 const LEDGER: Record<string, string> = {
+  'research/sensitivityGrid.ts: metric[o.state] ?? 0':
+    'A tally of outcome states in one grid cell: a state not yet seen in the cell has been counted zero times, which is the truth.',
   'research/setupReplay.ts: byTerminal[t] ?? 0':
     'A tally key seen for the first time starts its count at zero; the key exists only because an idea reached that terminal state, so no absent reading is filled.',
   'research/setupReplay.ts: byBlocked[reason.code] ?? 0':

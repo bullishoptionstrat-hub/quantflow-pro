@@ -149,3 +149,26 @@ Not picked: the candlestick structure chart (larger, and the structure page
 already lists events), the grid runner (worth doing, but it is a research
 tool that runs the engines and deserves its own review), the delayed chain
 view (Cboe CDN refused here).
+
+## Choice after #146 (2026-11-18)
+
+Two picked, both no spend and no decision:
+
+1. **Grid runner that refuses anything but a FROZEN plan.**
+   `research/sensitivityGrid.ts` (`npm run research:grid`) runs only when
+   `validatePreregistration` says VALID and FROZEN, and only on CSV files whose
+   SHA-256 are exactly the plan's analysis datasets; a holdout file is refused
+   by name. Every cell is a `runSetupReplay` call and every cell is reported in
+   plan order, counts only. Tested against a synthetic TEST plan over the
+   episode fixtures; no real plan exists and none was written or frozen.
+2. **Candlestick chart on `/structure`.** The structure report now carries its
+   closed bars, and `lib/structureChart.ts` decides what may be drawn at a
+   replay cursor: closed bars only, each mark at the bar that closed at its
+   `knownAt` (a swing at its confirming bar, not its pivot), FVG boxes ending
+   at their first terminal event.
+
+Why these: both were named last round as worth doing; both reuse existing
+engines and fixtures. Not picked: the post-trade review flow (the journal
+already freezes the ticket beside the fill; a review view is next), the
+accessibility audit (partly covered by the chart's keyboard range input), the
+delayed chain view (Cboe CDN refused here).

@@ -2,6 +2,7 @@
 import { useMemo, useState } from 'react'
 import { apiFetch } from '@/lib/apiFetch'
 import { Panel } from '@/components/hud/Panel'
+import { StructureChart } from '@/components/structure/StructureChart'
 
 /**
  * The structure engine over bars the trader imports — read only.
@@ -38,6 +39,8 @@ export interface StructureReport {
   counts: { events: number; byKind: Record<string, number> }
   notComputed: { name: string; status: string; reason: string }[]
   events: StructureEvent[]
+  /** Closed bars of the symbol; absent from a report older than the chart. */
+  bars?: unknown
 }
 
 export interface StructureInputs {
@@ -185,6 +188,11 @@ export function StructureReportView({ report }: { report: StructureReport }) {
         </div>
         <h4>Not computed</h4>
         <ul style={{ fontSize: 12 }}>{report.notComputed.map((n) => <li key={n.name}><span style={{ fontFamily: MONO }}>{n.name}</span> — {n.reason}</li>)}</ul>
+      </Panel>
+      <Panel title="CHART" code="USER IMPORT">
+        {report.bars === undefined
+          ? <p role="note" style={{ fontSize: 12 }}>This report carries no bars, so there is no chart; the events are listed below.</p>
+          : <StructureChart bars={report.bars} events={report.events} />}
       </Panel>
       <Panel title={`EVENTS (${report.counts.events})`} code="USER IMPORT">
         <label style={{ fontSize: 12 }}>Kind{' '}
