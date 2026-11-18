@@ -1,4 +1,5 @@
 'use client'
+import { ideaTimeline } from '@/lib/ideaTimeline'
 import { useState } from 'react'
 import { apiFetch } from '@/lib/apiFetch'
 import { Panel } from '@/components/hud/Panel'
@@ -18,7 +19,7 @@ import { replayCsv } from '@/lib/replayCsv'
 
 const MONO = "'JetBrains Mono', monospace"
 
-interface Transition { state: string; knownAt: number; bar: string; reasons: { code: string; detail: string }[] }
+interface Transition { state: string; knownAt: number; bar: string; reasons: { code: string; detail: string }[]; events?: string[] }
 interface Idea { ideaId: string; setup: string; side: string; symbol: string; netR: number | null; entry?: number | null; invalidation?: number | null; target?: { name: string; price: number } | null; history: Transition[] }
 interface Dataset { symbol: string; contentId: string; provenance: string; timestampMarks: string; rejected: unknown[]; gaps: unknown[] }
 export interface ReplayReport {
@@ -184,9 +185,7 @@ function Report({ report }: { report: ReplayReport }) {
           {r.ideas.length === 0 ? <p style={{ fontSize: 12 }}>No idea formed on these bars.</p> : r.ideas.map((i) => (
             <details key={i.ideaId} style={{ fontFamily: MONO, fontSize: 11, marginBottom: 6 }}>
               <summary>{i.setup} {i.side} · {i.history[i.history.length - 1]?.state ?? '—'}</summary>
-              <ol>{i.history.map((t, n) => (
-                <li key={n}>{fmtTime(t.knownAt)} {t.state}{t.reasons.length > 0 ? ` — ${t.reasons.map((x) => `${x.code}: ${x.detail}`).join('; ')}` : ''}</li>
-              ))}</ol>
+              <IdeaTimeline history={i.history} />
               <IdeaTicketLink idea={i} method={report.setupMethodVersion} />
             </details>
           ))}
@@ -239,5 +238,39 @@ function IdeaTicketLink({ idea, method }: { idea: Idea; method: string }) {
     <a href={ideaLinkQuery(p)} data-testid="idea-ticket-link" style={{ fontSize: 11 }}>
       Open as ticket (setup ID {p.ideaId.slice(0, 12)}…, gates unanswered)
     </a>
+  )
+}
+
+/**
+ * The drill-down: every transition with the bar it cites, that bar's close and
+ * the transition's knownAt. A row the engine's own fields contradict (knowable
+ * before its bar closed, out of order, unreadable) carries the flag instead of
+ * being repaired.
+ */
+function IdeaTimeline({ history }: { history: Transition[] }) {
+  const rows = ideaTimeline(history)
+  return (
+    <table data-testid="idea-timeline" style={{ fontFamily: MONO, fontSize: 11, borderCollapse: 'collapse', margin: '6px 0' }}>
+      <thead><tr>
+        <th scope="col" style={{ textAlign: 'left', paddingRight: 8 }}>+MIN</th>
+        <th scope="col" style={{ textAlign: 'left', paddingRight: 8 }}>KNOWN AT</th>
+        <th scope="col" style={{ textAlign: 'left', paddingRight: 8 }}>STATE</th>
+        <th scope="col" style={{ textAlign: 'left', paddingRight: 8 }}>CITED BAR (CLOSE)</th>
+        <th scope="col" style={{ textAlign: 'left' }}>EVENTS · BLOCKERS</th>
+      </tr></thead>
+      <tbody>{rows.map((r) => (
+        <tr key={r.n} data-testid="timeline-row">
+          <td style={{ paddingRight: 8 }}>{r.sinceStartMin === null ? '—' : r.sinceStartMin.toFixed(0)}</td>
+          <td style={{ paddingRight: 8 }}>{r.knownAt === null ? '—' : fmtTime(r.knownAt)}</td>
+          <td style={{ paddingRight: 8 }}>{r.state}</td>
+          <td style={{ paddingRight: 8 }} title={r.barId}>{r.barClose === null ? `unreadable: ${r.barId}` : `${r.barSymbol} ${fmtTime(r.barClose)}`}</td>
+          <td>
+            {r.events.join(', ')}
+            {r.reasons.length > 0 && <div style={{ color: '#fcd34d' }}>{r.reasons.map((x) => `${x.code}: ${x.detail}`).join('; ')}</div>}
+            {r.flags.length > 0 && <div data-testid="timeline-flag" style={{ color: '#fca5a5' }}>{r.flags.join(' · ')}</div>}
+          </td>
+        </tr>
+      ))}</tbody>
+    </table>
   )
 }

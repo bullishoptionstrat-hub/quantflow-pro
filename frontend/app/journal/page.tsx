@@ -6,6 +6,7 @@ import {
 } from '@/lib/journal'
 import { mergeImport, serializeJournal, useJournal } from '@/lib/journalStore'
 import { Panel } from '@/components/hud/Panel'
+import { BREAKDOWN_DIMENSIONS, journalBreakdown, type BreakdownDimension } from '@/lib/journalBreakdown'
 
 /**
  * The trade journal: planned against actual, R against the planned stop, and
@@ -131,6 +132,8 @@ export default function JournalPage() {
           )}
         </div>
       </Panel>
+
+      <BreakdownPanel entries={entries} />
 
       {ready && ordered.length === 0 && !error && (
         <div className="card" style={{ padding: 16, marginBottom: 16, fontSize: 12, color: 'var(--text-muted)' }}>
@@ -301,5 +304,39 @@ function EntryCard({ entry: e, ev, onPatch }: { entry: JournalEntry; ev: EntryEv
         </details>
       )}
     </div>
+  )
+}
+
+/**
+ * The journal split by one dimension. Counts and summed R for every bucket; a
+ * rate only where that bucket alone reaches MIN_SAMPLE measured trades.
+ */
+function BreakdownPanel({ entries }: { entries: Parameters<typeof journalBreakdown>[0] }) {
+  const [dim, setDim] = useState<BreakdownDimension>('model')
+  const b = useMemo(() => journalBreakdown(entries, dim), [entries, dim])
+  return (
+    <Panel title="Breakdown" code="THIS BROWSER" data-testid="journal-breakdown" style={{ marginTop: 16, marginBottom: 16 }}>
+      <label htmlFor="breakdown-dim" style={LABEL}>SPLIT BY</label>
+      <select id="breakdown-dim" value={dim} onChange={(e) => setDim(e.target.value as BreakdownDimension)} style={{ ...INPUT, width: 'auto', marginBottom: 8 }}>
+        {BREAKDOWN_DIMENSIONS.map((d) => <option key={d} value={d}>{d}</option>)}
+      </select>
+      {b.measured === 0
+        ? <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>No closed trade with a measured R yet.</div>
+        : (
+          <table style={{ fontFamily: MONO, fontSize: 11, borderCollapse: 'collapse' }}>
+            <thead><tr>{['BUCKET', 'N', 'W/L/BE', 'TOTAL R', 'RATE'].map((h) => <th key={h} scope="col" style={{ textAlign: 'left', paddingRight: 12 }}>{h}</th>)}</tr></thead>
+            <tbody>{b.buckets.map((x) => (
+              <tr key={x.key} data-testid="breakdown-row">
+                <td style={{ paddingRight: 12 }}>{x.key}</td>
+                <td style={{ paddingRight: 12 }}>{x.measured}</td>
+                <td style={{ paddingRight: 12 }}>{x.wins}/{x.losses}/{x.breakeven}</td>
+                <td style={{ paddingRight: 12 }}>{rText(x.totalR)}</td>
+                <td>{x.rates ? `${(x.rates.winRate * 100).toFixed(1)}% · avg ${rText(x.rates.avgR)}` : `— (${x.measured} of ${b.minSample})`}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        )}
+      {b.overlapping && b.measured > 0 && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }}>A trade can carry several tags, so tag rows overlap and do not sum to the total.</div>}
+    </Panel>
   )
 }
