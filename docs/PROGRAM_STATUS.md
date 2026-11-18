@@ -33,19 +33,21 @@ Exactly these labels are used:
 
 ## Free-data feasibility
 
-Classes:
+Classes (the user's definitions):
 
-- **A**: data the user supplies themselves; no vendor terms apply here.
-- **B**: a primary-source terms page was read here and permits the intended use.
-- **C**: read here, permits display only, not persistence or derived publication.
-- **D**: read here, and prohibits the intended use.
-- **E**: not read from a primary source here. Any claim about it is unverified.
+- **A**: verified free. Terms and availability were read from a primary source here and permit the intended use at no cost.
+- **B**: user-imported. Data the user supplies themselves.
+- **C**: limited, delayed or incomplete free data.
+- **D**: paid or entitled data.
+- **E**: not yet verified. Terms or availability were not read from a primary source here; any claim about it is unverified.
 
 | Source | Class | Note |
 |---|---|---|
-| User CSV of 1-minute bars | A | The only free path used by this milestone. Provenance `USER_IMPORT`. |
+| User CSV of 1-minute bars | B | The only path used by this milestone. Provenance `USER_IMPORT`. |
 | Twelve Data free tier (bars) | E | Host refused by the network policy from this container; terms for bar retention not re-read for this use. |
 | Any other free intraday bar source | E | None read here. |
+
+No source is class A today: nothing was verified free from a primary source here.
 
 Rights findings for the sources the backend already uses live in `backend/src/provenance/rights.ts` and `docs/DATA_RIGHTS_MATRIX.md`; this table covers only bar data for the setup engine.
 
