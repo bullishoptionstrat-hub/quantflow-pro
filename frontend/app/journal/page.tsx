@@ -1,4 +1,5 @@
 'use client'
+import { journalCsv } from '@/lib/journalCsv'
 import { useMemo, useState, type CSSProperties } from 'react'
 import {
   MIN_SAMPLE, SELF_TAGS, evaluateEntry, journalStats,
@@ -63,6 +64,18 @@ function NumCommit({ id, label, value, onCommit, placeholder }: {
 }) {
   const [text, setText] = useState(value === null ? '' : String(value))
   return <Field id={id} label={label} value={text} placeholder={placeholder} onChange={(v) => { setText(v); onCommit(parseField(v)) }} />
+}
+
+/** The journal as CSV; provenance lines ride in the file. */
+function downloadJournalCsv(entries: readonly JournalEntry[]) {
+  const now = new Date().toISOString()
+  const blob = new Blob([journalCsv(entries, now)], { type: 'text/csv' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `quantflow-journal-${now.slice(0, 10)}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 export default function JournalPage() {
@@ -145,7 +158,8 @@ export default function JournalPage() {
       {ordered.map((e) => <EntryCard key={e.id} entry={e} ev={evals.get(e.id)!} all={entries} onPatch={(p) => patch(e.id, p)} />)}
 
       <Panel title="Export / import" code="THIS BROWSER" style={{ marginTop: 16 }}
-        actions={<button type="button" style={BUTTON} onClick={() => setShowExport((s) => !s)}>{showExport ? 'Hide export' : 'Export JSON'}</button>}>
+        actions={<><button type="button" style={BUTTON} onClick={() => setShowExport((s) => !s)}>{showExport ? 'Hide export' : 'Export JSON'}</button>
+          <button type="button" style={BUTTON} data-testid="journal-csv" disabled={entries.length === 0} onClick={() => downloadJournalCsv(entries)}>Download CSV</button></>}>
         {showExport && (
           <textarea data-testid="journal-export" readOnly rows={6} value={serializeJournal(entries, [])} style={{ ...INPUT, fontSize: 11, marginBottom: 8 }} />
         )}

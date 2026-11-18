@@ -8,9 +8,11 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import {
-  MIN_SAMPLE, createEntry, etDate, evaluateEntry, isEntry, journalStats, priorAttempts, realizedOf, stopOutsOn,
+  JOURNAL_SCHEMA, MIN_SAMPLE, createEntry, etDate, evaluateEntry, isEntry, journalStats, priorAttempts, realizedOf, stopOutsOn,
   type Exit, type JournalEntry,
 } from '@/lib/journal'
+import { ticketSummary } from '@/lib/ticketSummary'
+import { JOURNAL_CSV_COLUMNS, journalCsv } from '@/lib/journalCsv'
 import { STORAGE_KEY, mergeImport, parseJournal, serializeJournal } from '@/lib/journalStore'
 import {
   evaluateTicket, minutesOf, ticketRecord, visibleGates,
@@ -415,5 +417,107 @@ describe('post-trade review on the page', () => {
     expect(screen.getByTestId('post-trade-review')).toBeDefined()
     expect(screen.getByTestId('review-verdict').textContent).toMatch(/PROCESS CLEAN · OUTCOME WIN · clean process, winning outcome/)
     expect(screen.getByTestId('review-next').textContent).toBe('NEXT TIME: size from the stop')
+  })
+})
+
+describe('journal CSV export', () => {
+  const rows = (csv: string) => csv.trim().split('\n').filter((l) => !l.startsWith('#'))
+  const cols = (csv: string, i: number) => {
+    const [h, ...data] = rows(csv)
+    return Object.fromEntries(h.split(',').map((k, j) => [k, data[i].split(',')[j]]))
+  }
+
+  test('header lines carry provenance and the sample floor, and the column list is the header row', () => {
+    const csv = journalCsv([entry()], '2026-11-18T00:00:00.000Z')
+    const head = csv.split('\n').filter((l) => l.startsWith('#'))
+    expect(head.join('\n')).toContain('THIS BROWSER')
+    expect(head.join('\n')).toContain(JOURNAL_SCHEMA)
+    expect(head.join('\n')).toContain(`below ${MIN_SAMPLE}`)
+    expect(head.join('\n')).toContain('closed with a measured R: 0')
+    expect(head.join('\n')).toContain('this file is below that floor')
+    expect(rows(csv)[0]).toBe(JOURNAL_CSV_COLUMNS.join(','))
+  })
+
+  test('a planned entry has empty cells, never zeros, for everything not yet known', () => {
+    const r = cols(journalCsv([entry()], 'x'), 0)
+    for (const k of ['fill_price', 'fill_units', 'fees', 'pnl', 'r', 'risk_at_fill', 'exit_units', 'outcome', 'process', 'actual_stop']) expect(r[k]).toBe('')
+    expect(r.status).toBe('PLANNED')
+    expect(r.planned_units).toBe('3')
+  })
+
+  test('a closed trade copies evaluateEntry exactly', () => {
+    const e = closed(5000, [exit(5030, 2)])
+    const ev = evaluateEntry(e, [e])
+    const r = cols(journalCsv([e], 'x'), 0)
+    expect(Number(r.r)).toBe(ev.realized!.r)
+    expect(Number(r.pnl)).toBe(ev.realized!.pnl)
+    expect(r.fees).toBe('10')
+    expect(r.exit_units).toBe('2')
+    expect(r.outcome).toBe('WIN')
+    expect(journalCsv([e], 'x')).toContain('closed with a measured R: 1')
+  })
+
+  test('a fill through the stop has P&L, no R, and is not counted as measured', () => {
+    const e = closed(4985, [exit(4980, 2)])
+    const ev = evaluateEntry(e, [e])
+    expect(ev.realized).not.toBeNull()
+    expect(ev.realized!.r).toBeNull()
+    const csv = journalCsv([e], 'x')
+    expect(cols(csv, 0).r).toBe('')
+    expect(csv).toContain('closed with a measured R: 0')
+  })
+
+  test('a fee not entered is an empty cell and the R stays empty', () => {
+    const r = cols(journalCsv([closed(5000, [exit(5030, 2)], null)], 'x'), 0)
+    expect(r.fees).toBe('')
+    expect(r.r).toBe('')
+  })
+
+  test('formula-leading trader text is guarded', () => {
+    const t = ticket({ setupId: '=HYPERLINK("x")' })
+    const csv = journalCsv([entry({}, t)], 'x')
+    expect(csv).toContain(`"'=HYPERLINK(""x"")"`)
+  })
+
+  test('the page offers the download only when there is something to export', () => {
+    render(<JournalPage />)
+    expect((screen.getByTestId('journal-csv') as HTMLButtonElement).disabled).toBe(true)
+  })
+})
+
+describe('ticket pre-entry snapshot', () => {
+  test('says it is not an order, copies the state, and lists every gate with its source', () => {
+    const t = ticket()
+    const s = ticketSummary(t)
+    expect(s.split('\n')[0]).toBe('QUANTFLOW TICKET · APPROVED_TRADE · NOT AN ORDER')
+    for (const g of t.gates) expect(s).toMatch(new RegExp(`${g.status}\\s+${g.id}.* · ${g.source}`))
+    expect(s).toContain('units 3 ')
+    expect(s).toContain('ranking only, approves nothing')
+    expect(s).toContain('origin: typed by hand')
+    expect(s).toContain(t.note)
+  })
+
+  test('an absent figure prints a dash, never 0, and blockers are named', () => {
+    const base = ticket({ answers: { traderState: 'FAIL' } })
+    const t = { ...base, plan: { ...base.plan, units: null, plannedRisk: null, blendedNetR: null } }
+    const s = ticketSummary(t)
+    expect(s).toContain('planned risk — · blended net R —')
+    expect(s).toContain('units — ')
+    expect(s).not.toMatch(/units 0\b/)
+    expect(s).toMatch(/blockers: .+/)
+    expect(s).not.toContain('blockers: none')
+    expect(s.split('\n')[0]).toBe(`QUANTFLOW TICKET · ${base.state} · NOT AN ORDER`)
+    expect(base.state).not.toBe('APPROVED_TRADE')
+  })
+
+  test('integer figures keep their trailing zeros', () => {
+    const b = ticket()
+    expect(ticketSummary({ ...b, plan: { ...b.plan, units: 100 } })).toContain('units 100 ')
+    expect(ticketSummary(ticket({ entry: 5000, stop: 4990, targets: [{ price: 5030, kind: 'EXTERNAL' }] }))).toContain('entry 5000 · stop 4990')
+  })
+
+  test('the ticket page renders the snapshot from the same record', () => {
+    render(<TicketPage />)
+    expect(screen.getByTestId('ticket-summary').textContent).toContain('NOT AN ORDER')
   })
 })

@@ -181,3 +181,10 @@ Two $0 upgrades that need no decision from the operator:
 2. **Post-trade review on `/journal`.** Planned (frozen ticket) against recorded entry, stop, units, average exit vs targets, net R, costs, process vs outcome, violations and the one repeat/avoid action. Built from existing journal data only; no new storage, no new metric.
 
 Skipped this round: the accessibility/keyboard audit (larger, deserves its own PR), and everything on the standing skip list (delayed chain grid, paid data, production migrations, secrets, playbook definitions, real sensitivity grid).
+
+## Chosen 2026-11-18 (after #148)
+
+1. **`/journal` CSV export** (`lib/journalCsv.ts`). The journal lived in one browser and exported only as JSON; a spreadsheet is where a trader reviews it. `#` header lines carry the schema, export time, entry count, the measured-R count and whether the file is below the 30-trade floor. Every figure is copied from `evaluateEntry`; absent values are empty cells; formula-leading text is guarded with the replay CSV's own cell writers.
+2. **Pre-entry snapshot on `/ticket`** (`lib/ticketSummary.ts`). The frozen ticket record as plain text for a screenshot or paste: state, "NOT AN ORDER", plan figures (`—` when absent), every gate with its source, blockers, score labelled ranking-only, the record's own note. It reads the record and nothing else.
+
+Skipped again: the accessibility/keyboard audit across every page (still its own PR), the /prep pre-session checklist (it already exists, derived from the plan's fields), and the standing skip list.
