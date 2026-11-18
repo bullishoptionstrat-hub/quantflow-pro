@@ -26,6 +26,7 @@ Exactly these labels are used:
 | Setup engine fed by live data | BLOCKED BY DATA | Depends on Phase A or a user import. |
 | Outcome grading of setups / ledger (Phase D) | NOT STARTED | Needs a bar source first. |
 | `/setups` page and `POST /api/setups/replay` | IMPLEMENTED, NOT RUNTIME-VERIFIED | `setupsRoute.test.ts` (route output equals the CLI's for the fixture, body cap, named refusals, no store writes, `requireAuth` only) and `frontend/test/setupReplay.test.tsx`. Not opened in a browser against a running backend; no real bars. |
+| Replay idea → ticket link (`frontend/lib/replayIdea.ts`) | IMPLEMENTED, NOT RUNTIME-VERIFIED | `frontend/test/replayIdea.test.tsx`, including a tighten-only invariant over 400 generated tickets. The recorded fixture has no ACTIONABLE idea, so the link has only been exercised on a constructed one. |
 | Journal sync to Supabase | NOT STARTED | |
 | TradingView webhook to ticket prefill | NOT STARTED | |
 | Real options-event source for the flow engine | REQUIRES USER DECISION | `docs/PROVIDER_DECISION_RECORD.md`: cost and OPRA non-display licensing. |
@@ -109,3 +110,20 @@ Each mutation was applied once, run against `backend/test/setupsRoute.test.ts` o
 | OPEN scored as a loss | killed: "bars ending first is OPEN" |
 | Missing net R graded | killed: "... is NOT_GRADED" |
 | Page renders a rate when suppressed | killed (2 tests) |
+
+## Replay idea to ticket (2026-11-18)
+
+An ACTIONABLE replay idea with a finite entry, invalidation and target on the right sides of each other gets an "Open as ticket" link on `/setups`. The link fills, on an empty ticket only, the instrument (when it is a preset), direction, setup ID, entry, stop and one target price. The setup ID is the idea's content hash, so the journal's one-attempt rule (`firstAttempt`) applies to it like any typed ID. It answers no gate, picks no model, writes no narrative, leaves the target's liquidity kind unanswered and supplies no budget, cost or slippage. The ticket shows where the numbers came from and that they are history, not a live quote. A link whose fields fail the same checks it was built with is refused whole. The saved record carries `origin` (`REPLAY_IDEA`, hash, setup, method version, ACTIONABLE time); no gate reads it.
+
+| Mutation (one at a time, `replayIdea.test.tsx`) | Result |
+|---|---|
+| Any state links, not only ACTIONABLE | killed (2 tests) |
+| Geometry not checked | killed (4 tests) |
+| Setup ID overwrites a typed one | killed (1) |
+| Entry overwrites a typed one | killed (1) |
+| Target kind answered EXTERNAL | killed (1) |
+| Prefill answers `firstAttempt` PASS | killed (2) |
+| Link version not checked | killed (1) |
+| Page drops the setup ID | killed (1) |
+| Direction overwrites a chosen one | killed (1) |
+| Non-hash ID accepted | killed (1) |
