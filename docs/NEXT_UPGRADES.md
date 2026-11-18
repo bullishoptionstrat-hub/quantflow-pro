@@ -61,3 +61,26 @@ something before it can start.
 Acceptance: backend and frontend `npm run verify` and `npm run build` pass;
 each mutation in the planned list is killed by an intended test; the scope
 sentence and PROGRAM_STATUS describe what is graded and what is not.
+
+## Choice after #142 (2026-11-18)
+
+#1, #2 and #6 shipped in #141/#142. The next two picked, both no spend and no
+decision:
+
+1. **A planted-episode synthetic fixture that reaches ACTIONABLE.** Not on the
+   table above, and it came first because nothing else could be trusted
+   without it: the plain fixture walks never take an idea past displacement
+   (the FVG must form on the displacement bar), so replay → outcome → ticket
+   had only run on a hand-built idea. Building it found a real defect: the
+   engine publishes `target` as `{ name, price }` and the ticket link read a
+   bare number, so every real ACTIONABLE idea was refused. The fixture plants
+   the entry template only; every bar after a trigger is the unconditioned
+   walk, and a test re-walks the files to prove it. It is not tuned toward
+   wins and is not evidence about anything.
+2. **Replay CSV export with provenance (#14).** Cheap, and the export carries
+   the method versions, config hash and dataset ids so a file that leaves the
+   page still says what produced it.
+
+Not picked: the sensitivity grid (#11) needs a pre-registration rule written
+before it runs, which is a decision about method; the read-only structure view
+(#3) is worth doing next.

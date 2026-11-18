@@ -148,3 +148,22 @@ An ACTIONABLE replay idea with a finite entry, invalidation and target on the ri
 | Panel renders a null RTH gap as 0 | killed (1) |
 | Panel does not require the convention | killed (1) |
 | Panel renders any OK body as a preflight | killed (1) |
+
+## Planted-episode fixture and replay CSV (2026-11-18)
+
+`backend/tools/fixtures/syntheticEpisodes.ts` writes `EPISODE_SPY_1m.csv` / `EPISODE_QQQ_1m.csv` (five January days, one planted Sweep and Reclaim entry per day, QQQ planted with the higher low that makes SMT) and `test/fixtures/setupReplayEpisodes.json` is the CLI's report over them. It is the only recorded input on which ideas reach ACTIONABLE (5 or more, all on planted trigger bars). Everything outside the template, including every bar after a trigger, is the plain `syntheticBars.ts` walk; `syntheticEpisodes.test.ts` re-walks the files to prove it. Outcomes are whatever the walk does, the sample is far below 30 and no rate is published. Driving it through the page found that the ticket link read `target` as a number while the engine sends `{ name, price }`, so no real idea could open a ticket; fixed, and `episodeReplay.test.tsx` runs replay → outcome → ticket on engine output.
+
+`frontend/lib/replayCsv.ts` exports the replay from `/setups` (DOWNLOAD CSV): method versions, config hash and per-dataset content id and provenance as `#` lines, the backend's suppression reason instead of a rate below the floor, empty cells for absent values, formula-shaped text prefixed with `'`.
+
+| Mutation | Result |
+|---|---|
+| link reads `target` as a number (the pre-fix code) | killed: 2 in `episodeReplay.test.tsx` |
+| link reads the stop as the target | killed: 2 |
+| walk step changed | killed: byte pin and walk tests (3) |
+| no sweep below the low / no SMT higher low / trigger closes under the gap / QQQ episodes misaligned | killed: byte pin (1 each) |
+| bars after a trigger nudged | killed: byte pin (1) |
+| CSV: absent value written as 0 | killed (2) |
+| CSV: formula guard only for `=` / no quoting / rate published below floor / config hash dropped / datasets dropped / newline kept in a header value / outcome not joined by id | killed (1–2 each) |
+| CSV: terminal state taken from the first transition | **survived**, closed by asserting the last state per row |
+
+The generator mutations are killed by the byte pin (the committed files must equal the generator's output), not by a behavioural assertion; the unconditioned-walk test is the one that would catch planting after a trigger if the files were regenerated.

@@ -1,0 +1,49 @@
+{
+  "kind": "SYNTHETIC_EPISODES",
+  "generator": "backend/tools/fixtures/syntheticEpisodes.ts",
+  "seeds": {
+    "spyWalk": 3101,
+    "qqqWalk": 3202,
+    "episodes": 3303
+  },
+  "unitFraction": 0.001,
+  "days": [
+    "2026-01-05",
+    "2026-01-06",
+    "2026-01-07",
+    "2026-01-08",
+    "2026-01-09"
+  ],
+  "episodes": [
+    {
+      "day": "2026-01-05",
+      "startMinute": 67,
+      "triggerMinute": 92,
+      "triggerTOpen": "2026-01-05T16:02:00.000Z"
+    },
+    {
+      "day": "2026-01-06",
+      "startMinute": 88,
+      "triggerMinute": 113,
+      "triggerTOpen": "2026-01-06T16:23:00.000Z"
+    },
+    {
+      "day": "2026-01-07",
+      "startMinute": 64,
+      "triggerMinute": 89,
+      "triggerTOpen": "2026-01-07T15:59:00.000Z"
+    },
+    {
+      "day": "2026-01-08",
+      "startMinute": 241,
+      "triggerMinute": 266,
+      "triggerTOpen": "2026-01-08T18:56:00.000Z"
+    },
+    {
+      "day": "2026-01-09",
+      "startMinute": 182,
+      "triggerMinute": 207,
+      "triggerTOpen": "2026-01-09T17:57:00.000Z"
+    }
+  ]
+}

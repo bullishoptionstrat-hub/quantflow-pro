@@ -31,7 +31,13 @@ export interface ReplayIdeaLike {
   symbol: string
   entry?: number | null
   invalidation?: number | null
-  target?: number | null
+  /**
+   * The wire shape `setups/sweepReclaim.ts` publishes: the named level and its
+   * price. It was typed as a bare number here, which no engine idea ever is,
+   * so every real ACTIONABLE idea was refused for a "missing" target and only
+   * a hand-built one could open a ticket.
+   */
+  target?: { name: string; price: number } | null
   history: { state: string; knownAt: number }[]
 }
 
@@ -68,7 +74,8 @@ export function ideaPrefill(idea: ReplayIdeaLike, setupMethodVersion: string): I
   const actionable = idea.history.find((t) => t.state === 'ACTIONABLE')
   if (!actionable) return { reason: 'Only an idea that reached ACTIONABLE can open a ticket.' }
   if (idea.side !== 'LONG' && idea.side !== 'SHORT') return { reason: 'The idea has no direction.' }
-  const { entry, invalidation, target } = idea
+  const { entry, invalidation } = idea
+  const target = idea.target?.price
   if (!fin(entry) || !fin(invalidation) || !fin(target)) return { reason: 'The idea is missing its entry, invalidation or target.' }
   const g = geometryProblem(idea.side, entry, invalidation, target)
   if (g) return { reason: g }
@@ -107,12 +114,13 @@ export function parseIdeaLink(search: URLSearchParams): IdeaPrefill | { error: s
     return Number.isFinite(n) ? n : null
   }
   const at = num('at')
+  const tgt = num('target')
   const p = ideaPrefill({
     ideaId: search.get('ideaId') ?? '',
     setup: search.get('setup') ?? '',
     side: search.get('side') ?? '',
     symbol: search.get('symbol') ?? '',
-    entry: num('entry'), invalidation: num('stop'), target: num('target'),
+    entry: num('entry'), invalidation: num('stop'), target: tgt === null ? null : { name: 'LINK', price: tgt },
     history: at === null ? [] : [{ state: 'ACTIONABLE', knownAt: at }],
   }, search.get('method') ?? '')
   if ('reason' in p) return { error: `Idea link refused: ${p.reason}` }
