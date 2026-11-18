@@ -137,6 +137,17 @@ test('invalidation before the trigger is terminal and never reverts', () => {
   assert.equal(terminals.length, 1, 'exactly one terminal transition, and it is the last');
 });
 
+test('a terminal idea stays terminal: later breaks and the expiry horizon add nothing', () => {
+  // After INVALIDATED, more bars break the stop again and run past expiryBars.
+  // A terminal state is final; re-evaluating it would append a second terminal.
+  const rows = BASE.map((r) => [...r] as OHLC);
+  rows[4] = [94, 94, 90.5, 93.8];
+  for (let k = 0; k < 8; k++) rows.push([93, 93.2, 90, 92]);
+  const idea = only(scenario({ rows, params: { expiryBars: 3 } }).res);
+  assert.equal(last(idea).knownAt, at(4), 'nothing is recorded after the invalidation');
+  assert.deepEqual(idea.history.filter((h) => TERMINAL_STATES.includes(h.state)).map((h) => h.state), ['INVALIDATED']);
+});
+
 test('a trigger after expiry is not taken', () => {
   const idea = only(scenario({ params: { expiryBars: 2 } }).res);
   assert.equal(last(idea).state, 'EXPIRED');
