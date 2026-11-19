@@ -86,7 +86,7 @@ Phases 1–6 are $0 and need no user decision. Later phases name what blocks the
   - A second read of a holdout is refused.
 - **Cost:** $0. **Dependencies:** none.
 
-### Phase 2: auction / profile detectors ($0, no decision)
+### Phase 2: auction / profile detectors ($0, no decision). **Implemented; not run on real bars.**
 - **Deliverables:** `structure/profile.ts` covering:
   - volume and TPO profile, POC, a 70% value area (the bin size is a versioned parameter)
   - the initial balance and IB extensions
@@ -94,6 +94,7 @@ Phases 1–6 are $0 and need no user decision. Later phases name what blocks the
   - prior-day value levels as named levels the sweep detector can use
 - **Acceptance:** the prefix-equals-batch look-ahead guard; hand fixtures; the rules version pin; mutation pass.
 - **Cost:** $0.
+- **Status (2026-11-19):** `backend/src/structure/profile.ts` (`profile-rules/1`, own pin in `test/profile.test.ts`, excluded from the structure-rules pin because no existing detector reads it). Look-ahead guard: 10 seeded walks (5m and 15m, Thanksgiving week, missing bars, missing volume, the coverage edge). Hand fixtures for POC, value area, ties, single prints, IB and both extensions, half day, UNKNOWN, null volume. Mutation pass: 17 non-equivalent mutants, 17 killed; 3 equivalent (2 removed as redundant code, 1 kept for type narrowing). `binSize` has no default. Prior-day VAH/VAL are exposed as sweep levels by `levelsFromProfiles`, but `analyse` and the setup engine do not use them yet: wiring them in changes what the setup engine sees and gets its own step. No real bars have been run through it.
 
 ### Phase 3: second and third playbooks, as hypotheses (definitions need sign-off; building them is $0)
 - **Deliverables:**
