@@ -46,7 +46,9 @@ const structureFiles = () => readdirSync(STRUCTURE).filter((f) => f.endsWith('.t
 
 function normalisedSourceHash(): string {
   const h = createHash('sha256');
-  for (const f of [...structureFiles().filter((f) => !f.endsWith('params.ts')), BAR]) {
+  // profile.ts carries its own rules version and pin (profile.test.ts); the
+  // detectors above do not read it, so it is not part of this rule set.
+  for (const f of [...structureFiles().filter((f) => !f.endsWith('params.ts') && !f.endsWith('profile.ts')), BAR]) {
     h.update(relative(SRC, f));
     h.update(stripComments(readFileSync(f, 'utf8')).replace(/\s+/g, ' ').trim());
   }
