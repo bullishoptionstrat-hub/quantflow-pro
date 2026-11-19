@@ -71,17 +71,18 @@ Written 2026-11-18, after #151 merged (`0e908d1`). Research and citations are in
 
 Phases 1–6 are $0 and need no user decision. Later phases name what blocks them.
 
-### Phase 1: research foundations ($0, no decision). **Started in this PR.**
+### Phase 1: research foundations ($0, no decision). **Implemented; one acceptance item blocked (see below).**
 - **Goal:** every study runs on the same honest arithmetic.
 - **Deliverables:**
   - `research/walkForward.ts`: anchored and rolling folds with an embargo, and a Wilson interval (done).
-  - Next: one shared cost model (commission, spread, slippage, with no defaults).
-  - PBO via CSCV and the Deflated Sharpe Ratio.
-  - A holdout lock: a holdout dataset hash may be read once per frozen plan, recorded.
+  - `research/walkForwardReplay.ts`: the setup replay and the sensitivity grid cut into folds, ideas placed by ACTIONABLE `knownAt`, no rate or Wilson interval below n=30 (done).
+  - `research/costModel.ts` (byte-identical `frontend/lib/costModel.ts`): commission and slippage ticks, no defaults; `riskSize.stopRisk` and the replay's `costs.model` both use it. Spread is folded into slippage ticks (conservative reading, recorded in the file) (done).
+  - `research/overfitting.ts`: PBO via CSCV, PSR and the Deflated Sharpe Ratio, formulas cited (done).
+  - `research/holdoutLock.ts`: a holdout is read once per frozen plan; an `O_EXCL` lock file records the read (done).
 - **Acceptance:**
   - No test window overlaps its training window plus the embargo.
   - Wilson matches hand-worked values.
-  - PBO matches the CRAN `pbo` vignette on a fixed matrix.
+  - PBO matches the CRAN `pbo` vignette on a fixed matrix. **BLOCKED**: CRAN is refused by this environment's network and no R is installed; PBO is checked against hand-worked matrices and an independent brute force instead.
   - A second read of a holdout is refused.
 - **Cost:** $0. **Dependencies:** none.
 

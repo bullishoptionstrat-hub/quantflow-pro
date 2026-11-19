@@ -16,13 +16,18 @@ import { evaluateSetups, EMPTY_LEDGER, AttemptLedger, SetupIdea, TERMINAL_STATES
 import { SETUP_METHOD_VERSION, DEFAULT_SETUP_PARAMS } from '../setups/params';
 import { gradeIdea, summariseOutcomes, IdeaOutcome } from './setupOutcome';
 import type { SetupParams } from '../setups/params';
+import { costPricePerUnit, costModelRefusals, instrumentRefusals, type CostModel, type CostInstrument } from './costModel';
 
 export interface ReplayConfig {
   /** The two symbols, each evaluated with the other as its SMT pair. */
   symbols: [string, string];
   timestampMarks: TimestampMarks;
-  /** Round-trip cost per unit in price terms. No default: required. */
-  costs: { roundTripPerUnit: number };
+  /**
+   * Round-trip cost per unit. No default: required. Either the price-terms
+   * figure directly, or the shared cost model (`research/costModel.ts`, the
+   * rule sizing uses) with the instrument it is priced in.
+   */
+  costs: { roundTripPerUnit: number } | { model: CostModel; instrument: CostInstrument };
   params?: Partial<SetupParams>;
 }
 
@@ -55,8 +60,13 @@ export function configRefusals(c: unknown): string[] {
     r.push('config.symbols: two distinct symbol strings required');
   if (o.timestampMarks !== 'OPEN' && o.timestampMarks !== 'CLOSE') r.push('config.timestampMarks: must be OPEN or CLOSE (no default)');
   const costs = o.costs as Record<string, unknown> | undefined;
-  const rt = costs?.roundTripPerUnit;
-  if (typeof rt !== 'number' || !Number.isFinite(rt) || rt < 0) r.push('config.costs.roundTripPerUnit: a finite, non-negative number is required (no default)');
+  if (costs !== null && typeof costs === 'object' && ('model' in costs || 'instrument' in costs)) {
+    if ('roundTripPerUnit' in costs) r.push('config.costs: give roundTripPerUnit or model+instrument, not both');
+    r.push(...[...costModelRefusals(costs.model), ...instrumentRefusals(costs.instrument)].map((x) => `config.costs.${x}`));
+  } else {
+    const rt = costs?.roundTripPerUnit;
+    if (typeof rt !== 'number' || !Number.isFinite(rt) || rt < 0) r.push('config.costs.roundTripPerUnit: a finite, non-negative number is required (no default)');
+  }
   if (o.params !== undefined && (o.params === null || typeof o.params !== 'object')) r.push('config.params: must be an object when present');
   return r;
 }
@@ -77,6 +87,14 @@ export function runSetupReplay(input: ReplayInput): ReplayResult {
   const refusals = configRefusals(input.config);
   if (refusals.length > 0) return { status: 'REFUSED', reasons: refusals };
   const cfg = input.config as ReplayConfig;
+  let roundTripPerUnit: number;
+  let costBasis: Record<string, unknown> | null = null;
+  if ('model' in cfg.costs) {
+    const c = costPricePerUnit(cfg.costs.model, cfg.costs.instrument);
+    if (!c.ok) return { status: 'REFUSED', reasons: c.reasons };
+    roundTripPerUnit = c.value;
+    costBasis = { rule: 'research/costModel', model: cfg.costs.model, instrument: cfg.costs.instrument, roundTripPerUnit };
+  } else roundTripPerUnit = cfg.costs.roundTripPerUnit;
   const datasets: Record<string, BarDataset> = {};
   const reasons: string[] = [];
   for (const s of cfg.symbols) {
@@ -96,7 +114,7 @@ export function runSetupReplay(input: ReplayInput): ReplayResult {
   const graded: (IdeaOutcome & { symbol: string })[] = [];
   for (const [s, p] of [[cfg.symbols[0], cfg.symbols[1]], [cfg.symbols[1], cfg.symbols[0]]] as const) {
     const r = evaluateSetups(datasets[s]!.bars, {
-      pair: datasets[p]!.bars, costs: cfg.costs, ledger, ...(cfg.params !== undefined ? { params: cfg.params } : {}),
+      pair: datasets[p]!.bars, costs: { roundTripPerUnit }, ledger, ...(cfg.params !== undefined ? { params: cfg.params } : {}),
     });
     if (r.status !== 'OK') return { status: 'REFUSED', reasons: r.reasons.map((x) => `${s}: ${x}`) };
     ledger = r.ledger;
@@ -118,6 +136,7 @@ export function runSetupReplay(input: ReplayInput): ReplayResult {
       configHash: sha(stableStringify(input.config)),
       setupMethodVersion: SETUP_METHOD_VERSION,
       structureMethodVersion,
+      ...(costBasis !== null ? { costBasis } : {}),
       paramsInForce: { ...DEFAULT_SETUP_PARAMS, ...(cfg.params ?? {}) },
       datasets: cfg.symbols.map((s) => datasetSummary(datasets[s]!)),
       counts: { ideas: Object.values(byTerminal).reduce((a, b) => a + b, 0), byTerminalState: byTerminal, blockedByReason: byBlocked },
