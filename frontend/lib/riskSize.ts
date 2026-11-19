@@ -32,6 +32,7 @@
  * does not pretend to: those are separate constraints and the stricter one
  * wins, which is the trader's decision.
  */
+import { costDollarsPerUnit } from './costModel'
 
 export type Side = 'LONG' | 'SHORT'
 
@@ -131,7 +132,11 @@ export function stopRisk(
 ): { stopTicks: number; offGrid: boolean; lossPerUnit: number } {
   const s = ticksBetween(entry, stop, tickSize)
   const stopTicks = s.onGrid ? Math.round(s.raw) : Math.ceil(s.raw)
-  return { stopTicks, offGrid: !s.onGrid, lossPerUnit: (stopTicks + slippageTicks) * tickValue + costPerUnit }
+  // The cost half is the shared model (`lib/costModel.ts`, byte-identical to
+  // the backend's research copy), so sizing and replay grading charge one rule.
+  const c = costDollarsPerUnit({ commissionPerUnit: costPerUnit, slippageTicks }, { tickSize, tickValue, pointValue: tickValue / tickSize })
+  if (!c.ok) throw new Error(`stopRisk: ${c.reasons.join('; ')}`)
+  return { stopTicks, offGrid: !s.onGrid, lossPerUnit: stopTicks * tickValue + c.value }
 }
 
 /**
